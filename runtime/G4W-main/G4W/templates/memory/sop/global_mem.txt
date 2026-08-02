@@ -1,0 +1,15 @@
+# [Global Memory - L2]
+
+## [ROOTS]
+- Shared MemoryRoot由`G4W_SHARED_MEMORY_ROOT`提供；启动脚本按Portable当前位置自动刷新。
+- 用户记忆位于`G4W-data/memory`，不得写入本文件。
+
+## [RUNTIME]
+- 默认时区：Asia/Shanghai。
+- Capability Registry只负责direct/worker权限路由；普通SOP通过L1和文件工具发现。
+- GA官方`runtime/app`只读；Worker GA长期记忆写入`G4W-data/ga-worker-memory`。
+
+## [NATIVE]
+- Timeline数据根：`G4W-data/timeline`。
+- 监督确定性状态：`G4W-data/self-control.json`。
+- 滴答CLI命令只从`G4W_DIDA_COMMAND`读取；凭据不写共享记忆。

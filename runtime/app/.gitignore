@@ -1,0 +1,155 @@
+temp/
+tmp/
+
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+
+.streamlit/
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+.DS_Store
+Thumbs.db
+
+*.log
+.env
+auth.json
+model_responses.txt
+
+# Sensitive files (API keys, credentials)
+mykey.py
+
+tasks/
+
+*.zip
+*.exe
+
+memory/*
+!memory/memory_management_sop.md
+
+# Allow tracking of specific SOPs
+!memory/web_setup_sop.md
+!memory/autonomous_operation_sop.md
+!memory/autonomous_operation_sop/
+!memory/autonomous_operation_sop/**
+!memory/scheduled_task_sop.md
+
+# L4 session archiver (only the script, not archives)
+!memory/L4_raw_sessions/
+memory/L4_raw_sessions/*
+!memory/L4_raw_sessions/compress_session.py
+!memory/L4_raw_sessions/salient_mining_sop.md
+
+# ljqCtrl related tools
+!memory/ljqCtrl.py
+!memory/ljqCtrl_sop.md
+!memory/macljqCtrl.py
+!memory/computer_use.md
+!memory/ljqCtrlBg.py
+
+# procmem_scanner related tools
+!memory/procmem_scanner.py
+!memory/procmem_scanner_sop.md
+
+# TMWebDriver SOP
+!memory/tmwebdriver_sop.md
+
+# Vue3 Component SOP
+!memory/vue3_component_sop.md
+
+# Subagent SOP
+!memory/subagent.md
+
+# Incubator SOP
+!memory/incubator_sop.md
+
+# Supervisor SOP
+!memory/supervisor_sop.md
+
+# Plan SOP
+!memory/plan_sop.md
+
+# UltraPlan SOP
+!memory/ultraplan_sop.md
+
+# Goal Mode SOP
+!memory/goal_mode_sop.md
+
+# Goal Hive Mode SOP
+!memory/goal_hive_sop.md
+!memory/goal_hive_master_duty.md
+
+# Morphling SOP
+!memory/morphling_sop.md
+
+
+# ADB UI tool
+!memory/adb_ui.py
+
+# Keychain
+!memory/keychain.py
+
+# Vision / OCR / UI detection tools
+!memory/ocr_utils.py
+!memory/vision_sop.md
+!memory/ui_detect.py
+!memory/vision_api.template.py
+
+# Memory management
+!memory/memory_cleanup_sop.md
+
+# Checklist/MapReduce
+!memory/checklist_helper.py
+!memory/checklist_sop.md
+
+# Code Review Principles
+!memory/code_review_principles.md
+
+# Review Mode SOP
+!memory/review_sop.md
+
+# Visual Studio
+.vs/
+restore_commit.txt
+
+sche_tasks/
+# CDP Bridge 密钥配置（首次运行自动生成）
+assets/tmwd_cdp_bridge/config.js
+assets/copilot_proxy.pyw
+# 模型 instruction（本地定制，不入库）
+assets/glm52_instruction.txt
+assets/gpt55_instruction.txt
+**log.*
+
+# Reflect (ignore new files, whitelist existing)
+reflect/*
+!reflect/autonomous.py
+!reflect/scheduler.py
+!reflect/agent_team_worker.py
+!reflect/goal_mode.py
+!reflect/checklist_master.py
+
+# Conductor IM plugins: 私有插件/配置不入库。示例为 _email_example.py / _lark_example.py
+# （以 _ 开头不会被加载器自动轮询）。去掉下划线/示例后缀复制为 email.py / lark.py 即启用。
+frontends/conductor_im_plugins/*
+
+# Universal: never track __pycache__ anywhere
+**/__pycache__/
+
+.claude/
+
+# Project Mode SOP
+!memory/project_mode_sop.md
+
+# 本地 bug / 局限报告草稿（交给维护者参考，不进仓库）
+/BUG_*.md

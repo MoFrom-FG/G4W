@@ -1,0 +1,8 @@
+{
+  "capabilities": [
+    {"id":"worker.research","route":"worker","description":"新闻、赛事、市场和实时资料核实","lifecycle":"ephemeral","workerType":"ga-research","allowedTools":["ga.default"],"risk":"low","confirmation":"none"},
+    {"id":"worker.general","route":"worker","description":"需要GA工具执行的通用后台任务","lifecycle":"ephemeral","workerType":"ga-general","allowedTools":["ga.default"],"risk":"variable","confirmation":"follow_ga_sop"},
+    {"id":"worker.supervisor","route":"worker","description":"可恢复的长期监督、周期复盘和持续项目Worker","lifecycle":"persistent","workerType":"ga-persistent","allowedTools":["ga.default"],"risk":"medium","confirmation":"explicit_user_request"},
+    {"id":"worker.l4","route":"worker","description":"由check-in触发的L4语义挖掘；只写本次candidate，正式记忆由validator合并","lifecycle":"persistent","workerType":"ga-persistent-stateless-runs","allowedTools":["ga.default"],"risk":"medium","confirmation":"system_maintenance_or_explicit_user_request"}
+  ]
+}

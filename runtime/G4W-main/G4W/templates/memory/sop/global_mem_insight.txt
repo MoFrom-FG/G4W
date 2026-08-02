@@ -1,0 +1,22 @@
+# [Global Memory Insight]
+需要时read global_mem.txt(L2)或按下列相对路径read L3
+L0(META-SOP): memory_management_sop
+L2: global_mem.txt
+L3: memory_cleanup_sop | diary_sop | timeline_sop | web_timeline_sop | supervision_sop | dida_sop | scheduling_sop | l4_semantic_mining_sop | weixin_operations_sop | file_send_sop | worker_execution_sop | model_routing_sop | weather_sop | md2longimg_sop
+
+时间记录: native/timeline/timeline_sop.md | native/timeline/web_timeline_sop.md | native/diary/diary_sop.md
+监督/自制力: native/supervision/supervision_sop.md
+滴答任务: native/dida/dida_sop.md
+定时提醒/check-in: core/scheduling/scheduling_sop.md
+L4语义记忆: core/l4/l4_semantic_mining_sop.md
+微信规则/投递: wechat/weixin-operations/weixin_operations_sop.md | wechat/file-send/file_send_sop.md
+后台执行: worker/execution/worker_execution_sop.md | worker/model-routing/model_routing_sop.md
+天气查询: native/weather/weather_sop.md
+MD转长图: native/md2longimg/md2longimg_sop.md(含图md→全页长图png→微信file_send)
+
+
+[RULES]
+1. 物理桌面/连续浏览器/UI/ADB/长程执行→Worker；普通SOP不是Capability
+2. 搜索先行、禁猜路径；数值和外部事实必须交叉验证，禁信摘要
+3. 改前必读、只做最小patch；进程操作必须精确PID，禁无条件杀Python
+4. 读SOP禁凭印象，有固定脚本必须复用；失败无新信息时换策略

@@ -1,0 +1,3 @@
+[
+  {"type":"function","function":{"name":"G4W_worker_switch_model","description":"[Worker本地] 在同一个Worker、同一个run和完整history中从Flash热切换到Pro。只在任务明显复杂时调用一次。","parameters":{"type":"object","properties":{"model_tier":{"type":"string","enum":["pro"]},"reason":{"type":"string"}},"required":["model_tier","reason"]}}}
+]

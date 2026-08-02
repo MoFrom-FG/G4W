@@ -1,0 +1,1 @@
+{"capabilities":[{"id":"dida.manage","route":"direct","description":"按dida_sop使用GA code_run调用滴答CLI","allowedActions":["dida_status","dida_list","dida_complete","dida_focus"],"allowedTools":["ga.default"],"risk":"medium","confirmation":"explicit_user_request_for_write"}]}

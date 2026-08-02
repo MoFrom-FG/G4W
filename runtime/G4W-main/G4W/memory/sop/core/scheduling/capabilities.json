@@ -1,0 +1,6 @@
+{
+  "capabilities": [
+    {"id":"reminder.manage","route":"direct","description":"按scheduling_sop使用GA code_run调用确定性提醒存储","allowedActions":["schedule_create","schedule_list","schedule_cancel"],"allowedTools":["ga.default"],"risk":"low","confirmation":"explicit_user_request"},
+    {"id":"checkin.manage","route":"direct","description":"按scheduling_sop或微信/checkin命令配置随机check-in","allowedActions":["checkin_configure","checkin_disable","checkin_status"],"allowedTools":["ga.default"],"risk":"low","confirmation":"explicit_user_request"}
+  ]
+}

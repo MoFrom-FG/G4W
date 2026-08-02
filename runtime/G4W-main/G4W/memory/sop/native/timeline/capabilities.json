@@ -1,0 +1,1 @@
+{"capabilities":[{"id":"timeline.manage","route":"direct","description":"按timeline_sop使用GA code_run调用确定性时间线脚本","allowedActions":["timeline_read","timeline_list","timeline_write","timeline_delete","timeline_build","timeline_serve","timeline_screenshot"],"allowedTools":["ga.default"],"risk":"low","confirmation":"contextual_or_explicit"}]}

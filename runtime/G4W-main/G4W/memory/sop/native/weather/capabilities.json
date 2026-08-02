@@ -1,0 +1,1 @@
+{"capabilities":[{"id":"weather.query","route":"direct","description":"天气、空气质量、气象预警和穿衣建议","risk":"low","confirmation":"explicit_user_request","allowedTools":["ga.default"]}]}

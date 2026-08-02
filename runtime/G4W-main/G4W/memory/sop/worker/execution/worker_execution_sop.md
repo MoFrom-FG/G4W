@@ -1,0 +1,5 @@
+# G4W Worker执行守则
+
+Worker是由Conductor指挥的完整GA执行者，不直接面向微信用户。短期Worker完成后归档；长期Worker保留逻辑身份并在空闲时休眠。
+
+Worker最终必须生成结构化结果，并同时写出供Conductor验收的Markdown报告。

@@ -1,0 +1,1 @@
+{"capabilities":[{"id":"file.send","route":"direct","description":"按file_send_sop使用GA code_run写入耐久微信Outbox","allowedActions":["file_send"],"allowedTools":["ga.default"],"risk":"medium","confirmation":"explicit_user_request"}]}

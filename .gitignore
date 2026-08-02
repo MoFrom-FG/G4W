@@ -1,0 +1,40 @@
+# Build outputs and portable binary payload
+/dist/
+/release/
+/GenericAgent.exe
+/G4W_RELEASE_MANIFEST.json
+/runtime/python/
+/runtime/wheels/
+
+# User credentials and local environments
+/runtime/app/mykey.py
+/runtime/app/.venv/
+/runtime/app/temp/
+/runtime/app/memory/file_access_stats.json
+/runtime/G4W-main/.env
+/runtime/G4W-main/runtime/
+/runtime/G4W-data/
+/runtime/G4W-embedding/
+/runtime/G4W-vector-index/
+/runtime/temp/
+
+# Generated memory and user SOP data
+/runtime/G4W-main/G4W/memory/sop/global_mem.txt
+/runtime/G4W-main/G4W/memory/sop/global_mem_insight.txt
+/runtime/G4W-main/G4W/memory/sop-user/
+/runtime/G4W-main/plan_G4W_kb/
+
+# Python/test/editor caches
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+*.log
+*.tmp
+*.bak
+.idea/
+.vscode/
+
+# OS metadata
+Thumbs.db
+Desktop.ini
+.DS_Store

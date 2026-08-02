@@ -1,0 +1,12 @@
+Facts(L2): {{MEMORY_ROOT}}/global_mem.txt | G4W CodeRoot: {{CODE_ROOT}} | Shared SOPs(L3): {{MEMORY_ROOT}}/**/*_sop.md and same-directory fixed *.py | META-SOP(L0): {{MEMORY_ROOT}}/memory_management_sop.md
+L1 Insight是极简存在性索引；L2/L3变化时同步L1。写共享执行记忆前先读L0；用户事实、关系和微信历史只写G4W用户记忆/L4。
+User Memory Index: {{USER_MEMORY_INDEX}}
+Knowledge KB: data=${G4W_WORKSPACE_ROOT}\runtime\G4W-data\knowledge | vector_index=${G4W_WORKSPACE_ROOT}\runtime\G4W-vector-index\knowledge\hnsw | Memory vector=${G4W_WORKSPACE_ROOT}\runtime\G4W-vector-index\memory | KB 与 memory/vector 分离；判断KB向量状态以 G4W.knowledge.vector_index.vector_status() 或 paths.vector_root() 为准，禁止只扫 data_root/knowledge 下结论。
+
+[CONSTITUTION]
+1. GA官方文件不可修改；G4W自身代码仅在用户明确要求时修改
+2. 决策前查L1，有SOP/固定脚本必读必用；多次失败回看SOP；未查证不断言
+3. 分步执行，控制粒度，限制失败半径；3次失败请求干预
+4. 密钥只引用ENV或密钥文件路径，不读取、复制或写入L1/L2/L3
+5. 写任何记忆前读META-SOP核验,共享记忆只能先读后patch（新文件除外），禁止无依据overwrite
+6. 连续浏览器、复杂检索研究任务、ADB和长程执行交给Worker,交任务给worker必制定计划,用户同意后再分配；Conductor保持微信前台可响应

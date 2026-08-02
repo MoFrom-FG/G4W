@@ -1,0 +1,1 @@
+{"capabilities":[{"id":"diary.manage","route":"direct","description":"按diary_sop使用GA code_run调用确定性日记存储","allowedActions":["diary_append","diary_read","diary_list"],"allowedTools":["ga.default"],"risk":"low","confirmation":"contextual_or_explicit"}]}

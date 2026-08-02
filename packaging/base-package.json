@@ -1,0 +1,11 @@
+{
+  "name": "GenericAgent Desktop Portable",
+  "version": "1.8",
+  "download_page": "https://github.com/lsdefine/GenericAgent/releases#release-desktop-portable-v0.1.8",
+  "required_paths": [
+    "GenericAgent.exe",
+    "runtime/python/python.exe",
+    "runtime/wheels",
+    "runtime/app"
+  ]
+}
