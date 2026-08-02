@@ -79,7 +79,7 @@ WeChat功能逻辑参考：[Cyberboss](https://github.com/WenXiaoWendy/cyberboss
   </tr>
 </table>
 
-<sub>界面截图用于展示布局和能力，实际内容由用户自己的运行数据生成。</sub>
+<sub>界面截图用于展示布局和能力，实际内容由用户自己的运行数据生成。主题也可让自己的agent按照喜好修改。</sub>
 
 ### 实际余额与用量
 
