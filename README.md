@@ -267,3 +267,14 @@ G4W_TORCH_INDEX_URL
 ## 使用边界
 
 G4W 可以辅助执行、整理和复盘，但 AI 仍可能理解错误。涉及删除、对外发送、重要决策或关键资料修改时，应由用户确认。它不能替代医疗、法律或财务专业意见。
+
+## 未来 TODO
+
+- 优化 Todo 看板，让任务、提醒、今日事项和长期计划可以在一个统一视图里管理。
+
+  ![](images/2026-06-12-11-49-21.png)
+- 后续评估是否加入图片理解和贴纸相关能力。
+
+## 致谢
+
+感谢 [GenericAgent](https://github.com/lsdefine/GenericAgent) 与 [Cyberboss](https://github.com/WenXiaoWendy/cyberboss/tree/main) 的开发者。G4W 基于这两个项目的能力组合和实践思路进行整理与适配。
