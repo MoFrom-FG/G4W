@@ -35,6 +35,133 @@ WeChat功能逻辑参考：[Cyberboss](https://github.com/WenXiaoWendy/cyberboss
 
 完整产品介绍见 [G4W使用说明.md](G4W使用说明.md)。
 
+## 系统架构
+
+G4W 采用“微信通道 + 服务总闸 + Conductor + 后台 Worker”的分层结构。即时对话由 Conductor 负责理解和编排，耗时任务交给 Worker 在后台执行；提醒、记忆、知识库和任务结果统一由服务总闸管理，再通过 Outbox 可靠地送回微信。
+
+| 层级 | 主要职责 |
+| --- | --- |
+| 微信通道层 | 接收微信消息、识别命令、合并短回复并发送文件或文本结果 |
+| G4W 服务层 | 维护主事件循环、用户状态、任务调度、提醒、主动联系和消息队列 |
+| Agent 执行层 | Conductor 负责上下文与任务验收，Worker 负责可恢复的后台长任务 |
+| GenericAgent 运行时 | 提供模型调用、工具执行和桌面 Agent 基础能力 |
+| 能力与数据层 | 提供长期记忆、知识库、日记、时间线、文件交付和可选向量检索 |
+
+```mermaid
+flowchart TB
+    USER["用户"] -->|"发送消息或命令"| WECHAT["微信服务"]
+
+    subgraph CHANNEL["微信通道层"]
+        WX["WeixinChannel<br/>消息接收与会话识别"]
+        ROUTER["命令路由<br/>普通消息 · 管理命令 · 文件"]
+        OUTBOX["Delivery / Outbox<br/>回复合并 · 重试 · 文件发送"]
+        WX --> ROUTER
+    end
+
+    WECHAT --> WX
+    OUTBOX -->|"文本、进度与文件"| WECHAT
+    WECHAT -->|"回复送达"| USER
+
+    subgraph CORE["G4W 服务与 Agent 执行层"]
+        SERVICE["G4WService 服务总闸<br/>事件循环 · 调度 · 状态管理"]
+        CONDUCTOR["Conductor<br/>上下文编排 · 工具路由 · 任务验收"]
+        WORKER["后台 Worker<br/>长任务执行 · 进度 · 恢复 · 返工"]
+        GA["GenericAgent Desktop 1.8<br/>模型与工具运行时"]
+
+        SERVICE --> CONDUCTOR
+        CONDUCTOR -->|"派发长任务"| WORKER
+        WORKER -->|"结果与状态"| CONDUCTOR
+        CONDUCTOR --> GA
+        WORKER --> GA
+    end
+
+    ROUTER --> SERVICE
+    SERVICE --> OUTBOX
+
+    subgraph CAPABILITY["G4W 能力层"]
+        MEMORY["长期记忆与 SOP"]
+        KB["本地知识库"]
+        FEATURE["提醒 · 主动联系<br/>日记 · 时间线"]
+        FILES["本地文件与结果交付"]
+    end
+
+    SERVICE --> FEATURE
+    CONDUCTOR --> MEMORY
+    CONDUCTOR --> KB
+    CONDUCTOR --> FILES
+
+    subgraph VECTOR["可选的独立向量环境"]
+        VENV["G4W-embedding/.venv<br/>NumPy · GPU/CPU PyTorch"]
+        EMBED["Embedding 服务<br/>Qwen3-Embedding-0.6B"]
+        INDEX["G4W-vector-index<br/>HNSW 与混合检索索引"]
+        VENV --> EMBED --> INDEX
+    end
+
+    MEMORY -.->|"启用向量扩展时"| EMBED
+    KB -.->|"启用向量扩展时"| EMBED
+
+    DATA[("G4W-data<br/>用户配置与本地运行状态")]
+    SERVICE <--> DATA
+    MEMORY <--> DATA
+    KB <--> DATA
+    FEATURE <--> DATA
+
+    PROVIDER["用户配置的模型供应商"]
+    GA -->|"API 请求"| PROVIDER
+```
+
+向量扩展拥有独立 Python 虚拟环境，不会把 NumPy、PyTorch 或模型文件安装到 GA 主环境。用户配置、聊天状态、记忆和知识库等运行数据保存在本机 `runtime\G4W-data`，不会提交到 Git 仓库。
+
+## 目录结构
+
+Git 仓库保留运行代码、配置模板、安装脚本和构建工具，不纳入用户数据、密钥、便携 Python、大型依赖或向量模型。
+
+```text
+G4W/
+├── 1_prepare_G4W_ga.bat          # 准备 GA 主运行环境
+├── 2_key_for_ga.bat              # 配置模型 API Key
+├── 3_env_for_G4W.bat             # 配置用户、机器人与模型参数
+├── 4_login_G4W_ga.bat            # 登录 G4W 专用微信账号
+├── 5_embedding_for_G4W.bat       # 可选：安装独立向量环境与模型
+├── start_G4W_ga.bat              # 启动服务、Worker 与日志窗口
+├── stop_G4W_ga.bat               # 停止 G4W 相关进程
+├── uninstall.bat                 # 卸载入口
+├── browse_short_path_mirror.bat  # 浏览短路径文件镜像
+├── README.md                     # 项目首页与快速使用说明
+├── G4W使用说明.md                # 面向用户的完整产品说明
+├── readme_GA_desktop.txt         # 内置 GA Desktop 底座说明
+├── LICENSE                       # AGPL-3.0 许可证
+├── images/                       # README 演示图片
+├── packaging/                    # 便携包构建、安装与依赖锁定脚本
+├── tools/                        # 向量环境配置和辅助工具
+└── runtime/
+    ├── app/                      # GenericAgent Desktop 1.8 源码底座
+    └── G4W-main/
+        ├── .env.example          # G4W 配置模板
+        └── G4W/
+            ├── agents/           # Conductor、Worker 与 GA 适配层
+            ├── assets/           # G4W 内部静态资源
+            ├── cli/              # 命令行入口与参数处理
+            ├── core/             # 服务总闸、配置、事件与公共基础能力
+            ├── features/         # 提醒、日记、时间线和主动联系
+            ├── knowledge/        # 本地知识库导入、检索与管理
+            ├── memory/           # 长期记忆、SOP、L4 与向量接口
+            ├── templates/        # 初始配置、记忆和工作区模板
+            ├── tools/            # Agent 可调用的 G4W 工具
+            └── wechat/           # 微信接入、消息投递与 Outbox
+```
+
+完整便携包会额外包含下列内容，或在首次安装、运行后自动生成；它们不进入 Git 仓库：
+
+```text
+GenericAgent.exe               # 便携包桌面入口
+runtime/python/                # 便携 Python 主环境
+runtime/wheels/                # GA 主环境离线依赖包
+runtime/G4W-data/              # 用户配置、会话、记忆和知识库状态
+runtime/G4W-embedding/         # 独立向量环境与 Embedding 模型
+runtime/G4W-vector-index/      # 本地向量索引
+```
+
 ## 能力展示
 
 ### 从模糊描述定位原始记录
