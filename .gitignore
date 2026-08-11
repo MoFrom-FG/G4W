@@ -41,3 +41,6 @@ Desktop.ini
 
 # Local one-off account migration tool (personal use, not distributed)
 /tools/migrate_g4w_account.py
+
+# Draft notes (personal, never publish)
+/LINUXDO推广草稿*.md
