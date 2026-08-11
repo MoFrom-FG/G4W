@@ -96,6 +96,25 @@ WeChat功能逻辑参考：[Cyberboss](https://github.com/WenXiaoWendy/cyberboss
 
 <sub>以上余额和用量数据是专门保留的产品演示样例；实际成本取决于模型、调用频率和供应商计费规则。</sub>
 
+### 控制中心 Dashboard
+
+浏览器打开 `http://127.0.0.1:18180` 即可进入 G4W 控制中心：总览实时状态、长期记忆检索、时间轴统计、日记、知识库与系统配置一目了然。首次进入会引导设置登录密码，后续重启不再需要重复登录。
+
+<table>
+  <tr>
+    <td width="33%" align="center"><a href="images/dashboard-overview.png"><img src="images/dashboard-overview.png" width="100%" alt="G4W 控制中心总览"></a></td>
+    <td width="33%" align="center"><a href="images/dashboard-timeline.png"><img src="images/dashboard-timeline.png" width="100%" alt="G4W 控制中心时间轴"></a></td>
+    <td width="33%" align="center"><a href="images/dashboard-memory.png"><img src="images/dashboard-memory.png" width="100%" alt="G4W 控制中心长期记忆"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>总览：Worker / 记忆 / 知识库实时状态</sub></td>
+    <td align="center"><sub>时间轴：每日活动分布与统计</sub></td>
+    <td align="center"><sub>长期记忆：用户画像与记忆档案</sub></td>
+  </tr>
+</table>
+
+<sub>界面截图用于展示布局和能力，实际内容由用户自己的运行数据生成。</sub>
+
 ## 第一次使用
 
 先把压缩包完整解压到普通可写目录。不要直接在 ZIP 预览窗口中运行，也不建议放入需要管理员权限的系统目录。
