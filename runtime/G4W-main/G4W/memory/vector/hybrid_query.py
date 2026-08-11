@@ -118,14 +118,6 @@ def _content_quality_boost(text: str) -> float:
         delta -= 0.05
     if _USER_EVENT.search(t):
         delta += 0.12
-    # Bare keyword lines without event context (user_only pings / probes).
-    # user_only dumps often lack "] User:" prefix — match short standalone lines.
-    short_pings = re.findall(
-        r"(?:^|\n)\s*(?:\[\d{4}[^\]]*\]\s*)?(?:User:\s*)?(婚宴|商场|针清|段位|上分)\s*(?:\n|$)",
-        t,
-    )
-    if short_pings and not _USER_EVENT.search(t):
-        delta -= 0.10
     user_lines = re.findall(r"\]\s*User:\s*([^\n]+)", t)
     if user_lines:
         shortest = min(len(x.strip()) for x in user_lines)

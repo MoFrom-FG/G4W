@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
 import mimetypes
 import os
 import re
+import secrets
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -190,6 +194,109 @@ def _extract_prompt_section(text: str, marker: str) -> str:
         if index >= 0:
             end = min(end, index)
     return text[start:end].strip()
+
+
+class DashboardAuth:
+    """Password auth for the dashboard (ga-admin style PBKDF2), sessions in memory.
+
+    Credentials live in ``<state_dir>/dashboard-auth.json`` (username, salt,
+    hash, iterations).  On first start a random password is generated and
+    printed once to the console; change it after login via POST /api/auth/password.
+    """
+
+    _ITERATIONS = 210_000
+    _SESSION_TTL = 12 * 3600
+    _AUTH_FILE = "dashboard-auth.json"
+
+    def __init__(self, state_dir: Path):
+        self.path = Path(state_dir) / self._AUTH_FILE
+        self._lock = threading.Lock()
+        self._sessions: dict[str, float] = {}
+        self._ensure_initialized()
+
+    def _ensure_initialized(self) -> None:
+        if self.path.is_file():
+            return
+        username = "admin"
+        password = secrets.token_urlsafe(9)  # ~12 chars, shown exactly once
+        salt = secrets.token_bytes(16)
+        digest = self._derive(password, salt)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(
+            json.dumps(
+                {
+                    "username": username,
+                    "salt": base64.b64encode(salt).decode(),
+                    "hash": base64.b64encode(digest).decode(),
+                    "iterations": self._ITERATIONS,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print("[G4W] Dashboard auth initialized (credentials shown once):", flush=True)
+        print(f"[G4W]   username: {username}", flush=True)
+        print(f"[G4W]   password: {password}", flush=True)
+        print("[G4W]   Change it after login (dashboard 设置页或 POST /api/auth/password).", flush=True)
+
+    def _derive(self, password: str, salt: bytes) -> bytes:
+        return hashlib.pbkdf2_hmac("sha256", str(password).encode("utf-8"), salt, self._ITERATIONS)
+
+    def verify(self, username: str, password: str) -> bool:
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        if str(username or "").strip() != str(data.get("username") or ""):
+            return False
+        try:
+            salt = base64.b64decode(str(data.get("salt") or ""))
+            expected = base64.b64decode(str(data.get("hash") or ""))
+            iterations = int(data.get("iterations") or self._ITERATIONS)
+            actual = hashlib.pbkdf2_hmac("sha256", str(password or "").encode("utf-8"), salt, iterations)
+        except Exception:
+            return False
+        return hmac.compare_digest(actual, expected)
+
+    def create_session(self) -> str:
+        token = secrets.token_urlsafe(32)
+        with self._lock:
+            self._sessions[token] = time.time() + self._SESSION_TTL
+        return token
+
+    def check(self, token: str) -> bool:
+        if not token:
+            return False
+        now = time.time()
+        with self._lock:
+            expiry = self._sessions.get(token)
+            if expiry is None:
+                return False
+            if expiry < now:
+                self._sessions.pop(token, None)
+                return False
+            return True
+
+    def revoke(self, token: str) -> None:
+        with self._lock:
+            self._sessions.pop(token, None)
+
+    def change_password(self, username: str, old: str, new: str) -> dict:
+        if not self.verify(username, old):
+            raise ValueError("旧密码不正确")
+        new = str(new or "")
+        if len(new) < 8:
+            raise ValueError("新密码至少 8 位")
+        salt = secrets.token_bytes(16)
+        data = {
+            "username": str(username or "").strip(),
+            "salt": base64.b64encode(salt).decode(),
+            "hash": base64.b64encode(self._derive(new, salt)).decode(),
+            "iterations": self._ITERATIONS,
+        }
+        self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"ok": True, "message": "密码已更新"}
 
 
 class DashboardState:
@@ -1024,27 +1131,67 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def dashboard(self) -> DashboardState:
         return self.server.dashboard  # type: ignore[attr-defined]
 
+    @property
+    def auth(self) -> DashboardAuth:
+        return self.server.auth  # type: ignore[attr-defined]
+
+    def _auth_token(self) -> str:
+        cookie = self.headers.get("Cookie") or ""
+        for part in cookie.split(";"):
+            key, _, value = part.strip().partition("=")
+            if key == "g4w_auth" and value:
+                return value
+        authorization = self.headers.get("Authorization") or ""
+        if authorization.lower().startswith("bearer "):
+            return authorization[7:].strip()
+        return ""
+
+    def _require_auth(self) -> bool:
+        if self.auth.check(self._auth_token()):
+            return True
+        self._send_json({"ok": False, "error": "未登录"}, 401)
+        return False
+
+    def _read_json_body(self) -> dict:
+        length = min(int(self.headers.get("Content-Length", "0") or 0), 1_000_000)
+        payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+        if not isinstance(payload, dict):
+            raise ValueError("请求体必须是 JSON 对象")
+        return payload
+
     def log_message(self, format: str, *args) -> None:
         return
 
-    def _send_bytes(self, body: bytes, content_type: str, status: int = 200, *, disposition: str = "") -> None:
+    def _send_bytes(self, body: bytes, content_type: str, status: int = 200, *, disposition: str = "", extra_headers: list = None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         if disposition:
             self.send_header("Content-Disposition", disposition)
+        for key, value in (extra_headers or []):
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_json(self, value, status: int = 200) -> None:
-        self._send_bytes(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"), "application/json; charset=utf-8", status)
+    def _send_json(self, value, status: int = 200, *, extra_headers: list = None) -> None:
+        self._send_bytes(
+            json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"),
+            "application/json; charset=utf-8",
+            status,
+            extra_headers=extra_headers,
+        )
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
         try:
+            if path == "/api/auth/status":
+                self._send_json({"authenticated": self.auth.check(self._auth_token()), "initialized": True})
+                return
+            if path.startswith("/api/") and not self._require_auth():
+                return
             if path == "/api/dashboard":
                 self._send_json(self.dashboard.snapshot())
                 return
@@ -1100,14 +1247,44 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
-        if path not in {"/api/settings", "/api/model"}:
-            self._send_json({"ok": False, "error": "Not found"}, 404)
-            return
         try:
-            length = min(int(self.headers.get("Content-Length", "0") or 0), 1_000_000)
-            payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
-            if not isinstance(payload, dict):
-                raise ValueError("请求体必须是 JSON 对象")
+            if path == "/api/auth/login":
+                payload = self._read_json_body()
+                username = str(payload.get("username") or "").strip()
+                password = str(payload.get("password") or "")
+                if not self.auth.verify(username, password):
+                    self._send_json({"ok": False, "error": "用户名或密码错误"}, 401)
+                    return
+                token = self.auth.create_session()
+                self._send_json(
+                    {"ok": True, "username": username},
+                    extra_headers=[("Set-Cookie", f"g4w_auth={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={DashboardAuth._SESSION_TTL}")],
+                )
+                return
+            if path == "/api/auth/logout":
+                self.auth.revoke(self._auth_token())
+                self._send_json(
+                    {"ok": True},
+                    extra_headers=[("Set-Cookie", "g4w_auth=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")],
+                )
+                return
+            if path == "/api/auth/password":
+                if not self._require_auth():
+                    return
+                payload = self._read_json_body()
+                result = self.auth.change_password(
+                    str(payload.get("username") or "").strip(),
+                    str(payload.get("oldPassword") or ""),
+                    str(payload.get("newPassword") or ""),
+                )
+                self._send_json(result)
+                return
+            if path not in {"/api/settings", "/api/model"}:
+                self._send_json({"ok": False, "error": "Not found"}, 404)
+                return
+            if not self._require_auth():
+                return
+            payload = self._read_json_body()
             if path == "/api/model":
                 self._send_json(self.dashboard.switch_model(payload.get("target"), payload.get("value")))
             else:
@@ -1157,6 +1334,7 @@ def run_dashboard(config: Config | None = None, host: str = "127.0.0.1", port: i
     config = config or Config.load()
     server = ThreadingHTTPServer((host, int(port)), DashboardHandler)
     server.dashboard = DashboardState(config)  # type: ignore[attr-defined]
+    server.auth = DashboardAuth(config.state_dir)  # type: ignore[attr-defined]
     print(f"[G4W] Dashboard listening at http://{host}:{port}")
     try:
         server.serve_forever()

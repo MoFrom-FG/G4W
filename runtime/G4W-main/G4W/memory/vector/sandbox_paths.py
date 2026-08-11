@@ -10,11 +10,12 @@ import os
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
-# Default BBS_CWD for H3 window (overridable via env)
+# Default BBS_CWD for H3 window (overridable via G4W_BBS_CWD env).
+# Derived from the package layout instead of a hard-coded machine path:
+# <portable-root>/runtime/app/temp/hive_cb_storage_p6_retrieval
 _DEFAULT_BBS_CWD = (
-    r"D:\G4W\GenericAgent-Desktop-Windows-Portable 1.8"
-    r"\GenericAgent-Desktop-Windows-Portable\runtime\app\temp"
-    r"\hive_cb_storage_p6_retrieval"
+    Path(__file__).resolve().parents[3].parent
+    / "app" / "temp" / "hive_cb_storage_p6_retrieval"
 )
 
 def _runtime_root() -> Path:

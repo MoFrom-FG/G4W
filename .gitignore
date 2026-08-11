@@ -38,3 +38,6 @@
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Local one-off account migration tool (personal use, not distributed)
+/tools/migrate_g4w_account.py

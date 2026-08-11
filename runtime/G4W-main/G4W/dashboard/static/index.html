@@ -9,6 +9,17 @@
   <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
 </head>
 <body>
+  <div class="login-overlay" id="login-overlay" hidden>
+    <div class="login-card glass-card">
+      <div class="login-brand"><span class="brand-mark">G</span><div><strong>G4W</strong><small>CONTROL CENTER</small></div></div>
+      <h2>登录控制中心</h2>
+      <p class="login-hint">首次使用:初始用户名密码见启动 dashboard 的终端日志(仅显示一次)</p>
+      <label>用户名<input id="login-username" autocomplete="username" placeholder="admin" /></label>
+      <label>密码<input id="login-password" type="password" autocomplete="current-password" placeholder="••••••••" /></label>
+      <button class="login-button" id="login-button" type="button">进入控制中心</button>
+      <p class="login-error" id="login-error" hidden></p>
+    </div>
+  </div>
   <div class="shell">
     <aside class="sidebar" id="sidebar">
       <div class="brand"><span class="brand-mark">G</span><div><strong>G4W</strong><small>CONTROL CENTER</small></div><button class="sidebar-close" id="sidebar-close" aria-label="关闭导航">×</button></div>

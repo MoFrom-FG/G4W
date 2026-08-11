@@ -319,7 +319,7 @@ def prod_index_backup_root(live: Optional[Path] = None) -> Path:
     """Directory for full-index snapshots (not beside live; keeps runtime root clean).
 
     Default: ``<INDEX_DIR.parent>/temp/G4W-temp``
-    e.g. ``D:\\Agent\\G4W\\runtime\\temp\\G4W-temp``.
+    e.g. ``<runtime>/temp/G4W-temp``.
     Override: env ``G4W_VECTOR_INDEX_BAK_DIR``.
     """
     raw = str(os.environ.get("G4W_VECTOR_INDEX_BAK_DIR", "") or "").strip()

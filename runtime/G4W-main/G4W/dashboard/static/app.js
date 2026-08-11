@@ -9,6 +9,69 @@ let timelineSlotHeight = 30;
 let timelineMonthZoom = 1;
 let timelineCategoryFilter = "";
 
+// ---- dashboard 登录鉴权(ga-admin 风格:密码登录 + 会话 cookie) ----
+function showLogin() {
+  const overlay = $("login-overlay");
+  if (overlay) overlay.hidden = false;
+}
+
+function hideLogin() {
+  const overlay = $("login-overlay");
+  if (overlay) overlay.hidden = true;
+}
+
+async function ensureAuth() {
+  try {
+    const res = await fetch("/api/auth/status", { cache: "no-store" });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const state = await res.json();
+    if (state.authenticated) { hideLogin(); return true; }
+    showLogin();
+    return false;
+  } catch { showLogin(); return false; }
+}
+
+async function submitLogin() {
+  const username = $("login-username").value.trim();
+  const password = $("login-password").value;
+  const errorEl = $("login-error");
+  if (!username || !password) {
+    errorEl.textContent = "请输入用户名和密码";
+    errorEl.hidden = false;
+    return;
+  }
+  errorEl.hidden = true;
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      $("login-password").value = "";
+      hideLogin();
+      refresh();
+      connectEvents();
+      return;
+    }
+    errorEl.textContent = data.error || "用户名或密码错误";
+    errorEl.hidden = false;
+  } catch {
+    errorEl.textContent = "无法连接服务器";
+    errorEl.hidden = false;
+  }
+}
+
+// 全局拦截:任何 API 返回 401 → 回到登录页(会话过期等)
+const _g4wOrigFetch = window.fetch;
+window.fetch = async (...args) => {
+  const res = await _g4wOrigFetch(...args);
+  const url = String(args[0] || "");
+  if (res.status === 401 && !url.includes("/api/auth/")) showLogin();
+  return res;
+};
+
 function filterTimelineEvents(events) {
   return timelineCategoryFilter ? events.filter((event) => (event.categoryId || "life") === timelineCategoryFilter) : events;
 }
@@ -1055,7 +1118,12 @@ window.addEventListener("resize", () => { if (window.innerWidth > 760) setSideba
 matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => { if ((document.documentElement.dataset.themeMode || "system") === "system") applyAppearance("system", document.documentElement.dataset.palette || "wechat"); });
 
 applyAppearance(localStorage.getItem("g4w-theme") || "system", localStorage.getItem("g4w-palette") || "wechat");
-routeFromHash();
-refresh();
-connectEvents();
+$("login-button").addEventListener("click", submitLogin);
+$("login-password").addEventListener("keydown", (event) => { if (event.key === "Enter") submitLogin(); });
+ensureAuth().then((ok) => {
+  if (!ok) return;
+  routeFromHash();
+  refresh();
+  connectEvents();
+});
 setInterval(refresh, 30000);
