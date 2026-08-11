@@ -207,12 +207,32 @@ class DashboardAuth:
     _ITERATIONS = 210_000
     _SESSION_TTL = 12 * 3600
     _AUTH_FILE = "dashboard-auth.json"
+    _SESSIONS_FILE = "dashboard-sessions.json"
 
     def __init__(self, state_dir: Path):
         self.path = Path(state_dir) / self._AUTH_FILE
         self._lock = threading.Lock()
         self._sessions: dict[str, float] = {}
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # 会话持久化:重启 dashboard 后已登录的浏览器 cookie 仍然有效
+        self._sessions = self._load_sessions()
+
+    def _sessions_path(self) -> Path:
+        return self.path.parent / self._SESSIONS_FILE
+
+    def _load_sessions(self) -> dict:
+        try:
+            raw = json.loads(self._sessions_path().read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        now = time.time()
+        return {str(k): float(v) for k, v in raw.items() if float(v) > now}
+
+    def _save_sessions(self) -> None:
+        try:
+            self._sessions_path().write_text(json.dumps(self._sessions, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
 
     def is_initialized(self) -> bool:
         return self.path.is_file()
@@ -268,6 +288,7 @@ class DashboardAuth:
         token = secrets.token_urlsafe(32)
         with self._lock:
             self._sessions[token] = time.time() + self._SESSION_TTL
+            self._save_sessions()
         return token
 
     def check(self, token: str) -> bool:
@@ -277,15 +298,23 @@ class DashboardAuth:
         with self._lock:
             expiry = self._sessions.get(token)
             if expiry is None:
+                # 磁盘上有但内存没有(极端情况:文件被外部改动后本进程未重启)
+                saved = self._load_sessions()
+                if saved:
+                    self._sessions.update(saved)
+                    expiry = self._sessions.get(token)
+            if expiry is None:
                 return False
             if expiry < now:
                 self._sessions.pop(token, None)
+                self._save_sessions()
                 return False
             return True
 
     def revoke(self, token: str) -> None:
         with self._lock:
             self._sessions.pop(token, None)
+            self._save_sessions()
 
     def change_password(self, username: str, old: str, new: str) -> dict:
         if not self.verify(username, old):
