@@ -199,9 +199,9 @@ def _extract_prompt_section(text: str, marker: str) -> str:
 class DashboardAuth:
     """Password auth for the dashboard (ga-admin style PBKDF2), sessions in memory.
 
-    Credentials live in ``<state_dir>/dashboard-auth.json`` (username, salt,
-    hash, iterations).  On first start a random password is generated and
-    printed once to the console; change it after login via POST /api/auth/password.
+    First visit shows a "set password" screen (auth file absent).  Credentials
+    live in ``<state_dir>/dashboard-auth.json`` (username, salt, hash,
+    iterations).  Change the password later via POST /api/auth/password.
     """
 
     _ITERATIONS = 210_000
@@ -212,33 +212,38 @@ class DashboardAuth:
         self.path = Path(state_dir) / self._AUTH_FILE
         self._lock = threading.Lock()
         self._sessions: dict[str, float] = {}
-        self._ensure_initialized()
-
-    def _ensure_initialized(self) -> None:
-        if self.path.is_file():
-            return
-        username = "admin"
-        password = secrets.token_urlsafe(9)  # ~12 chars, shown exactly once
-        salt = secrets.token_bytes(16)
-        digest = self._derive(password, salt)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(
-                {
-                    "username": username,
-                    "salt": base64.b64encode(salt).decode(),
-                    "hash": base64.b64encode(digest).decode(),
-                    "iterations": self._ITERATIONS,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        print("[G4W] Dashboard auth initialized (credentials shown once):", flush=True)
-        print(f"[G4W]   username: {username}", flush=True)
-        print(f"[G4W]   password: {password}", flush=True)
-        print("[G4W]   Change it after login (dashboard 设置页或 POST /api/auth/password).", flush=True)
+
+    def is_initialized(self) -> bool:
+        return self.path.is_file()
+
+    def setup(self, username: str, password: str) -> str:
+        """First-run: create credentials (only while uninitialized). Returns a session token."""
+        with self._lock:
+            if self.path.is_file():
+                raise ValueError("已初始化，请直接登录")
+            username = str(username or "").strip()
+            if not username:
+                raise ValueError("用户名不能为空")
+            password = str(password or "")
+            if len(password) < 8:
+                raise ValueError("密码至少 8 位")
+            salt = secrets.token_bytes(16)
+            self.path.write_text(
+                json.dumps(
+                    {
+                        "username": username,
+                        "salt": base64.b64encode(salt).decode(),
+                        "hash": base64.b64encode(self._derive(password, salt)).decode(),
+                        "iterations": self._ITERATIONS,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        # create_session 也要拿 _lock;放锁外避免死锁
+        return self.create_session()
 
     def _derive(self, password: str, salt: bytes) -> bytes:
         return hashlib.pbkdf2_hmac("sha256", str(password).encode("utf-8"), salt, self._ITERATIONS)
@@ -1188,7 +1193,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         try:
             if path == "/api/auth/status":
-                self._send_json({"authenticated": self.auth.check(self._auth_token()), "initialized": True})
+                self._send_json({
+                    "authenticated": self.auth.check(self._auth_token()),
+                    "initialized": self.auth.is_initialized(),
+                })
                 return
             if path.startswith("/api/") and not self._require_auth():
                 return
@@ -1248,6 +1256,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         try:
+            if path == "/api/auth/setup":
+                payload = self._read_json_body()
+                token = self.auth.setup(
+                    str(payload.get("username") or "").strip(),
+                    str(payload.get("password") or ""),
+                )
+                self._send_json(
+                    {"ok": True, "username": str(payload.get("username") or "").strip()},
+                    extra_headers=[("Set-Cookie", f"g4w_auth={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={DashboardAuth._SESSION_TTL}")],
+                )
+                return
             if path == "/api/auth/login":
                 payload = self._read_json_body()
                 username = str(payload.get("username") or "").strip()

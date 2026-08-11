@@ -20,15 +20,55 @@ function hideLogin() {
   if (overlay) overlay.hidden = true;
 }
 
+function setAuthMode(initialized) {
+  const setupMode = $("login-mode-setup");
+  const loginMode = $("login-mode-login");
+  if (setupMode) setupMode.hidden = initialized;
+  if (loginMode) loginMode.hidden = !initialized;
+}
+
 async function ensureAuth() {
   try {
     const res = await fetch("/api/auth/status", { cache: "no-store" });
     if (!res.ok) throw new Error(`status ${res.status}`);
     const state = await res.json();
+    setAuthMode(!!state.initialized);
     if (state.authenticated) { hideLogin(); return true; }
     showLogin();
     return false;
   } catch { showLogin(); return false; }
+}
+
+async function submitSetup() {
+  const username = $("setup-username").value.trim();
+  const password = $("setup-password").value;
+  const password2 = $("setup-password2").value;
+  const errorEl = $("login-error");
+  if (!username) { errorEl.textContent = "请输入用户名"; errorEl.hidden = false; return; }
+  if (password.length < 8) { errorEl.textContent = "密码至少 8 位"; errorEl.hidden = false; return; }
+  if (password !== password2) { errorEl.textContent = "两次输入的密码不一致"; errorEl.hidden = false; return; }
+  errorEl.hidden = true;
+  try {
+    const res = await fetch("/api/auth/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      $("setup-password").value = "";
+      $("setup-password2").value = "";
+      hideLogin();
+      refresh();
+      connectEvents();
+      return;
+    }
+    errorEl.textContent = data.error || "设置失败";
+    errorEl.hidden = false;
+  } catch {
+    errorEl.textContent = "无法连接服务器";
+    errorEl.hidden = false;
+  }
 }
 
 async function submitLogin() {
@@ -60,6 +100,36 @@ async function submitLogin() {
   } catch {
     errorEl.textContent = "无法连接服务器";
     errorEl.hidden = false;
+  }
+}
+
+async function submitPasswordChange() {
+  const oldPwd = $("setting-old-password").value;
+  const newPwd = $("setting-new-password").value;
+  const newPwd2 = $("setting-new-password2").value;
+  const messageEl = $("password-message");
+  if (newPwd.length < 8) { messageEl.textContent = "新密码至少 8 位"; messageEl.style.color = "#ff6b6b"; return; }
+  if (newPwd !== newPwd2) { messageEl.textContent = "两次输入的新密码不一致"; messageEl.style.color = "#ff6b6b"; return; }
+  try {
+    const res = await fetch("/api/auth/password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: $("login-username").value.trim() || "admin", oldPassword: oldPwd, newPassword: newPwd }),
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      $("setting-old-password").value = "";
+      $("setting-new-password").value = "";
+      $("setting-new-password2").value = "";
+      messageEl.textContent = "密码已更新，下次登录请使用新密码";
+      messageEl.style.color = "";
+    } else {
+      messageEl.textContent = data.error || "修改失败";
+      messageEl.style.color = "#ff6b6b";
+    }
+  } catch {
+    messageEl.textContent = "无法连接服务器";
+    messageEl.style.color = "#ff6b6b";
   }
 }
 
@@ -1120,6 +1190,9 @@ matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => { i
 applyAppearance(localStorage.getItem("g4w-theme") || "system", localStorage.getItem("g4w-palette") || "wechat");
 $("login-button").addEventListener("click", submitLogin);
 $("login-password").addEventListener("keydown", (event) => { if (event.key === "Enter") submitLogin(); });
+$("setup-button").addEventListener("click", submitSetup);
+$("setup-password2").addEventListener("keydown", (event) => { if (event.key === "Enter") submitSetup(); });
+$("password-save").addEventListener("click", submitPasswordChange);
 ensureAuth().then((ok) => {
   if (!ok) return;
   routeFromHash();
