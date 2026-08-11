@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
-"""迁移 G4W 微信账号数据：旧账号(2a2c9ec01a5e@im.bot / o9cq80-...@im.wechat) -> 新账号(ce910f9852dd@im.bot / o9cq8050xFe0sOtlmsHFULqFMuHE@im.wechat)。
+"""迁移 G4W 微信账号数据:旧账号 -> 新账号(账号 ID 由命令行参数提供)。
 
 用法:
-  python migrate_g4w_account.py --dry-run   # 只打印计划
-  python migrate_g4w_account.py             # 执行迁移
+  python migrate_g4w_account.py --dry-run
+      --data <G4W-data路径>
+      --old-user <旧微信OpenID> --new-user <新微信OpenID>
+      --old-acct <旧bot账号ID> --new-acct <新bot账号ID>
+      [--stale-acct <更早残留账号ID>]   # 只打印计划
+  python migrate_g4w_account.py          # 执行迁移(参数同上)
+      --data ... --old-user ... --new-user ... --old-acct ... --new-acct ...
 
 备份: 迁移前请确认已备份 G4W-data（本脚本不负责备份）。
 """
@@ -12,26 +17,12 @@ import json
 import os
 from pathlib import Path
 
-DATA = Path(r"D:\Agent\G4W\runtime\G4W-data")
-
-OLD_USER = "o9cq80-ZBQm_uEXC5ItUHQLYfI04@im.wechat"
-NEW_USER = "o9cq8050xFe0sOtlmsHFULqFMuHE@im.wechat"
-OLD_USER_SEG = OLD_USER.replace("@", "_")          # o9cq80-..._im.wechat
-NEW_USER_SEG = NEW_USER.replace("@", "_")
-OLD_ACCT = "2a2c9ec01a5e@im.bot"
-NEW_ACCT = "ce910f9852dd@im.bot"
-OLD_ACCT_FILE = OLD_ACCT.replace("@", "-")          # 2a2c9ec01a5e-im.bot
-NEW_ACCT_FILE = NEW_ACCT.replace("@", "-")
-STALE_ACCT = "ae7b294e5e2e@im.bot"                  # 更早的残留账号（accounts 中已无此文件）
-
-# 内容替换对（先长后短，防止部分重叠）
-REPLACEMENTS = [
-    (OLD_USER, NEW_USER),
-    (OLD_USER_SEG, NEW_USER_SEG),
-    (OLD_ACCT, NEW_ACCT),
-    (OLD_ACCT_FILE, NEW_ACCT_FILE),
-    (STALE_ACCT, NEW_ACCT),                          # 残留旧账号一并并入新账号
-]
+# 配置（由命令行参数注入，不入库硬编码）
+DATA: Path = None
+OLD_USER = NEW_USER = OLD_ACCT = NEW_ACCT = STALE_ACCT = ""
+OLD_USER_SEG = NEW_USER_SEG = OLD_ACCT_FILE = NEW_ACCT_FILE = ""
+REPLACEMENTS = []
+RENAMES = []
 
 # 排除目录（历史/内容寻址/缓存，不做内容替换）
 EXCLUDE_DIRS = {"backups", "hybrid", "short-path-mirror", ".git", "__pycache__", "kb_staging"}
@@ -43,12 +34,36 @@ BINDINGS = Path("memory/conversations/bindings.json")
 CHECKIN = Path("checkin-config.json")
 ACCOUNTS_DIR = Path("accounts")
 
-# 目录/文件重命名计划（相对 DATA）: 旧 -> 新
-RENAMES = [
-    (Path("memory/conversations") / OLD_USER_SEG, Path("memory/conversations") / NEW_USER_SEG),
-    (Path("memory/users") / f"{OLD_USER_SEG}.md", Path("memory/users") / f"{NEW_USER_SEG}.md"),
-    (Path("memory/operational") / f"{OLD_USER_SEG}.md", Path("memory/operational") / f"{NEW_USER_SEG}.md"),
-]
+# 目录/文件重命名计划（相对 DATA）: 旧 -> 新（由 configure 构建）
+
+
+def configure(*, data, old_user, new_user, old_acct, new_acct, stale_acct=""):
+    """注入账号与数据目录配置，构建派生常量。"""
+    global DATA, OLD_USER, NEW_USER, OLD_ACCT, NEW_ACCT, STALE_ACCT
+    global OLD_USER_SEG, NEW_USER_SEG, OLD_ACCT_FILE, NEW_ACCT_FILE
+    global REPLACEMENTS, RENAMES
+    DATA = Path(data)
+    OLD_USER, NEW_USER = old_user, new_user
+    OLD_ACCT, NEW_ACCT = old_acct, new_acct
+    STALE_ACCT = stale_acct
+    OLD_USER_SEG = OLD_USER.replace("@", "_")
+    NEW_USER_SEG = NEW_USER.replace("@", "_")
+    OLD_ACCT_FILE = OLD_ACCT.replace("@", "-")
+    NEW_ACCT_FILE = NEW_ACCT.replace("@", "-")
+    # 内容替换对（先长后短，防止部分重叠）
+    REPLACEMENTS = [
+        (OLD_USER, NEW_USER),
+        (OLD_USER_SEG, NEW_USER_SEG),
+        (OLD_ACCT, NEW_ACCT),
+        (OLD_ACCT_FILE, NEW_ACCT_FILE),
+    ]
+    if STALE_ACCT:
+        REPLACEMENTS.append((STALE_ACCT, NEW_ACCT))  # 残留旧账号一并并入新账号
+    RENAMES = [
+        (Path("memory/conversations") / OLD_USER_SEG, Path("memory/conversations") / NEW_USER_SEG),
+        (Path("memory/users") / f"{OLD_USER_SEG}.md", Path("memory/users") / f"{NEW_USER_SEG}.md"),
+        (Path("memory/operational") / f"{OLD_USER_SEG}.md", Path("memory/operational") / f"{NEW_USER_SEG}.md"),
+    ]
 
 
 def log(msg):
@@ -173,9 +188,23 @@ def execute_renames(dry_run):
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="迁移 G4W 微信账号数据（账号 ID 通过参数提供，不硬编码）")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--data", required=True, help="G4W-data 目录路径")
+    ap.add_argument("--old-user", required=True, help="旧微信 OpenID（如 xxx@im.wechat）")
+    ap.add_argument("--new-user", required=True, help="新微信 OpenID")
+    ap.add_argument("--old-acct", required=True, help="旧 bot 账号 ID（如 xxx@im.bot）")
+    ap.add_argument("--new-acct", required=True, help="新 bot 账号 ID")
+    ap.add_argument("--stale-acct", default="", help="可选:更早的残留账号 ID（并入新账号）")
     args = ap.parse_args()
+    configure(
+        data=args.data,
+        old_user=args.old_user,
+        new_user=args.new_user,
+        old_acct=args.old_acct,
+        new_acct=args.new_acct,
+        stale_acct=args.stale_acct,
+    )
     dry = args.dry_run
     mode = "DRY-RUN（不写入）" if dry else "EXECUTE（写入）"
     log(f"== G4W 账号数据迁移 [{mode}] ==")

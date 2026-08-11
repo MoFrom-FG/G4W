@@ -926,6 +926,10 @@ class DashboardState:
             restart_fields.append("webSearchEnabled")
 
         if env_updates:
+            # 防 .env 注入:任何值含换行即拒绝(update_env_file 不做转义)
+            for key, value in env_updates.items():
+                if "\r" in str(value) or "\n" in str(value):
+                    raise ValueError(f"{key} 不能包含换行符")
             update_env_file(config.env_file, env_updates)
 
         if profile_updates and sender_id:
@@ -999,6 +1003,16 @@ class DashboardState:
         candidate = Path(unquote(str(raw_path or ""))).expanduser().resolve()
         roots = [config.workspace_root.resolve(), config.state_dir.resolve()]
         if not candidate.is_file() or not any(candidate == root or root in candidate.parents for root in roots):
+            raise FileNotFoundError(candidate)
+        # 敏感文件拒绝下载:ENV(含 LLM API Key)/ GA 密钥 / 微信账号凭证(bot_token 可接管账号)
+        name = candidate.name.lower()
+        if name in {".env", "mykey.py", "mykey.json"}:
+            raise FileNotFoundError(candidate)
+        try:
+            rel_state = candidate.relative_to(config.state_dir.resolve())
+        except ValueError:
+            rel_state = None
+        if rel_state is not None and rel_state.parts and rel_state.parts[0] == "accounts":
             raise FileNotFoundError(candidate)
         return candidate
 
