@@ -107,6 +107,7 @@ class Config:
     l4_min_new_transcript_files: int = 2
     l4_cooldown_seconds: int = 14400
     l4_sample_rate: float = 0.2
+    web_search_enabled: bool = True
     dida_command: str = ""
     supervision_default_delay_minutes: int = 15
     supervision_default_focus_minutes: int = 25
@@ -201,6 +202,7 @@ class Config:
             checkin_minimum_minutes=max(1, checkin_minimum_ms // 60_000),
             checkin_maximum_minutes=max(1, checkin_maximum_ms // 60_000),
             checkin_enabled=_bool_value(value("G4W_CHECKIN_ENABLED", "1"), True),
+            web_search_enabled=_bool_value(value("G4W_WEB_SEARCH_ENABLED", "1"), True),
             timeline_locale=value("G4W_TIMELINE_LOCALE", "zh-CN") or "zh-CN",
             timeline_theme=(value("G4W_TIMELINE_UI_THEME", "default") or "default").lower(),
             short_path_dual_write=_bool_value(value("G4W_SHORT_PATH_DUAL_WRITE", "0"), False),

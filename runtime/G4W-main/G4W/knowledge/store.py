@@ -116,6 +116,8 @@ class KnowledgeStore:
             shutil.copy2(source, stored)
         else:
             stored.write_text(text, encoding="utf-8")
+        text_path = self.docs_dir / f"{doc_id}.extracted.txt"
+        text_path.write_text(text, encoding="utf-8")
         now = int(time.time())
         manifest = self.load_manifest()
         doc = {
@@ -123,6 +125,7 @@ class KnowledgeStore:
             "title": title or source.name or doc_id,
             "source_path": str(source),
             "stored_path": str(stored),
+            "text_path": str(text_path),
             "tags": tags or [],
             "created_at": now,
             "updated_at": now,
@@ -162,6 +165,12 @@ class KnowledgeStore:
         if stored:
             try:
                 Path(stored).unlink(missing_ok=True)
+            except Exception:
+                pass
+        text_path = doc.get("text_path")
+        if text_path:
+            try:
+                Path(text_path).unlink(missing_ok=True)
             except Exception:
                 pass
         self.write_chunks([c for c in self.read_chunks() if c.get("doc_id") != doc_id])

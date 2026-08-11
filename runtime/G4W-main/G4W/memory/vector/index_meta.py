@@ -7,12 +7,118 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from .embedding import _resolve_base_url, _resolve_model, resolve_dim, resolve_provider
-from .hnsw_index import IndexMeta
 from .sandbox_paths import resolve_vector_index_dir
+
+# Local IndexMeta (pure dataclass, no numpy).  index_meta is used by the main
+# GA process (runtime/app/.venv) which intentionally has no numpy; importing
+# hnsw_index would pull numpy in and crash /vector status.  This local copy
+# keeps the same on-disk shape as hnsw_index.IndexMeta — keep both in sync.
+_DEFAULT_DIM = 1024
+_DEFAULT_M = 16
+_DEFAULT_EFC = 200
+_DEFAULT_EFS = 50
+
+
+@dataclass
+class IndexMeta:
+    """Index on-disk meta (meta.json).
+
+    Core HNSW fields + embedding fingerprint (model / base_url).
+    Unknown keys are preserved in ``extras`` so save() does not clobber
+    rebuild_*/last_l4_* / provider / source patches.
+    """
+
+    dim: int = _DEFAULT_DIM
+    M: int = _DEFAULT_M
+    ef_construction: int = _DEFAULT_EFC
+    ef_search: int = _DEFAULT_EFS
+    backend: str = "brute"  # "hnswlib" | "brute"
+    space: str = "cosine"
+    count: int = 0
+    created_at: float = field(default_factory=time.time)
+    labels: List[str] = field(default_factory=list)
+    # Embedding fingerprint (TASK-F)
+    model: str = ""
+    base_url: str = ""
+    # Catch-all for non-core keys (rebuild_*, last_l4_*, provider, source, …)
+    extras: Dict[str, Any] = field(default_factory=dict)
+
+    # Keys owned by IndexMeta core fields (not stored in extras)
+    _CORE_KEYS = frozenset(
+        {
+            "dim",
+            "M",
+            "ef_construction",
+            "ef_search",
+            "backend",
+            "space",
+            "count",
+            "created_at",
+            "labels",
+            "model",
+            "base_url",
+            "extras",
+        }
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "dim": self.dim,
+            "M": self.M,
+            "ef_construction": self.ef_construction,
+            "ef_search": self.ef_search,
+            "backend": self.backend,
+            "space": self.space,
+            "count": self.count,
+            "created_at": self.created_at,
+            "labels": list(self.labels),
+        }
+        if self.model:
+            out["model"] = self.model
+        if self.base_url:
+            out["base_url"] = self.base_url
+        # flatten extras (preserve last_l4_*, rebuild_*, provider, source, …)
+        for k, v in (self.extras or {}).items():
+            if k in self._CORE_KEYS:
+                continue
+            out[k] = v
+        return out
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "IndexMeta":
+        raw = dict(d or {})
+        extras: Dict[str, Any] = {}
+        # nested extras blob (optional)
+        nested = raw.pop("extras", None)
+        if isinstance(nested, dict):
+            extras.update(nested)
+        model = str(raw.get("model") or raw.get("embed_model") or "")
+        base_url = str(raw.get("base_url") or "")
+        core = {
+            "dim": int(raw.get("dim", _DEFAULT_DIM)),
+            "M": int(raw.get("M", _DEFAULT_M)),
+            "ef_construction": int(raw.get("ef_construction", _DEFAULT_EFC)),
+            "ef_search": int(raw.get("ef_search", _DEFAULT_EFS)),
+            "backend": str(raw.get("backend", "brute")),
+            "space": str(raw.get("space", "cosine")),
+            "count": int(raw.get("count", 0)),
+            "created_at": float(raw.get("created_at", time.time())),
+            "labels": list(raw.get("labels") or []),
+            "model": model,
+            "base_url": base_url,
+        }
+        for k, v in raw.items():
+            if k in cls._CORE_KEYS:
+                continue
+            # embed_model alias already folded into model
+            if k == "embed_model":
+                continue
+            extras[k] = v
+        return cls(**core, extras=extras)
 
 
 def meta_path(index_dir: Union[str, Path, None] = None) -> Path:
@@ -46,23 +152,39 @@ def read_meta_dict(index_dir: Union[str, Path, None] = None) -> Optional[Dict[st
 
 
 def current_embedding_fingerprint() -> Dict[str, Any]:
-    """Runtime embedding identity used for mismatch checks (no secrets)."""
+    """Runtime embedding identity used for mismatch checks (no secrets).
+
+    The embedding module needs numpy, which the minimal GA environment
+    intentionally lacks.  Fall back to reading vector_config directly so
+    /vector status keeps working in the main process.
+    """
     provider = ""
-    try:
-        provider = str(resolve_provider() or "")
-    except Exception:
-        provider = ""
     model = ""
-    try:
-        model = str(_resolve_model() or "")
-    except Exception:
-        model = ""
     base_url = ""
+    dim = None
     try:
+        from .embedding import _resolve_base_url, _resolve_model, resolve_dim, resolve_provider
+
+        provider = str(resolve_provider() or "")
+        model = str(_resolve_model() or "")
         base_url = str(_resolve_base_url(provider or "local") or "")
+        dim = int(resolve_dim())
     except Exception:
-        base_url = ""
-    dim = int(resolve_dim())
+        # No numpy in the main GA process: best-effort from vector_config.json.
+        try:
+            from .vector_config import load_config
+
+            cfg = load_config() or {}
+            if not provider and str(cfg.get("base_url") or "").strip():
+                provider = "openai"
+            if not model:
+                model = str(cfg.get("model") or "")
+            if not base_url:
+                base_url = str(cfg.get("base_url") or "").rstrip("/")
+            if dim is None and cfg.get("dim"):
+                dim = int(cfg["dim"])
+        except Exception:
+            pass
     return {
         "provider": provider,
         "model": model,

@@ -91,7 +91,9 @@ def stop_service(config: Config) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(prog="python -m G4W")
-    parser.add_argument("command", choices=("start", "stop", "monitor", "login", "accounts", "doctor", "prepare", "key", "init-env", "sync-runtime-paths", "migrate", "bind-legacy", "export-public-sops"), nargs="?", default="start")
+    parser.add_argument("command", choices=("start", "stop", "monitor", "login", "accounts", "doctor", "dashboard", "prepare", "key", "init-env", "sync-runtime-paths", "migrate", "bind-legacy", "export-public-sops"), nargs="?", default="start")
+    parser.add_argument("--host", default=os.environ.get("G4W_DASHBOARD_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("G4W_DASHBOARD_PORT", "18180")))
     parser.add_argument("--source", default="")
     parser.add_argument("--target", default="")
     parser.add_argument("--sender", default="")
@@ -121,6 +123,9 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
     config = Config.load()
+    if args.command == "dashboard":
+        from ..dashboard.server import run_dashboard
+        raise SystemExit(run_dashboard(config, args.host, args.port))
     if args.command == "stop":
         print(json.dumps(stop_service(config), ensure_ascii=False, indent=2))
         return

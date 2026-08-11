@@ -870,6 +870,108 @@ class ConductorHandler(GenericAgentHandler):
             return StepOutcome(payload, next_prompt="知识库删除未成功；不得回复已移除。")
         return StepOutcome(payload, next_prompt="知识库删除成功；只有现在可以回复已移除，并带 doc_id 和 title。")
 
+    def do_G4W_web_search(self, args, response):
+        """网络信息检索：DeepSeek 模型优先走官方 Responses API web_search，否则/失败回退 web_scan。"""
+        query = str(args.get("query") or "").strip()
+        if not query:
+            return StepOutcome(
+                {"ok": False, "error": "query is required"},
+                next_prompt="补充检索 query 后重试 G4W_web_search。",
+            )
+        enabled = bool(getattr(getattr(self.controller, "config", None), "web_search_enabled", True))
+        if not enabled:
+            return StepOutcome(
+                {"ok": False, "error": "G4W_web_search disabled by config"},
+                next_prompt="G4W_web_search 已被配置禁用；改用 web_scan 或说明无法联网检索。",
+            )
+
+        # 读 mykey.py（GA 同源配置）：model 决定是否走 deepseek websearch；
+        # apibase/apikey 决定请求端点（便携包=官方直连，个人环境=CPA 中转，均可被看板统计）。
+        # 注意：G4W 进程的 sys.path 不含 runtime/app，需用 GA_APP_DIR 显式加载 mykey.py。
+        model = ""
+        api_key = ""
+        base_url = ""
+        try:
+            import importlib.util
+
+            from G4W.core.config import GA_APP_DIR
+
+            mykey_path = GA_APP_DIR / "mykey.py"
+            if mykey_path.is_file():
+                spec = importlib.util.spec_from_file_location("g4w_mykey", mykey_path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                lite = getattr(module, "native_oai_config_lite", None) or {}
+                model = str(lite.get("model") or "").strip()
+                api_key = str(lite.get("apikey") or "").strip()
+                base_url = str(lite.get("apibase") or "").strip().rstrip("/")
+        except Exception:
+            pass
+
+        is_deepseek = "deepseek" in model.lower()
+        if not is_deepseek or not api_key or not base_url:
+            return (yield from self._web_search_fallback(response))
+
+        # DeepSeek Responses API + web_search（服务端执行搜索）。
+        # 端点跟随 mykey 的 apibase：便携包直连官方，个人环境经 CPA 中转（看板可统计）。
+        # 固定 stream=False：CPA 对 responses 请求按 stream 字段分流，非流式才路由到 codex 段。
+        import json as _json
+        import urllib.request as _urllib
+
+        payload = {
+            "model": model,
+            "tools": [{"type": "web_search"}],
+            "input": query,
+            "stream": False,
+        }
+        request = _urllib.Request(
+            f"{base_url}/v1/responses",
+            data=_json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with _urllib.urlopen(request, timeout=90) as response_http:
+                data = _json.loads(response_http.read().decode("utf-8"))
+        except Exception:
+            return (yield from self._web_search_fallback(response))
+
+        outputs = data.get("output") or []
+        search_calls = [item for item in outputs if item.get("type") == "web_search_call"]
+        texts = []
+        for item in outputs:
+            if item.get("type") != "message":
+                continue
+            for block in item.get("content") or []:
+                if block.get("type") == "output_text" and block.get("text"):
+                    texts.append(block["text"])
+        answer = "\n".join(texts).strip()
+        if not answer or not search_calls:
+            # 无搜索结果或模型未实际执行搜索 → 视为失效，回退 web_scan。
+            return (yield from self._web_search_fallback(response))
+
+        result = {
+            "ok": True,
+            "query": query,
+            "engine": "deepseek_web_search",
+            "model": model,
+            "search_count": len(search_calls),
+            "searches": [str(item.get("search_query") or item.get("query") or "") for item in search_calls],
+            "answer": answer,
+        }
+        outcome = StepOutcome(result, next_prompt="基于检索结果回答用户；回答应带来源或日期，不得编造未出现的内容。")
+        return self._bound_tool_outcome("G4W_web_search", args, outcome)
+
+    def _web_search_fallback(self, response):
+        """G4W_web_search 失效时的回退：走 GA 浏览器扫描（text_only 拿正文）。"""
+        outcome = yield from super().do_web_scan(
+            {"tabs_only": False, "text_only": True}, response
+        )
+        return self._bound_tool_outcome("web_scan", {"text_only": True}, outcome)
+
     def do_ask_user(self, args, response):
         question = str(args.get("question") or "需要你补充一点信息").strip()
         candidates = [str(item).strip() for item in (args.get("candidates") or []) if str(item).strip()]

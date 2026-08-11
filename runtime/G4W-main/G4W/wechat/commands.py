@@ -19,6 +19,7 @@ COMMAND_GROUPS = [
         ("⏹️", "/stop", "停止当前线程里的运行任务"),
         ("⏰", "/checkin <min>-<max>", "设置主动 check-in 间隔，单位分钟"),
         ("📣", "/turn status, /turn on, /turn off", "查看、开启或关闭中间 turn 回复显示"),
+        ("🐾", "/worker_turn status, /worker_turn on, /worker_turn off", "查看、开启或关闭 worker 中间进度汇报"),
         ("🧾", "/input status, /input on, /input off", "查看、开启或关闭完整LLM Input快照"),
         ("🧩", "/chunk <number>", "调整微信短回复合并的最小字符数"),
     ]),
@@ -303,6 +304,14 @@ class CommandRouter:
                 state = self.service.turn_progress.set(binding_key, mode == "on")
                 return self.service.turn_progress.status_text(binding_key)
             return "用法：/turn status | /turn on | /turn off"
+        if name == "worker_turn":
+            mode = args.lower() or "status"
+            if mode == "status":
+                return self.service.worker_turn.status_text(binding_key)
+            if mode in ("on", "off"):
+                self.service.worker_turn.set(binding_key, mode == "on")
+                return self.service.worker_turn.status_text(binding_key)
+            return "用法：/worker_turn status | /worker_turn on | /worker_turn off"
         if name == "input":
             mode = args.lower() or "status"
             if mode == "status":

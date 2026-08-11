@@ -108,6 +108,13 @@ class WeixinChannel:
                 def save(state): state.setdefault("accounts", {})[account["accountId"]] = account
                 self.accounts.update(save)
                 self.account = account
+                # 登录成功后把当前账号写入 package-local ENV,
+                # 保证后续 start 能精确选中(多账号/重复登录时 G4W_ACCOUNT_ID 不会为空或过期)
+                try:
+                    from ..memory.instructions import update_env_file
+                    update_env_file(self.config.env_file, {"G4W_ACCOUNT_ID": account["accountId"]})
+                except Exception as error:
+                    print(f"[G4W] warning: failed to write G4W_ACCOUNT_ID to ENV: {error}")
                 return account
             time.sleep(1)
         raise WeixinError("login timed out")

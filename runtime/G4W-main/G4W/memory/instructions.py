@@ -97,15 +97,19 @@ def update_env_file(path: Path, updates: dict[str, str]) -> None:
         lines = path.read_text(encoding="utf-8-sig").splitlines()
     except FileNotFoundError:
         lines = []
-    pending = {str(key): str(value) for key, value in updates.items()}
+    values = {str(key): str(value) for key, value in updates.items()}
+    seen = set()
     rendered = []
     for line in lines:
         stripped = line.strip()
         key = stripped.split("=", 1)[0].strip() if "=" in stripped and not stripped.startswith("#") else ""
-        if key in pending:
-            rendered.append(f"{key}={pending.pop(key)}")
+        if key in values:
+            if key not in seen:
+                rendered.append(f"{key}={values[key]}")
+                seen.add(key)
         else:
             rendered.append(line)
+    pending = {key: value for key, value in values.items() if key not in seen}
     if pending:
         if rendered and rendered[-1].strip():
             rendered.append("")

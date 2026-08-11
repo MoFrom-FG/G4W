@@ -21,6 +21,7 @@ which msedge  # 或检查 Program Files (x86)/Microsoft/Edge/Application/
 3. **截图加 `fullPage: true`**：否则只截视口区域，长图被截断
 4. **长图文件直接落盘到md所在目录**：禁止写到temp目录（会被清理）
 5. **file_send用`print_result("file-send", "send", {"path":绝对路径})`**：用固定入口入队，禁止直接改Outbox
+6. **用户正在用浏览器时禁止前台激活Edge截图**：生成长图必须用后台headless实例（9222端口已有后台Edge可直接连）或Edge命令行`--headless=new --screenshot`后台截图，完成后再file_send，不得弹出/抢占用户当前窗口
 
 ### 前置检查清单
 - [ ] md文件所在目录是否存在

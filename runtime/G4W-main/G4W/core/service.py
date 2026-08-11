@@ -21,8 +21,11 @@ from ..features.timeline_publish import TimelinePublisher
 from .scheduler import ScheduledStore
 from .storage import DeferredReplyStore, EventStore, JsonStore, OutboxStore
 from ..agents.turn_progress import TurnProgressStore
+from ..agents.worker_turn import WorkerTurnStore
 from ..agents.input_capture import InputCaptureStore
 from .cache_metrics import CacheMetricsStore
+from .dashboard_control import DashboardControlMailbox
+from ..agents.ga_adapter import model_catalog
 from ..memory.migration import archive_obsolete_state, migrate_portable_wechat_layout
 from ..memory.sop_catalog import SopCatalog
 from ..wechat.weixin_delivery import build_effective_reply_text, format_deferred_reply_batch
@@ -52,8 +55,10 @@ class G4WService:
         self._last_worker_watchdog = 0.0
         self.deferred = DeferredReplyStore(config.state_dir / "deferred-replies.json")
         self.turn_progress = TurnProgressStore(config.state_dir / "turn-progress-config.json")
+        self.worker_turn = WorkerTurnStore(config.state_dir / "worker-turn-config.json")
         self.input_capture = InputCaptureStore(config.state_dir / "input-capture-config.json", config.conversations_dir)
         self.cache_metrics = CacheMetricsStore(config.state_dir / "cache-metrics.json")
+        self.dashboard_control = DashboardControlMailbox(config.state_dir)
         self.schedules = ScheduledStore(config.state_dir / "schedules.json")
         self.diary = DiaryStore(
             config.diary_dir,
@@ -215,8 +220,60 @@ class G4WService:
             self.supervision.process_due()
             self.checkins.emit_due(self.events, self.l4, self.wechat_maintenance, self.config.user_name)
             self.schedules.emit_due(self.events, limit=20)
+            self.process_dashboard_requests(limit=10)
             self.process_events(limit=20)
             time.sleep(0.2)
+
+    def _dashboard_models(self, sender_id: str) -> dict:
+        session = self.controller.session(sender_id)
+        rows = list(session.agent.list_llms())
+        catalog = {int(item.get("index", -1)): item for item in model_catalog(session.agent)}
+        models = []
+        for index, label, current in rows:
+            meta = catalog.get(int(index), {})
+            models.append({
+                "index": int(index),
+                "label": str(label or meta.get("name") or meta.get("model") or index),
+                "model": str(meta.get("model") or meta.get("name") or label or index),
+                "name": str(meta.get("name") or ""),
+                "current": bool(current),
+            })
+        current = next((item for item in models if item["current"]), None)
+        return {"models": models, "current": current or {}, "senderId": sender_id}
+
+    def process_dashboard_requests(self, limit: int = 10) -> int:
+        processed = 0
+        for request in self.dashboard_control.pending(limit=limit):
+            payload = request.get("payload") if isinstance(request.get("payload"), dict) else {}
+            action = str(request.get("action") or "")
+            try:
+                sender_id = str(payload.get("senderId") or "").strip()
+                if action in {"list_models", "set_model"} and not sender_id:
+                    raise ValueError("当前没有可用的微信会话")
+                if action == "list_models":
+                    result = {"ok": True, **self._dashboard_models(sender_id)}
+                elif action == "set_model":
+                    selected = self.controller.set_model(sender_id, payload.get("query"))
+                    result = {"ok": True, "selected": selected, **self._dashboard_models(sender_id)}
+                elif action == "set_model_defaults":
+                    worker_model = str(payload.get("workerModel") or "").strip()
+                    pro_model = str(payload.get("proModel") or "").strip()
+                    if worker_model:
+                        self.workers.default_model = worker_model
+                    if pro_model:
+                        self.workers.pro_model = pro_model
+                    result = {
+                        "ok": True,
+                        "workerModel": self.workers.default_model,
+                        "proModel": self.workers.pro_model,
+                    }
+                else:
+                    raise ValueError(f"未知看板控制操作：{action}")
+            except Exception as error:
+                result = {"ok": False, "error": str(error)}
+            self.dashboard_control.complete(request, result)
+            processed += 1
+        return processed
 
     def _ensure_outbox_thread(self) -> bool:
         with self._outbox_thread_lock:
@@ -459,6 +516,15 @@ class G4WService:
                         if event.get("type") not in ("wechat.user_message", "wechat.command")
                     ]
                     batch, suppressed = self._coalesce_background_events(queued)
+                    if not self.worker_turn.get(first["bindingKey"]):
+                        kept = []
+                        for event in batch:
+                            event_type = str(event.get("type") or "")
+                            if event_type in ("worker.progress_milestone", "worker.stalled"):
+                                suppressed.append(event)
+                            else:
+                                kept.append(event)
+                        batch = kept
                     for event in suppressed:
                         self.events.mark(event["id"], "done")
                 command_events = [event for event in batch if event.get("type") == "wechat.command"]

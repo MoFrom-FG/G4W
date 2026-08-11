@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#111714" />
+  <title>G4W Control Center</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-mark">G</span><div><strong>G4W</strong><small>CONTROL CENTER</small></div><button class="sidebar-close" id="sidebar-close" aria-label="关闭导航">×</button></div>
+      <nav class="sidebar-nav">
+        <div class="nav-label">控制中心</div>
+        <a class="nav-item active" data-page="overview" href="#overview"><span>⌂</span>总览</a>
+        <a class="nav-item" data-page="workers" href="#workers"><span>◈</span>Worker</a>
+        <a class="nav-item" data-page="memory" href="#memory"><span>✦</span>长期记忆</a>
+        <div class="nav-label">个人记录</div>
+        <a class="nav-item" data-page="timeline" href="#timeline"><span>◷</span>时间轴</a>
+        <a class="nav-item" data-page="diary" href="#diary"><span>✎</span>日记</a>
+        <div class="nav-label">资料与系统</div>
+        <a class="nav-item" data-page="knowledge" href="#knowledge"><span>▣</span>知识库</a>
+        <a class="nav-item" data-page="events" href="#events"><span>≋</span>系统动态</a>
+        <a class="nav-item" data-page="environment" href="#environment"><span>⚙</span>环境配置</a>
+        <a class="nav-item" data-page="prompt" href="#prompt"><span>⌘</span>提示词</a>
+      </nav>
+      <section class="sidebar-appearance">
+        <div class="appearance-title"><span>外观</span><small id="appearance-current">微信绿 · 跟随系统</small></div>
+        <div class="palette-switch" aria-label="色彩主题"><button class="active" data-palette-choice="wechat">微信绿</button><button data-palette-choice="neko">Neko 粉</button></div>
+        <select id="theme-mode-select" aria-label="明暗模式"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select>
+      </section>
+      <div class="sidebar-footer"><span class="status-dot"></span><span id="sidebar-status">DASHBOARD ONLINE</span><small>LOCAL · 127.0.0.1</small></div>
+    </aside>
+    <button class="sidebar-scrim" id="sidebar-scrim" aria-label="关闭导航"></button>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="menu-button" id="menu-button" aria-label="打开导航" aria-expanded="false">☰</button>
+        <div class="breadcrumbs">G4W <span>/</span> <b id="page-name">Overview</b></div>
+        <div class="top-actions">
+          <span class="live-pill"><i></i><span id="top-status">STANDBY</span></span>
+          <button class="icon-button" id="refresh-button" title="刷新">↻</button>
+          <button class="theme-button" id="theme-button" title="切换主题" aria-label="切换主题"><span id="theme-icon">◐</span></button>
+        </div>
+      </header>
+
+      <section class="page-view active" data-page-view="overview">
+        <section class="hero glass-card">
+          <div><div class="eyebrow">PERSONAL AI OPERATIONS</div><h1>你好，<span id="user-name">本地用户</span></h1><p>任务、记忆、知识与提示词，现在都在同一个本地控制中心。</p></div>
+          <div class="hero-status"><span class="status-ring"></span><div><strong id="hero-status">CORE STANDBY</strong><small id="hero-model">模型状态读取中</small></div></div>
+        </section>
+        <section class="brief glass-card"><div class="brief-label">SYSTEM BRIEF</div><div><strong>实时接入 G4W 本地数据</strong><p>通过 SSE 更新 Worker、事件、记忆和知识库状态。</p></div><span class="brief-time" id="last-updated">--:--:--</span></section>
+        <section class="metric-grid">
+          <article class="metric-card glass-card"><div class="metric-icon">◈</div><span>运行中 Worker</span><strong id="running-workers">0</strong><small id="worker-total">0 个已登记</small></article>
+          <article class="metric-card glass-card"><div class="metric-icon">✦</div><span>用户记忆档案</span><strong id="memory-count">0</strong><small id="memory-backups">0 个历史版本</small></article>
+          <article class="metric-card glass-card"><div class="metric-icon">▣</div><span>知识库文档</span><strong id="knowledge-count">0</strong><small id="chunk-count">0 个内容分块</small></article>
+          <article class="metric-card glass-card"><div class="metric-icon">≋</div><span>待处理事件</span><strong id="event-count">0</strong><small>来自本地事件队列</small></article>
+        </section>
+        <section class="content-grid">
+          <article class="network-card glass-card">
+            <div class="section-heading"><div><div class="eyebrow">CONTEXT GRAPH</div><h2>G4W 运行拓扑</h2><p>Conductor 与执行、记忆和检索模块</p></div><span class="section-live">LIVE</span></div>
+            <div class="network-stage"><div class="grid-floor"></div><div class="connection c1"></div><div class="connection c2"></div><div class="connection c3"></div><a class="node node-core" href="#overview" title="回到总览"><span>G</span><strong>CONDUCTOR</strong><small id="conductor-node">STANDBY</small></a><a class="node node-worker" href="#workers" title="查看 Worker 页面"><span>◈</span><strong>WORKER</strong><small id="worker-node">0 ACTIVE</small></a><a class="node node-memory" href="#memory" title="查看长期记忆页面"><span>✦</span><strong>MEMORY</strong><small id="memory-node">0 PROFILES</small></a><a class="node node-kb" href="#knowledge" title="查看知识库页面"><span>▣</span><strong>KNOWLEDGE</strong><small id="kb-node">0 DOCS</small></a></div>
+          </article>
+          <article class="workers-card glass-card"><div class="section-heading"><div><div class="eyebrow">BACKGROUND WORK</div><h2>Worker 状态</h2></div><a href="#workers">全部查看 →</a></div><div class="worker-list" id="worker-list"><div class="empty-state">当前没有 Worker 记录</div></div></article>
+        </section>
+        <section class="lower-grid">
+          <article class="events-card glass-card"><div class="section-heading"><div><div class="eyebrow">EVENT STREAM</div><h2>实时活动</h2></div><span class="muted-tag">LOCAL ONLY</span></div><div class="event-list" id="event-list"><div class="empty-state">还没有活动事件</div></div></article>
+          <article class="context-card glass-card"><div class="eyebrow">RUNTIME CONTEXT</div><h2>当前上下文</h2><div class="context-row"><span>Conductor 模型</span><strong id="context-model">--</strong></div><div class="context-row"><span>向量检索</span><strong id="context-vector">--</strong></div><div class="context-row"><span>记忆根目录</span><code id="context-memory">--</code></div><div class="context-row"><span>知识库目录</span><code id="context-kb">--</code></div></article>
+        </section>
+        <footer>G4W CONTROL CENTER <span>·</span> LOCAL DASHBOARD <span>·</span> <span id="footer-year"></span></footer>
+      </section>
+
+      <section class="page-view" data-page-view="workers">
+        <div class="page-header"><div><div class="eyebrow">BACKGROUND OPERATIONS</div><h1>Worker 管理</h1><p>点击 Worker 查看最后回复、报告、运行历史和产物。</p></div><span class="page-badge" id="workers-page-badge">0 REGISTERED</span></div>
+        <div class="metric-grid page-metrics"><article class="metric-card glass-card"><span>Worker 总数</span><strong id="workers-page-total">0</strong><small>包含已归档任务</small></article><article class="metric-card glass-card"><span>当前运行</span><strong id="workers-page-running">0</strong><small>RUNNING / STARTING</small></article><article class="metric-card glass-card"><span>当前展示</span><strong id="workers-page-visible">0</strong><small>按更新时间排序</small></article></div>
+        <article class="data-panel glass-card"><div class="section-heading"><div><div class="eyebrow">WORKER REGISTRY</div><h2>后台任务列表</h2></div><span class="muted-tag">点击查看详情</span></div><div class="data-list" id="worker-page-list"><div class="empty-state">暂无 Worker 数据</div></div></article>
+      </section>
+
+      <section class="page-view" data-page-view="memory">
+        <div class="page-header"><div><div class="eyebrow">LONG-TERM CONTEXT</div><h1>长期记忆</h1><p>按账号切换，查看各自的长期记忆档案。</p></div><div class="memory-switch"><label for="memory-profile-select">记忆账号</label><select id="memory-profile-select" aria-label="选择记忆账号"></select></div></div>
+        <div class="memory-layout" id="memory-page-body"><div class="empty-state glass-card">正在读取记忆…</div></div>
+      </section>
+
+      <section class="page-view" data-page-view="timeline">
+        <div class="page-header"><div><div class="eyebrow">PERSONAL ACTIVITY MAP</div><h1>时间轴</h1><p>沿用现有 Timeline 的日／周／月结构，在控制中心内查看生活与工作的时间分布。</p></div><span class="page-badge" id="timeline-page-badge">LOADING</span></div>
+        <div class="timeline-toolbar glass-card"><div class="segmented" id="timeline-mode"><button class="active" data-timeline-mode="day">日</button><button data-timeline-mode="week">周</button><button data-timeline-mode="month">月</button></div><div class="timeline-zoom" aria-label="时间轴缩放"><button data-timeline-zoom="out" title="缩小">−</button><button data-timeline-zoom="reset" id="timeline-zoom-label" title="重置缩放">100%</button><button data-timeline-zoom="in" title="放大">＋</button></div><select id="timeline-date" aria-label="选择时间轴日期"></select></div>
+        <div class="metric-grid timeline-metrics"><article class="metric-card glass-card"><span>当前范围</span><strong id="timeline-range">--</strong><small>北京时间</small></article><article class="metric-card glass-card"><span>时间块</span><strong id="timeline-events-count">0</strong><small>当前范围内的记录</small></article><article class="metric-card glass-card"><span>记录时长</span><strong id="timeline-duration">0h</strong><small>事件持续时间合计</small></article><article class="metric-card glass-card"><span>活动分类</span><strong id="timeline-category-count">0</strong><small>生活、工作、休息等</small></article></div>
+        <article class="timeline-board-card glass-card"><div class="section-heading"><div><div class="eyebrow">CAT VIEW</div><h2 id="timeline-focus-title">今天怎么过</h2><p id="timeline-focus-subtitle">时间竖着走，短记录也能看清。</p></div><span class="muted-tag" id="timeline-updated">--</span></div><div class="timeline-board" id="timeline-board"><div class="empty-state">正在读取时间轴…</div></div><div class="timeline-legend" id="timeline-legend"></div></article>
+        <section class="timeline-analysis-grid"><article class="glass-card analysis-card"><div class="section-heading"><div><div class="eyebrow">DISTRIBUTION</div><h2>分布</h2></div><span class="timeline-filter-pill" id="timeline-filter-tag" hidden>全部</span></div><div class="distribution-wrap"><div class="distribution-donut" id="timeline-donut"></div><div class="distribution-list" id="timeline-distribution"></div></div></article><article class="glass-card analysis-card"><div class="section-heading"><div><div class="eyebrow">TREND</div><h2>趋势</h2></div><span class="timeline-filter-pill" id="timeline-trend-tag" hidden>全部</span></div><div class="trend-bars" id="timeline-trend"></div></article></section>
+        <article class="data-panel glass-card"><div class="section-heading"><div><div class="eyebrow">EVENTS</div><h2>事件</h2></div><span class="timeline-filter-pill" id="timeline-events-tag" hidden>全部</span><span class="muted-tag">点击查看详情</span></div><div class="timeline-event-grid" id="timeline-event-list"><div class="empty-state">暂无时间轴事件</div></div></article>
+      </section>
+
+      <section class="page-view" data-page-view="diary">
+        <div class="page-header"><div><div class="eyebrow">AGENT JOURNAL</div><h1>日记</h1><p>阅读 Agent 按天记录的情绪、关系意义、决定与值得延续的线索。</p></div><span class="page-badge" id="diary-page-badge">0 DAYS</span></div>
+        <div class="diary-layout"><aside class="diary-index glass-card"><label class="diary-month-field">月份<select id="diary-month" aria-label="选择日记月份"></select></label><label class="search-field">搜索日记<input id="diary-search" placeholder="日期、标题或摘要" /></label><div class="diary-date-list" id="diary-date-list"><div class="empty-state">正在读取日记…</div></div></aside><article class="diary-reader glass-card"><header><div><div class="eyebrow">DAILY NOTE</div><h2 id="diary-title">选择一篇日记</h2></div><div class="diary-actions"><button id="diary-prev" aria-label="上一篇">←</button><button id="diary-next" aria-label="下一篇">→</button></div></header><div class="diary-meta" id="diary-meta"></div><div class="markdown diary-content" id="diary-content"><div class="empty-state">从左侧选择日期查看 Agent 日记。</div></div></article></div>
+      </section>
+
+      <section class="page-view" data-page-view="knowledge">
+        <div class="page-header"><div><div class="eyebrow">KNOWLEDGE RETRIEVAL</div><h1>知识库</h1><p>已导入文档、分块数量、标签和向量检索状态。</p></div><span class="page-badge" id="knowledge-page-badge">0 DOCUMENTS</span></div>
+        <div class="metric-grid page-metrics"><article class="metric-card glass-card"><span>文档数量</span><strong id="knowledge-page-total">0</strong><small>当前 manifest</small></article><article class="metric-card glass-card"><span>内容分块</span><strong id="knowledge-page-chunks">0</strong><small>关键词检索语料</small></article><article class="metric-card glass-card"><span>向量检索</span><strong id="knowledge-page-vector">OFF</strong><small>本地 Embedding</small></article></div>
+        <div class="catalog-toolbar glass-card"><label class="search-field">搜索文档<input id="knowledge-search" placeholder="标题、标签或文档 ID" /></label><label>标签<select id="knowledge-tag"><option value="">全部标签</option></select></label></div>
+        <article class="data-panel glass-card"><div class="section-heading"><div><div class="eyebrow">DOCUMENT CATALOG</div><h2>文档列表</h2></div><span class="muted-tag">点击阅读正文</span></div><div class="data-list" id="knowledge-page-list"><div class="empty-state">暂无知识库文档</div></div></article>
+      </section>
+
+      <section class="page-view" data-page-view="events">
+        <div class="page-header"><div><div class="eyebrow">SYSTEM ACTIVITY</div><h1>系统动态</h1><p>回答 G4W 现在在做什么、刚刚完成了什么，以及哪里需要关注。</p></div><span class="page-badge" id="events-page-badge">0 EVENTS</span></div>
+        <div class="metric-grid event-metrics"><article class="metric-card glass-card"><span>当前显示</span><strong id="events-visible-count">0</strong><small>经过合并和脱敏</small></article><article class="metric-card glass-card"><span>Worker</span><strong id="events-worker-count">0</strong><small>任务生命周期</small></article><article class="metric-card glass-card"><span>记忆维护</span><strong id="events-memory-count">0</strong><small>记忆、时间轴、日记</small></article><article class="metric-card glass-card"><span>异常</span><strong id="events-error-count">0</strong><small>失败或待处理</small></article></div>
+        <div class="event-filters" id="event-filters"><button class="active" data-event-filter="all">全部</button><button data-event-filter="conversation">对话</button><button data-event-filter="worker">Worker</button><button data-event-filter="memory">记忆</button><button data-event-filter="automation">自动化</button><button data-event-filter="system">系统</button></div>
+        <article class="data-panel glass-card"><div class="section-heading"><div><div class="eyebrow">LOCAL EVENT QUEUE</div><h2>最近运行记录</h2></div><span class="section-live">LIVE</span></div><div class="system-event-list" id="events-page-list"><div class="empty-state">暂无系统动态</div></div></article>
+      </section>
+
+      <section class="page-view" data-page-view="environment">
+        <div class="page-header"><div><div class="eyebrow">RUNTIME CONFIGURATION</div><h1>环境配置</h1><p>微信命令与 WebUI 共用现有持久化配置；密钥不会展示。</p></div><span class="page-badge">EDITABLE</span></div>
+        <form id="settings-form" class="settings-grid">
+          <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">IDENTITY</div><h2>个人与助手</h2></div><span class="scope">全局 · 重启生效</span></div><label>用户名字<input name="userName" id="setting-user-name" /></label><label>日常称呼<input name="userIdentity" id="setting-user-identity" /></label><label>用户性别<select name="userGender" id="setting-user-gender"><option value="male">male</option><option value="female">female</option><option value="neutral">neutral</option></select></label><label>助手名字<input name="botName" id="setting-bot-name" /></label></article>
+          <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">INTERACTION</div><h2>微信交互</h2></div><span class="scope">当前微信用户 · 实时</span></div><label class="switch-row"><span><b>中间 Turn 回复</b><small>/turn on|off</small></span><input type="checkbox" name="turnEnabled" id="setting-turn" /></label><label class="switch-row"><span><b>Worker 进度汇报</b><small>/worker_turn on|off</small></span><input type="checkbox" name="workerTurnEnabled" id="setting-worker-turn" /></label><label class="switch-row"><span><b>完整 Input 快照</b><small>/input on|off</small></span><input type="checkbox" name="inputCaptureEnabled" id="setting-input" /></label><label>微信分片阈值<input type="number" min="1" max="3800" name="chunkChars" id="setting-chunk" /></label></article>
+          <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">MODEL ROUTING</div><h2>模型与工作区</h2></div><span class="scope" id="model-control-status">连接主进程</span></div><label>当前对话模型<select id="setting-conductor-model" data-model-target="conductor" disabled><option>正在读取真实模型列表…</option></select><small class="model-hint">与微信 /model 完全相同，选择后立即切换当前会话。</small></label><label>Worker 默认模型<select id="setting-worker-model" data-model-target="worker" disabled><option>正在读取真实模型列表…</option></select><small class="model-hint">选择后立即保存，新建 Worker 生效。</small></label><label>Pro 默认模型<select id="setting-pro-model" data-model-target="pro" disabled><option>正在读取真实模型列表…</option></select><small class="model-hint">选择后立即保存，新建升级任务生效。</small></label><label>当前工作区<input name="workspaceRoot" id="setting-workspace" /></label></article>
+          <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">AUTOMATION</div><h2>主动联系与检索</h2></div><span class="scope">配置存储 · 实时</span></div><label class="switch-row"><span><b>随机 Check-in</b><small>/checkin</small></span><input type="checkbox" name="checkinEnabled" id="setting-checkin" /></label><div class="field-pair"><label>最短分钟<input type="number" min="1" name="checkinMin" id="setting-checkin-min" /></label><label>最长分钟<input type="number" min="1" name="checkinMax" id="setting-checkin-max" /></label></div><label class="switch-row"><span><b>向量检索</b><small>/vector on|off</small></span><input type="checkbox" name="vectorEnabled" id="setting-vector" /></label><label class="switch-row"><span><b>Web Search</b><small>G4W_WEB_SEARCH_ENABLED</small></span><input type="checkbox" name="webSearchEnabled" id="setting-web-search" /></label></article>
+          <div class="settings-actions"><span id="settings-message">修改后点击保存</span><button type="submit" class="primary-button" id="settings-save">保存设置</button></div>
+        </form>
+      </section>
+
+      <section class="page-view" data-page-view="prompt">
+        <div class="page-header"><div><div class="eyebrow">MODEL INPUT INSPECTOR</div><h1>System Prompt</h1><p>查看最近一次真实模型请求，以及稳定提示词与本轮动态检索的边界。</p></div><button class="secondary-button" id="prompt-refresh">重新读取</button></div>
+        <div class="prompt-summary glass-card"><div><span>模型</span><strong id="prompt-model">--</strong></div><div><span>生成时间</span><strong id="prompt-time">--</strong></div><div><span>System 字符</span><strong id="prompt-chars">0</strong></div><div><span>快照来源</span><code id="prompt-source">--</code></div></div>
+        <div class="prompt-tabs"><button class="active" data-prompt-tab="structure">组成结构</button><button data-prompt-tab="final">最终有效 Prompt</button><button data-prompt-tab="dynamic">本轮动态上下文</button></div>
+        <div class="prompt-workspace glass-card" data-prompt-panel="structure"><aside class="prompt-tree" id="prompt-tree"><div class="empty-state">正在读取 Prompt 结构</div></aside><section class="prompt-inspector"><div class="prompt-node-meta" id="prompt-node-meta"></div><pre id="prompt-node-content">选择左侧节点查看内容</pre></section></div>
+        <article class="prompt-code glass-card" data-prompt-panel="final" hidden><pre id="prompt-final">正在读取…</pre></article>
+        <article class="prompt-code glass-card" data-prompt-panel="dynamic" hidden><div class="dynamic-note">这部分附加在当前用户消息中，不属于稳定 System Prompt。</div><pre id="prompt-dynamic">当前快照没有动态检索内容。</pre></article>
+      </section>
+    </main>
+  </div>
+
+  <div class="drawer-layer" id="drawer-layer" hidden>
+    <div class="drawer-backdrop" data-close-drawer></div>
+    <aside class="drawer"><header><div><div class="eyebrow" id="drawer-eyebrow">DETAIL</div><h2 id="drawer-title">详情</h2></div><button class="drawer-close" data-close-drawer>×</button></header><div class="drawer-body" id="drawer-body"></div></aside>
+  </div>
+  <div class="toast" id="toast" hidden></div>
+  <div class="timeline-tooltip" id="timeline-tooltip" role="tooltip" hidden></div>
+  <script src="/vendor/markdown-it.min.js"></script>
+  <script src="/vendor/katex/katex.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

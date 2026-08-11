@@ -612,6 +612,12 @@ def ensure_venv(
     emb = embedding_root(root)
     venv_dir = emb / _VENV_DIR
     base_py = _find_base_python()
+    # Portable-local pip cache and temp dirs (never touch the user's C: %TEMP%/pip cache)
+    portable_root = emb.parent.parent
+    pip_cache_dir = portable_root / ".pip-cache"
+    tmp_dir = portable_root / ".tmp"
+    pip_cache_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
     out: Dict[str, Any] = {
         "ok": False,
         "base_python": str(base_py),
@@ -688,6 +694,14 @@ def ensure_venv(
             def _pip_stream(cmd: List[str], timeout_s: int, action: str) -> int:
                 """Run pip with live stdout (no capture_output hang illusion)."""
                 print(f"[install] {action}: {' '.join(cmd)}", flush=True)
+                child_env = dict(os.environ)
+                child_env.update(
+                    {
+                        "PIP_CACHE_DIR": str(pip_cache_dir),
+                        "TMP": str(tmp_dir),
+                        "TEMP": str(tmp_dir),
+                    }
+                )
                 proc = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
@@ -696,6 +710,7 @@ def ensure_venv(
                     encoding="utf-8",
                     errors="replace",
                     bufsize=1,
+                    env=child_env,
                 )
                 tail: List[str] = []
                 assert proc.stdout is not None
@@ -988,6 +1003,10 @@ def download_model(
     model_dir = emb / "models" / PINNED_MODEL
     ordered_endpoints = _model_endpoints(endpoints)
     expected_vpy = emb / _VENV_DIR / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    # Portable-local temp dir for HF downloads (never the user's C: %TEMP%)
+    portable_root = emb.parent.parent
+    tmp_dir = portable_root / ".tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
     before = probe_layout(emb)
     if before.get("model_ok"):
         return {
@@ -1035,6 +1054,8 @@ def download_model(
                 "HF_HUB_DISABLE_XET": "1",
                 "HF_HUB_DOWNLOAD_TIMEOUT": "120",
                 "HF_HUB_ETAG_TIMEOUT": "20",
+                "TMP": str(tmp_dir),
+                "TEMP": str(tmp_dir),
                 "PYTHONUTF8": "1",
                 "PYTHONIOENCODING": "utf-8",
             }
