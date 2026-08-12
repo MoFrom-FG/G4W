@@ -62,6 +62,8 @@ _THEME_VARS = frozenset({
     # 界面色(分 dark / light 两套)
     "bg", "sidebar", "panel", "panel-strong", "field", "line",
     "text", "soft", "muted", "faint", "overlay", "shadow",
+    # 形状
+    "radius",
 })
 
 

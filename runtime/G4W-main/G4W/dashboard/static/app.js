@@ -439,7 +439,7 @@ function routeFromHash() { routeTo((location.hash || "#overview").slice(1)); }
 // 自定义主题:变量清单(shared=通用, mode=分深浅两套)
 const THEME_EDITOR_VARS = {
   shared: [
-    ["accent-rgb", "强调色 RGB"], ["wechat", "主色"], ["wechat-strong", "主色(深)"], ["wechat-soft", "主色(淡)"], ["line-strong", "主色描边"],
+    ["accent-rgb", "强调色 RGB"], ["wechat", "主色"], ["wechat-strong", "主色(深)"], ["wechat-soft", "主色(淡)"], ["line-strong", "主色描边"], ["radius", "界面圆角(px)"],
     ["danger", "危险"], ["warning", "警告"], ["blue", "蓝色"], ["purple", "紫色"],
     ["cat-life", "分类·生活"], ["cat-work", "分类·工作"], ["cat-study", "分类·学习"], ["cat-exercise", "分类·运动"], ["cat-entertainment", "分类·娱乐"],
     ["cat-health", "分类·健康"], ["cat-social", "分类·社交"], ["cat-care", "分类·照料"], ["cat-travel", "分类·出行"], ["cat-rest", "分类·休息"],
@@ -468,7 +468,7 @@ function applyCustomTheme(theme) {
 
 function applyAppearance(mode, palette) {
   const resolved = mode === "system" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : mode;
-  const resolvedPalette = palette === "neko" ? "neko" : palette === "custom" ? "custom" : "wechat";
+  const resolvedPalette = palette === "neko" ? "neko" : palette === "argon" ? "argon" : palette === "custom" ? "custom" : "wechat";
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.themeMode = mode;
   document.documentElement.dataset.palette = resolvedPalette;
@@ -477,10 +477,13 @@ function applyAppearance(mode, palette) {
   $("theme-button").title = `主题：${mode === "system" ? "跟随系统" : mode === "light" ? "浅色" : "深色"}`;
   $("theme-mode-select").value = mode;
   document.querySelectorAll("[data-palette-choice]").forEach((button) => button.classList.toggle("active", button.dataset.paletteChoice === resolvedPalette));
-  const paletteLabel = resolvedPalette === "neko" ? "Neko 粉" : resolvedPalette === "custom" ? "自定义" : "微信绿";
+  const paletteLabel = resolvedPalette === "neko" ? "Neko 粉" : resolvedPalette === "argon" ? "Argon 蓝" : resolvedPalette === "custom" ? "自定义" : "微信绿";
   const modeLabel = mode === "system" ? "跟随系统" : mode === "light" ? "浅色" : "深色";
   $("appearance-current").textContent = `${paletteLabel} · ${modeLabel}`;
-  document.querySelector('meta[name="theme-color"]').content = resolved === "light" ? (resolvedPalette === "neko" ? "#fff7fb" : "#f5f7f6") : (resolvedPalette === "neko" ? "#181217" : "#111714");
+  const metaColor = resolved === "light"
+    ? (resolvedPalette === "neko" ? "#fff7f4" : resolvedPalette === "argon" ? "#f2f4f8" : "#f5f7f6")
+    : (resolvedPalette === "neko" ? "#181217" : resolvedPalette === "argon" ? "#141a23" : "#111714");
+  document.querySelector('meta[name="theme-color"]').content = metaColor;
 }
 
 function cycleTheme() {
