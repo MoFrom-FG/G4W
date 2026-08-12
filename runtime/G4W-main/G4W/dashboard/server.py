@@ -52,6 +52,19 @@ def _read_text(path: Path, default: str = "") -> str:
         return default
 
 
+# 自定义主题可编辑的 CSS 变量白名单(无 "--" 前缀,存储时用)
+_THEME_VARS = frozenset({
+    # 强调/通用(shared)
+    "accent-rgb", "wechat", "wechat-strong", "wechat-soft", "line-strong",
+    "danger", "warning", "blue", "purple",
+    "cat-life", "cat-work", "cat-study", "cat-exercise", "cat-entertainment",
+    "cat-health", "cat-social", "cat-care", "cat-travel", "cat-rest",
+    # 界面色(分 dark / light 两套)
+    "bg", "sidebar", "panel", "panel-strong", "field", "line",
+    "text", "soft", "muted", "faint", "overlay", "shadow",
+})
+
+
 def _write_json(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -979,7 +992,37 @@ class DashboardState:
             "locationEnabled": config.location_enabled,
             "webSearchEnabled": config.web_search_enabled,
             "vectorEnabled": bool(load_vector_config().get("enabled")),
+            "theme": self.read_custom_theme(),
         }
+
+    def read_custom_theme(self) -> dict:
+        """Custom dashboard theme: {"dark": {...}, "light": {...}, "shared": {...}}."""
+        return _read_json(self.config.state_dir / "dashboard-theme.json", {"dark": {}, "light": {}, "shared": {}})
+
+    def update_custom_theme(self, theme: dict) -> dict:
+        """Validate + persist custom theme (whitelist vars, reject CSS injection)."""
+        if not isinstance(theme, dict):
+            raise ValueError("theme 必须是对象")
+        cleaned: dict = {}
+        for mode in ("dark", "light", "shared"):
+            raw = theme.get(mode)
+            if raw is None:
+                continue
+            if not isinstance(raw, dict):
+                raise ValueError(f"theme.{mode} 必须是对象")
+            cleaned[mode] = {}
+            for key, value in raw.items():
+                if key not in _THEME_VARS:
+                    continue
+                value = str(value).strip()
+                if not value:
+                    continue
+                if any(ch in value for ch in ("\r", "\n", ";", "{", "}", "<", ">")):
+                    raise ValueError(f"theme 值不合法: {key}")
+                cleaned[mode][key] = value
+        target = self.config.state_dir / "dashboard-theme.json"
+        target.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
+        return cleaned
 
     def models(self) -> dict:
         config = self._fresh_config()
@@ -1114,6 +1157,10 @@ class DashboardState:
 
         if "vectorEnabled" in updates:
             set_vector_enabled(bool(updates["vectorEnabled"]))
+
+        if "theme" in updates:
+            self.update_custom_theme(updates["theme"])
+            # 主题即时生效,无需重启
 
         if binding_key and ({"workspaceRoot", "conductorModel"} & set(updates)):
             bindings_path = config.conversations_dir / "bindings.json"

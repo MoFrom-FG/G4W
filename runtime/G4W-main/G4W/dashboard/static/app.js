@@ -436,17 +436,48 @@ function routeTo(page) {
 
 function routeFromHash() { routeTo((location.hash || "#overview").slice(1)); }
 
+// 自定义主题:变量清单(shared=通用, mode=分深浅两套)
+const THEME_EDITOR_VARS = {
+  shared: [
+    ["accent-rgb", "强调色 RGB"], ["wechat", "主色"], ["wechat-strong", "主色(深)"], ["wechat-soft", "主色(淡)"], ["line-strong", "主色描边"],
+    ["danger", "危险"], ["warning", "警告"], ["blue", "蓝色"], ["purple", "紫色"],
+    ["cat-life", "分类·生活"], ["cat-work", "分类·工作"], ["cat-study", "分类·学习"], ["cat-exercise", "分类·运动"], ["cat-entertainment", "分类·娱乐"],
+    ["cat-health", "分类·健康"], ["cat-social", "分类·社交"], ["cat-care", "分类·照料"], ["cat-travel", "分类·出行"], ["cat-rest", "分类·休息"],
+  ],
+  mode: [
+    ["bg", "背景"], ["sidebar", "侧边栏"], ["panel", "面板"], ["panel-strong", "面板(实)"], ["field", "输入框"], ["line", "分隔线"],
+    ["text", "文字"], ["soft", "次要文字"], ["muted", "弱文字"], ["faint", "最弱文字"], ["overlay", "遮罩"], ["shadow", "阴影"],
+  ],
+};
+
+function applyCustomTheme(theme) {
+  let style = $("g4w-custom-theme");
+  if (!style) {
+    style = document.createElement("style");
+    style.id = "g4w-custom-theme";
+    document.head.appendChild(style);
+  }
+  const shared = (theme && theme.shared) || {};
+  const dark = (theme && theme.dark) || {};
+  const light = (theme && theme.light) || {};
+  const block = (vars) => Object.entries(vars).map(([k, v]) => `--${k}:${v};`).join("");
+  style.textContent =
+    `:root[data-palette="custom"]{${block(shared)}${block(dark)}}` +
+    `:root[data-palette="custom"][data-theme="light"]{${block(light)}}`;
+}
+
 function applyAppearance(mode, palette) {
   const resolved = mode === "system" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : mode;
-  const resolvedPalette = palette === "neko" ? "neko" : "wechat";
+  const resolvedPalette = palette === "neko" ? "neko" : palette === "custom" ? "custom" : "wechat";
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.themeMode = mode;
   document.documentElement.dataset.palette = resolvedPalette;
+  if (resolvedPalette === "custom") applyCustomTheme(dashboardData?.configuration?.theme);
   $("theme-icon").textContent = mode === "light" ? "☀" : mode === "dark" ? "☾" : "◐";
   $("theme-button").title = `主题：${mode === "system" ? "跟随系统" : mode === "light" ? "浅色" : "深色"}`;
   $("theme-mode-select").value = mode;
   document.querySelectorAll("[data-palette-choice]").forEach((button) => button.classList.toggle("active", button.dataset.paletteChoice === resolvedPalette));
-  const paletteLabel = resolvedPalette === "neko" ? "Neko 粉" : "微信绿";
+  const paletteLabel = resolvedPalette === "neko" ? "Neko 粉" : resolvedPalette === "custom" ? "自定义" : "微信绿";
   const modeLabel = mode === "system" ? "跟随系统" : mode === "light" ? "浅色" : "深色";
   $("appearance-current").textContent = `${paletteLabel} · ${modeLabel}`;
   document.querySelector('meta[name="theme-color"]').content = resolved === "light" ? (resolvedPalette === "neko" ? "#fff7fb" : "#f5f7f6") : (resolvedPalette === "neko" ? "#181217" : "#111714");
@@ -462,6 +493,67 @@ function cycleTheme() {
 function workerRow(worker, compact = false) {
   if (compact) return `<div class="worker-row" data-worker-id="${esc(worker.id)}"><div class="worker-symbol">◈</div><div class="worker-copy"><strong>${esc(worker.topic)}</strong><span>${esc(worker.summary)}</span></div><div class="worker-meta"><b class="status-${esc(worker.status)}">${statusLabel(worker.status)}</b><small>${esc(worker.model)}</small></div></div>`;
   return `<div class="data-row clickable" data-worker-id="${esc(worker.id)}"><div class="data-icon">◈</div><div class="data-copy"><strong>${esc(worker.topic)}</strong><span>${esc(worker.summary)}</span><small>${esc(worker.capability || worker.id)} · run ${esc(worker.runIndex)}</small></div><div class="data-meta"><b class="status-${esc(worker.status)}">${statusLabel(worker.status)}</b><span>${esc(worker.model)}</span></div></div>`;
+}
+
+let themeEditMode = "dark";
+
+function renderThemeEditor() {
+  const theme = (dashboardData && dashboardData.configuration && dashboardData.configuration.theme) || {};
+  const container = $("theme-editor");
+  if (!container) return;
+  const mode = themeEditMode === "light" ? "light" : "dark";
+  const shared = theme.shared || {};
+  const surface = theme[mode] || {};
+  const row = (key, label, value, group) =>
+    `<label class="theme-row"><span>${label}<small>--${key}</small></span><input type="text" data-theme-var="${key}" data-theme-group="${group}" value="${esc(value)}" placeholder="默认" spellcheck="false" /></label>`;
+  const html =
+    `<div class="theme-group-label">通用(深浅共用)</div>` +
+    THEME_EDITOR_VARS.shared.map(([key, label]) => row(key, label, shared[key] || "", "shared")).join("") +
+    `<div class="theme-group-label">${mode === "dark" ? "深色" : "浅色"}模式界面</div>` +
+    THEME_EDITOR_VARS.mode.map(([key, label]) => row(key, label, surface[key] || "", mode)).join("");
+  container.innerHTML = html;
+}
+
+function collectTheme() {
+  const theme = { shared: {}, dark: {}, light: {} };
+  document.querySelectorAll("[data-theme-var]").forEach((input) => {
+    const value = input.value.trim();
+    if (!value) return;
+    theme[input.dataset.themeGroup][input.dataset.themeVar] = value;
+  });
+  return theme;
+}
+
+async function saveTheme() {
+  const messageEl = $("theme-message");
+  try {
+    const theme = collectTheme();
+    const res = await fetchJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ theme }) });
+    if (!res.ok) throw new Error(res.error || "保存失败");
+    if (dashboardData && dashboardData.configuration) dashboardData.configuration.theme = theme;
+    if (document.documentElement.dataset.palette === "custom") applyAppearance(document.documentElement.dataset.themeMode || "system", "custom");
+    messageEl.textContent = "主题已保存，立即生效";
+    messageEl.style.color = "";
+  } catch (error) {
+    messageEl.textContent = error.message || "保存失败";
+    messageEl.style.color = "#ff6b6b";
+  }
+}
+
+async function resetTheme() {
+  const messageEl = $("theme-message");
+  try {
+    const res = await fetchJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ theme: { dark: {}, light: {}, shared: {} } }) });
+    if (!res.ok) throw new Error(res.error || "恢复失败");
+    if (dashboardData && dashboardData.configuration) dashboardData.configuration.theme = { dark: {}, light: {}, shared: {} };
+    renderThemeEditor();
+    if (document.documentElement.dataset.palette === "custom") applyAppearance(document.documentElement.dataset.themeMode || "system", "custom");
+    messageEl.textContent = "已恢复默认";
+    messageEl.style.color = "";
+  } catch (error) {
+    messageEl.textContent = error.message || "恢复失败";
+    messageEl.style.color = "#ff6b6b";
+  }
 }
 
 function renderSettings(config) {
@@ -486,6 +578,7 @@ function renderSettings(config) {
     "setting-web-search": config.webSearchEnabled
   };
   Object.entries(checks).forEach(([id, value]) => { if ($(id)) $(id).checked = Boolean(value); });
+  renderThemeEditor();
 }
 
 function compactEventRows(items) {
@@ -530,6 +623,7 @@ function render(data) {
   dashboardData = data;
   const system = data.system || fallback.system;
   const metrics = data.metrics || fallback.metrics;
+  if (document.documentElement.dataset.palette === "custom") applyCustomTheme(dashboardData?.configuration?.theme);
   const memory = data.memory || fallback.memory;
   const knowledge = data.knowledge || fallback.knowledge;
   const configuration = data.configuration || fallback.configuration;
@@ -1193,6 +1287,13 @@ $("login-password").addEventListener("keydown", (event) => { if (event.key === "
 $("setup-button").addEventListener("click", submitSetup);
 $("setup-password2").addEventListener("keydown", (event) => { if (event.key === "Enter") submitSetup(); });
 $("password-save").addEventListener("click", submitPasswordChange);
+$("theme-save").addEventListener("click", saveTheme);
+$("theme-reset").addEventListener("click", resetTheme);
+document.querySelectorAll(".theme-mode-tabs [data-theme-mode]").forEach((button) => button.addEventListener("click", () => {
+  themeEditMode = button.dataset.themeMode;
+  document.querySelectorAll(".theme-mode-tabs [data-theme-mode]").forEach((b) => b.classList.toggle("active", b === button));
+  renderThemeEditor();
+}));
 ensureAuth().then((ok) => {
   if (!ok) return;
   routeFromHash();
@@ -1200,3 +1301,4 @@ ensureAuth().then((ok) => {
   connectEvents();
 });
 setInterval(refresh, 30000);
+

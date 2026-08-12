@@ -105,7 +105,7 @@ nav { display: grid; gap: 4px; }
 .nav-item.active span { color: var(--wechat); }
 .sidebar-appearance { margin-top: 12px; padding: 13px 11px; border: 1px solid var(--line); border-radius: 11px; background: var(--field); }
 .appearance-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--soft); font-size: 10px; }.appearance-title small { color: var(--muted); font-size: 8px; text-align: right; }
-.palette-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 10px; }.palette-switch button { padding: 7px 5px; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); font-size: 9px; }.palette-switch button.active { border-color: var(--line-strong); color: var(--wechat); background: var(--wechat-soft); }
+.palette-switch { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; margin-top: 10px; }.palette-switch button { padding: 7px 5px; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); font-size: 9px; }.palette-switch button.active { border-color: var(--line-strong); color: var(--wechat); background: var(--wechat-soft); }
 .sidebar-appearance select { width: 100%; margin-top: 7px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-strong); color: var(--soft); font-size: 9px; outline: none; }
 .sidebar-footer { display: grid; grid-template-columns: auto 1fr; gap: 3px 7px; margin-top: auto; padding: 14px 11px; border-top: 1px solid var(--line); color: var(--wechat); font-size: 10px; }
 .sidebar-footer small { grid-column: 2; color: var(--muted); font-size: 9px; }
@@ -199,3 +199,19 @@ footer { padding: 24px 3px 0; color: var(--faint); font: 9px Consolas, monospace
 .login-button { width: 100%; margin-top: 6px; padding: 11px 0; border: 0; border-radius: 9px; background: var(--wechat); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
 .login-button:hover { background: var(--wechat-strong); }
 .login-error { margin: 12px 0 0; color: #ff6b6b; font-size: 12px; }
+
+
+/* ---- 自定义主题编辑器 ---- */
+.theme-mode-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 12px; }
+.theme-mode-tabs button { padding: 7px 0; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); font-size: 10px; cursor: pointer; }
+.theme-mode-tabs button.active { border-color: var(--line-strong); color: var(--wechat); background: var(--wechat-soft); }
+.theme-group-label { margin: 10px 0 6px; color: var(--muted); font-size: 10px; letter-spacing: .12em; }
+.theme-editor { display: grid; gap: 6px; max-height: 420px; overflow: auto; padding-right: 4px; }
+.theme-row { display: grid; grid-template-columns: 1fr 90px; align-items: center; gap: 10px; }
+.theme-row > span { color: var(--soft); font-size: 11px; }
+.theme-row small { display: block; color: var(--faint); font: 9px Consolas, monospace; }
+.theme-row input { width: 100%; padding: 7px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--field); color: var(--text); font: 11px Consolas, monospace; outline: none; }
+.theme-row input:focus { border-color: var(--line-strong); }
+.ghost-button { padding: 10px 14px; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.ghost-button:hover { border-color: var(--line-strong); color: var(--text); }
+.settings-actions .ghost-button { margin-left: 8px; }
