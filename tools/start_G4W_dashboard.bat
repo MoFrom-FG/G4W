@@ -1,8 +1,7 @@
 @echo off
 setlocal
-chcp 65001 >nul
 
-set "PORTABLE_ROOT=%~dp0"
+set "PORTABLE_ROOT=%~dp0..\"
 set "PYTHON=%PORTABLE_ROOT%runtime\app\.venv\Scripts\python.exe"
 set "GA_APP_DIR=%PORTABLE_ROOT%runtime\app"
 set "G4W_HOME=%PORTABLE_ROOT%runtime\G4W-main"
@@ -18,18 +17,8 @@ if not exist "%PYTHON%" (
   pause
   exit /b 1
 )
-if not exist "%G4W_HOME%\.env" (
-  echo [G4W] Package-local ENV has not been initialized.
-  echo [G4W] Run 3_env_for_G4W.bat before logging in.
-  pause
-  exit /b 1
-)
 
 cd /d "%G4W_HOME%"
-echo [G4W] Opening the WeChat test-account QR login...
-echo [G4W] Keep this window open until login succeeds.
-"%PYTHON%" -u -m G4W login
-set "RESULT=%ERRORLEVEL%"
-if not "%RESULT%"=="0" echo [G4W] Login failed with exit code %RESULT%.
-pause
-exit /b %RESULT%
+echo [G4W] Starting local dashboard at http://127.0.0.1:18180
+start "G4W Dashboard" http://127.0.0.1:18180
+"%PYTHON%" -B -u -m G4W.dashboard.server --host 127.0.0.1 --port 18180

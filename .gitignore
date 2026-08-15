@@ -44,3 +44,6 @@ Desktop.ini
 
 # Draft notes (personal, never publish)
 /LINUXDO推广草稿*.md
+
+# DeepSeek Harness server gateway (personal ops: TOTP secret, credentials; not distributed)
+/tools/deep-gateway/

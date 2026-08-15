@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set "PORTABLE_ROOT=%~dp0"
+set "PORTABLE_ROOT=%~dp0..\"
 set "PYTHON=%PORTABLE_ROOT%runtime\app\.venv\Scripts\python.exe"
 set "GA_APP_DIR=%PORTABLE_ROOT%runtime\app"
 set "G4W_HOME=%PORTABLE_ROOT%runtime\G4W-main"

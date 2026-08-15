@@ -2,7 +2,7 @@
 setlocal
 chcp 65001 >nul
 
-set "PORTABLE_ROOT=%~dp0"
+set "PORTABLE_ROOT=%~dp0..\"
 set "BASE_PYTHON=%PORTABLE_ROOT%runtime\python\python.exe"
 set "GA_APP_DIR=%PORTABLE_ROOT%runtime\app"
 set "VENV_DIR=%GA_APP_DIR%\.venv"

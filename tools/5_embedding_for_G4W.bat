@@ -4,7 +4,7 @@ REM Portable entry: ST thin-HTTP vector addon (NOT LM Studio .env menu)
 REM Target: runtime\G4W-embedding  |  gate: WeChat /vector on|off
 REM NOTE: keep this file ASCII-safe for cmd.exe (avoid fullwidth punctuation)
 
-set "PORTABLE_ROOT=%~dp0"
+set "PORTABLE_ROOT=%~dp0..\"
 if "%PORTABLE_ROOT:~-1%"=="\" set "PORTABLE_ROOT=%PORTABLE_ROOT:~0,-1%"
 set "G4W_HOME=%PORTABLE_ROOT%\runtime\G4W-main"
 set "EMB_ROOT=%PORTABLE_ROOT%\runtime\G4W-embedding"
@@ -44,10 +44,11 @@ echo  size:    about 4-8 GB first time (GPU Torch + ST + model)
 echo.
 echo  Notes (NOT the old LM Studio 0-7 menu):
 echo    - installs into G4W-embedding\.venv (does not pollute GA)
-echo    - downloads Qwen model automatically: hf-mirror.com, then official fallback
+echo    - network preference (domestic/abroad) + speedtest: set in Dashboard
+echo      environment page -> Embedding card (auto picks fastest mirror)
 echo    - interrupted model downloads resume when this script is run again
 echo    - NVIDIA GPU detected: installs CUDA 12.8 Torch; otherwise CPU Torch
-echo    - PyTorch download: NJU mirror first, then Aliyun and official fallback
+echo    - PyTorch download: uses Dashboard speedtest pick (NJU/Aliyun/official fallback)
 echo    - may request UAC once to install the official Microsoft VC++ runtime for Torch
 echo    - does NOT enable the product gate (use WeChat /vector on)
 echo    - does NOT start a long-lived embed daemon; lifecycle starts on /vector on

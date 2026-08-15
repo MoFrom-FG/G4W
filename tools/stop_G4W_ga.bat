@@ -1,8 +1,7 @@
 @echo off
 setlocal
-chcp 65001 >nul
 
-set "PORTABLE_ROOT=%~dp0"
+set "PORTABLE_ROOT=%~dp0..\"
 set "PYTHON=%PORTABLE_ROOT%runtime\app\.venv\Scripts\python.exe"
 set "GA_APP_DIR=%PORTABLE_ROOT%runtime\app"
 set "G4W_HOME=%PORTABLE_ROOT%runtime\G4W-main"
@@ -19,13 +18,11 @@ if not exist "%PYTHON%" (
   exit /b 1
 )
 cd /d "%G4W_HOME%"
-echo [G4W] Initializing the package-local G4W ENV...
-"%PYTHON%" -m G4W init-env
+echo [G4W] Stopping Conductor and its Worker child processes...
+"%PYTHON%" -m G4W stop
 set "RESULT=%ERRORLEVEL%"
-if "%RESULT%"=="0" (
-  echo.
-  echo [G4W] G4W ENV is ready and remains portable after moving the whole folder.
-  echo [G4W] Next: 4_login_G4W_ga.bat
-)
+if not "%RESULT%"=="0" echo [G4W] Stop failed with exit code %RESULT%.
+if "%RESULT%"=="0" echo [G4W] Stop signal completed. Service/model terminals will show their exit status.
+if /i "%~1"=="quiet" exit /b %RESULT%
 pause
 exit /b %RESULT%
