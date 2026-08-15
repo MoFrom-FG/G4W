@@ -3,6 +3,8 @@ let dashboardData = null;
 let promptData = null;
 let settingsDirty = false;
 let timelineData = null;
+let lastTimelineAttempt = 0;
+let lastDiaryAttempt = 0;
 let timelineMode = "day";
 let timelineDate = "";
 let timelineSlotHeight = 30;
@@ -10,6 +12,18 @@ let timelineMonthZoom = 1;
 let timelineCategoryFilter = "";
 
 // ---- dashboard 登录鉴权(ga-admin 风格:密码登录 + 会话 cookie) ----
+// 前端 JS 错误上报（诊断用）：写 G4W-data/debug-js.log，便于远程定位
+window.addEventListener("error", (e) => {
+  try {
+    fetch("/api/debug-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ msg: String((e && e.message) || e), src: String((e && e.filename) || ""), line: e && e.lineno }) });
+  } catch (_) {}
+});
+window.addEventListener("unhandledrejection", (e) => {
+  try {
+    fetch("/api/debug-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ msg: "unhandledrejection: " + String((e && e.reason && e.reason.message) || (e && e.reason) || e) }) });
+  } catch (_) {}
+});
+
 function showLogin() {
   const overlay = $("login-overlay");
   if (overlay) overlay.hidden = false;
@@ -412,7 +426,7 @@ function showToast(message, isError = false) {
   showToast.timer = setTimeout(() => { toast.hidden = true; }, 3600);
 }
 
-const pageTitles = { overview: "Overview", workers: "Workers", memory: "Memory", timeline: "Timeline", diary: "Diary", knowledge: "Knowledge", events: "System Activity", environment: "Environment", prompt: "System Prompt" };
+const pageTitles = { overview: "Overview", workers: "Workers", memory: "Memory", timeline: "Timeline", diary: "Diary", todo: "待办", services: "服务与终端", knowledge: "Knowledge", events: "System Activity", environment: "Environment", prompt: "System Prompt" };
 
 function setSidebarOpen(open) {
   $("sidebar").classList.toggle("open", open);
@@ -432,6 +446,10 @@ function routeTo(page) {
   if (target === "timeline" && !timelineData) loadTimeline();
   if (target === "diary" && !diaryData) loadDiary();
   if (target === "environment") loadModels();
+  if (target === "services") { renderServicesPage(true); if (terminalId) startTerminalPoll(); }
+  else if (terminalTimer) stopTerminalPoll();
+  if (target === "workers") startWorkerMonitorPoll();
+  else stopWorkerMonitorPoll();
 }
 
 function routeFromHash() { routeTo((location.hash || "#overview").slice(1)); }
@@ -468,7 +486,7 @@ function applyCustomTheme(theme) {
 
 function applyAppearance(mode, palette) {
   const resolved = mode === "system" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : mode;
-  const resolvedPalette = palette === "neko" ? "neko" : palette === "argon" ? "argon" : palette === "custom" ? "custom" : "wechat";
+  const resolvedPalette = palette === "neko" ? "neko" : palette === "argon" || palette === "blue" ? "argon" : palette === "custom" ? "custom" : "wechat";
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.themeMode = mode;
   document.documentElement.dataset.palette = resolvedPalette;
@@ -477,7 +495,7 @@ function applyAppearance(mode, palette) {
   $("theme-button").title = `主题：${mode === "system" ? "跟随系统" : mode === "light" ? "浅色" : "深色"}`;
   $("theme-mode-select").value = mode;
   document.querySelectorAll("[data-palette-choice]").forEach((button) => button.classList.toggle("active", button.dataset.paletteChoice === resolvedPalette));
-  const paletteLabel = resolvedPalette === "neko" ? "Neko 粉" : resolvedPalette === "argon" ? "Argon 蓝" : resolvedPalette === "custom" ? "自定义" : "微信绿";
+  const paletteLabel = resolvedPalette === "neko" ? "Neko 粉" : resolvedPalette === "argon" ? "简洁蓝" : resolvedPalette === "custom" ? "自定义" : "微信绿";
   const modeLabel = mode === "system" ? "跟随系统" : mode === "light" ? "浅色" : "深色";
   $("appearance-current").textContent = `${paletteLabel} · ${modeLabel}`;
   const metaColor = resolved === "light"
@@ -495,7 +513,10 @@ function cycleTheme() {
 
 function workerRow(worker, compact = false) {
   if (compact) return `<div class="worker-row" data-worker-id="${esc(worker.id)}"><div class="worker-symbol">◈</div><div class="worker-copy"><strong>${esc(worker.topic)}</strong><span>${esc(worker.summary)}</span></div><div class="worker-meta"><b class="status-${esc(worker.status)}">${statusLabel(worker.status)}</b><small>${esc(worker.model)}</small></div></div>`;
-  return `<div class="data-row clickable" data-worker-id="${esc(worker.id)}"><div class="data-icon">◈</div><div class="data-copy"><strong>${esc(worker.topic)}</strong><span>${esc(worker.summary)}</span><small>${esc(worker.capability || worker.id)} · run ${esc(worker.runIndex)}</small></div><div class="data-meta"><b class="status-${esc(worker.status)}">${statusLabel(worker.status)}</b><span>${esc(worker.model)}</span></div></div>`;
+  const outputBtn = (worker.dir || worker.archivePath)
+    ? `<button class="worker-output-btn" data-worker-output="${esc(worker.dir)}" data-worker-archive="${esc(worker.archivePath)}" data-worker-id="${esc(worker.id)}" data-worker-label="${esc(worker.topic)}" title="在右侧监视器查看该 worker 的输出（未运行则显示历史）">输出</button>`
+    : "";
+  return `<div class="data-row clickable" data-worker-id="${esc(worker.id)}"><div class="data-icon">◈</div><div class="data-copy"><strong>${esc(worker.topic)}</strong><span>${esc(worker.summary)}</span><small>${esc(worker.capability || worker.id)} · run ${esc(worker.runIndex)}</small></div><div class="data-meta"><b class="status-${esc(worker.status)}">${statusLabel(worker.status)}</b><span>${esc(worker.model)}</span>${outputBtn}</div></div>`;
 }
 
 let themeEditMode = "dark";
@@ -582,6 +603,7 @@ function renderSettings(config) {
   };
   Object.entries(checks).forEach(([id, value]) => { if ($(id)) $(id).checked = Boolean(value); });
   renderThemeEditor();
+  loadEmbeddingConfig();
 }
 
 function compactEventRows(items) {
@@ -656,6 +678,13 @@ function render(data) {
   $("context-memory").textContent = memory.root || "--";
   $("context-kb").textContent = knowledge.root || "--";
   $("last-updated").textContent = new Date((data.updatedAt || Date.now()/1000)*1000).toLocaleTimeString("zh-CN", { hour12: false });
+  const nextCheckin = Number(data.nextCheckinAt) || 0;
+  const nextCheckinEl = $("next-checkin-time");
+  if (nextCheckinEl) {
+    nextCheckinEl.textContent = nextCheckin > 0
+      ? new Date(nextCheckin * 1000).toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" })
+      : "未安排";
+  }
   $("footer-year").textContent = new Date().getFullYear();
   $("sidebar-status").textContent = "DASHBOARD ONLINE";
 
@@ -665,11 +694,21 @@ function render(data) {
   $("workers-page-visible").textContent = workers.length;
   $("workers-page-badge").textContent = `${metrics.workers ?? workers.length} REGISTERED`;
   $("worker-page-list").innerHTML = workers.length ? workers.map((worker) => workerRow(worker)).join("") : '<div class="empty-state">暂无 Worker 数据</div>';
+  $("worker-page-list").querySelectorAll("[data-worker-output]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      selectWorkerMonitor(btn.dataset.workerOutput, btn.dataset.workerArchive, btn.dataset.workerId, btn.dataset.workerLabel);
+    });
+  });
 
   $("event-list").innerHTML = events.length ? compactEventRows(events.slice(0,8)) : '<div class="empty-state">还没有活动事件</div>';
   renderSystemEvents(events);
 
   renderMemoryPage(memory.items || []);
+
+  renderTodoPage();
+  renderServicesPage();
+  updateOverviewStartButton();
 
   const knowledgeItems = knowledge.items || [];
   $("knowledge-page-total").textContent = knowledge.documents ?? 0;
@@ -679,13 +718,39 @@ function render(data) {
   renderKnowledgeCatalog(knowledgeItems);
 
   renderSettings(configuration);
+
+  // 时间轴/日记加载失败后自动重试：连接拥堵导致的超时中止（"signal is aborted
+  // without reason"）不应永久残留错误——SSE 每秒驱动，5 秒节流，成功后自然停止
+  const activeView = document.querySelector('[data-page-view].active')?.dataset.pageView;
+  const nowMs = Date.now();
+  if (activeView === "timeline" && !timelineData && nowMs - lastTimelineAttempt > 5000) loadTimeline();
+  if (activeView === "diary" && !diaryData && nowMs - lastDiaryAttempt > 5000) loadDiary();
 }
 
 async function fetchJson(url, options) {
-  const response = await fetch(url, { cache: "no-store", ...options });
-  const payload = await response.json();
-  if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
-  return payload;
+  // 超时兜底 + 超时后自动重试一次（仅 GET：防止重启看板后浏览器/代理
+  // 复用指向旧进程的死 keep-alive 连接导致请求挂起；重试会走新连接）
+  const attempt = async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(url, { cache: "no-store", signal: controller.signal, ...options });
+      const payload = await response.json();
+      if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
+      return payload;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  try {
+    return await attempt();
+  } catch (error) {
+    const isGet = !options || !options.method || options.method === "GET";
+    if (isGet && error.name === "AbortError") {
+      return attempt(); // 重试一次走新连接
+    }
+    throw error;
+  }
 }
 
 async function refresh() {
@@ -863,6 +928,7 @@ function showTimelineTooltip(target, clientX, clientY) {
 function hideTimelineTooltip() { $("timeline-tooltip").hidden = true; }
 
 async function loadTimeline() {
+  lastTimelineAttempt = Date.now();
   $("timeline-board").innerHTML = '<div class="empty-state">正在读取时间轴…</div>';
   try {
     timelineData = await fetchJson("/api/timeline");
@@ -878,7 +944,7 @@ function openTimelineEvent(eventId, date) {
   if (!event) return;
   const tags = (event.tags || []).map((tag) => `<span>${esc(tag)}</span>`).join("");
   const html = `<div class="detail-pills"><span>${esc(date)}</span><span>${eventClock(event.startAt)}–${eventClock(event.endAt)}</span><span>${formatDuration(eventMinutes(event))}</span><span>${esc(timelineCategories[event.categoryId] || event.categoryId || "其他")}</span>${tags}</div><section class="drawer-section"><h3>记录</h3><p>${esc(event.note || "这条时间块没有附加说明。")}</p></section><section class="drawer-section"><h3>分类</h3><p>${esc(event.subcategoryId || event.categoryId || "未分类")}</p></section>`;
-  openDrawer(event.title || "时间轴事件", "TIMELINE EVENT", html);
+  openDrawer(event.title || "时间轴事件", "TIMELINE EVENT", html, timelineColor(event.categoryId));
 }
 
 function renderDiaryIndex() {
@@ -903,6 +969,7 @@ function renderDiaryMonths() {
 }
 
 async function loadDiary() {
+  lastDiaryAttempt = Date.now();
   try {
     diaryData = await fetchJson("/api/diary");
     renderDiaryMonths();
@@ -960,11 +1027,14 @@ function connectEvents() {
   source.onerror = () => { source.close(); setTimeout(connectEvents, 3000); };
 }
 
-function openDrawer(title, eyebrow, html) {
+function openDrawer(title, eyebrow, html, accentVar) {
   $("drawer-title").textContent = title;
   $("drawer-eyebrow").textContent = eyebrow;
   $("drawer-body").innerHTML = html;
-  $("drawer-layer").hidden = false;
+  const layer = $("drawer-layer");
+  if (accentVar) layer.style.setProperty("--drawer-accent", `var(${accentVar})`);
+  else layer.style.removeProperty("--drawer-accent");
+  layer.hidden = false;
   document.body.classList.add("drawer-open");
 }
 
@@ -1008,6 +1078,14 @@ function renderMemoryValue(value, depth = 0) {
 let memoryProfiles = [];
 let currentMemoryId = "";
 let currentMemorySections = [];
+let currentMemoryData = null;
+let backupsExpanded = false;
+let timelinePoints = [];
+
+function expandBackups(button) {
+  backupsExpanded = !backupsExpanded;
+  if (currentMemoryData) renderMemoryDetail(currentMemoryData);
+}
 
 function openMemorySection(key) {
   const section = currentMemorySections.find((item) => item.key === key);
@@ -1027,6 +1105,493 @@ function renderMemoryPage(items) {
   else if (!current) $("memory-page-body").innerHTML = '<div class="empty-state glass-card">暂无记忆档案 — 与 G4W 完成对话后会自动生成。</div>';
 }
 
+// ---------- Embedding 配置 / 测速 / 安装（环境配置页） ----------
+let embeddingLastLoadAt = 0;
+
+async function loadEmbeddingConfig(force = false) {
+  const nowMs = Date.now();
+  if (!force && nowMs - embeddingLastLoadAt < 10000) return;
+  embeddingLastLoadAt = nowMs;
+  const message = $("embedding-message");
+  try {
+    const data = await fetchJson("/api/embedding/config");
+    const status = data.status || {};
+    const statusEl = $("embedding-status");
+    if (statusEl) {
+      statusEl.innerHTML = status.installed
+        ? `<span class="status-running">● 已安装（${esc(status.mode || "")}${status.enabled ? " · 已启用" : " · 未启用"}）</span>`
+        : `<span class="status-stopped">○ 未安装（关键词检索可用）</span>`;
+    }
+    const network = (data.config || {}).network || "domestic";
+    const net = $("embedding-network");
+    if (net) net.checked = network !== "abroad";
+    if (message) message.textContent = network === "domestic"
+      ? "网络偏好：国内（镜像加速）。测速选优结果自动用于安装源。"
+      : "网络偏好：国外（官方源）。测速选优结果自动用于安装源。";
+  } catch (error) {
+    if (message) message.textContent = `读取失败：${error.message}`;
+  }
+}
+
+async function runEmbeddingSpeedtest() {
+  const box = $("embedding-speedtest-result");
+  const message = $("embedding-message");
+  if (!box) return;
+  box.innerHTML = '<div class="empty-state">正在测速（每源最多 4 秒）…</div>';
+  try {
+    const data = await fetchJson("/api/embedding/speedtest", { method: "POST" });
+    if (!data.ok) {
+      box.innerHTML = `<div class="empty-state">测速失败：${esc(data.error || "未知错误")}</div>`;
+      if (message) message.textContent = "测速失败，请稍后重试。";
+      return;
+    }
+    const rows = [];
+    const kindLabel = { pip: "pip 源", torch: "torch 源", hf: "模型源" };
+    for (const [kind, items] of Object.entries(data.results || {})) {
+      rows.push(`<div class="speedtest-kind">${kindLabel[kind] || kind}${data.picked && data.picked[kind] ? ` · 已选：${esc(data.picked[kind])}` : ""}</div>`);
+      (items || []).forEach((item) => {
+        const best = data.picked && data.picked[kind] === item.url;
+        const cls = best ? "speedtest-row best" : "speedtest-row";
+        const latency = item.reachable ? `${item.latency_ms} ms` : "不可达";
+        rows.push(`<div class="${cls}"><span>${esc(item.name)}</span><code>${esc(item.url)}</code><b>${latency}${best ? " ★" : ""}</b></div>`);
+      });
+    }
+    box.innerHTML = rows.join("") || '<div class="empty-state">没有可测的镜像</div>';
+    if (message) message.textContent = `测速完成${data.cached ? "（使用缓存）" : ""}：已自动选择延迟最低的源。`;
+  } catch (error) {
+    box.innerHTML = `<div class="empty-state">测速失败：${esc(error.message)}</div>`;
+    if (message) message.textContent = "测速失败，请确认已登录并重试。";
+  }
+}
+
+async function startEmbeddingInstall() {
+  if (!confirm("开始安装向量检索环境？\n\n将下载约 4-8GB（torch + 模型），耗时较长。\n安装进度可在「服务与终端」页实时查看，期间可关闭本页面。")) return;
+  const message = $("embedding-message");
+  try {
+    const data = await fetchJson("/api/embedding/install", { method: "POST" });
+    if (!data.ok) {
+      if (message) message.textContent = `启动失败：${data.error || "未知错误"}`;
+      return;
+    }
+    if (message) message.textContent = `安装任务已启动（pid ${data.pid || "?"}）→ 点「安装日志」前往「服务与终端」页查看进度`;
+    loadEmbeddingConfig(true);
+  } catch (error) {
+    if (message) message.textContent = `启动失败：${error.message}`;
+  }
+}
+
+// 绑定直接放顶层：app.js 在 body 尾部执行（DOM 已就绪），不依赖 DOMContentLoaded
+// （避免事件时序问题导致绑定失效——实证：部分浏览器/WebView 下 DOMContentLoaded 回调不执行）
+const net = $("embedding-network");
+if (net) net.addEventListener("change", async () => {
+  const message = $("embedding-message");
+  const network = net.checked ? "domestic" : "abroad";
+  try {
+    await fetchJson("/api/embedding/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ network }),
+    });
+    if (message) message.textContent = `已切换为：${network === "domestic" ? "国内（镜像加速）" : "国外（官方源）"}；下次安装/重装时生效。`;
+  } catch (error) {
+    if (message) message.textContent = `保存失败：${error.message}`;
+  }
+});
+const btnLog = $("embedding-log");
+if (btnLog) btnLog.addEventListener("click", () => {
+  // 前往「服务与终端」页并选中安装任务服务（实时日志在服务页终端）
+  selectTerminal("embedding-install");
+  location.hash = "#services";
+});
+$("embedding-speedtest").addEventListener("click", runEmbeddingSpeedtest);
+$("embedding-install").addEventListener("click", startEmbeddingInstall);
+
+// ---------- 待办页（与微信 /todo 同源；标签页 + 分页） ----------
+let todoTab = "pending";
+let todoPage = 1;
+let todoLastFetchAt = 0;
+const TODO_PAGE_SIZE = 15;
+
+async function renderTodoPage(force = false) {
+  const now = Date.now();
+  // SSE 每秒触发 render()：待办数据变化慢，5 秒节流即可；交互（tab/翻页/完成/删除）用 force 强制刷新
+  if (!force && now - todoLastFetchAt < 5000) return;
+  todoLastFetchAt = now;
+  let data;
+  try {
+    data = await fetchJson("/api/todo");
+  } catch (error) {
+    $("todo-page-list").innerHTML = `<div class="empty-state">读取待办失败：${esc(error.message)}</div>`;
+    return;
+  }
+  const tasks = data.tasks || {};
+  const rows = [];
+  Object.entries(tasks).forEach(([sender, items]) => {
+    (items || []).forEach((task) => rows.push({ sender, task }));
+  });
+  const pendingRows = rows.filter((r) => r.task.status === "pending");
+  const doneRows = rows.filter((r) => r.task.status === "done");
+  $("todo-page-pending").textContent = pendingRows.length;
+  $("todo-page-overdue").textContent = pendingRows.filter((r) => r.task.classify === "overdue").length;
+  $("todo-page-done").textContent = doneRows.length;
+  $("todo-page-badge").textContent = `${pendingRows.length} PENDING`;
+  const active = todoTab === "done" ? doneRows : pendingRows;
+  const totalPages = Math.max(1, Math.ceil(active.length / TODO_PAGE_SIZE));
+  if (todoPage > totalPages) todoPage = totalPages;
+  const pageRows = active.slice((todoPage - 1) * TODO_PAGE_SIZE, todoPage * TODO_PAGE_SIZE);
+  const listEl = $("todo-page-list");
+  if (!pageRows.length) {
+    listEl.innerHTML = todoTab === "done"
+      ? '<div class="empty-state">还没有已办任务</div>'
+      : '<div class="empty-state">没有待办 🎉</div>';
+  } else {
+    const bySender = {};
+    pageRows.forEach(({ sender, task }) => {
+      (bySender[sender] = bySender[sender] || []).push(task);
+    });
+    listEl.innerHTML = Object.entries(bySender)
+      .map(([sender, items]) => `<div class="todo-group"><div class="todo-group-label">${esc(sender)}</div>${items.map((t) => todoRow(sender, t)).join("")}</div>`)
+      .join("");
+    listEl.querySelectorAll("[data-todo-act]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const { sender, id, act } = btn.dataset;
+        btn.disabled = true;
+        try {
+          await fetchJson(`/api/todo?action=${encodeURIComponent(act)}&sender=${encodeURIComponent(sender)}&id=${encodeURIComponent(id)}`);
+        } catch (error) {
+          alert(error.message);
+        }
+        renderTodoPage(true);
+      });
+    });
+  }
+  const info = $("todo-page-info");
+  if (info) info.textContent = `第 ${todoPage} / ${totalPages} 页 · 共 ${active.length} 条`;
+  const prevBtn = $("todo-prev");
+  const nextBtn = $("todo-next");
+  if (prevBtn) prevBtn.disabled = todoPage <= 1;
+  if (nextBtn) nextBtn.disabled = todoPage >= totalPages;
+  document.querySelectorAll("[data-todo-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.todoTab === todoTab);
+  });
+}
+
+function todoRow(sender, task) {
+  const state = task.status === "done" ? "done" : task.classify;
+  const labels = { overdue: "⚠️ 已到期", scheduled: "⏰ 有时间", ongoing: "📌 持续", done: "✅ 已完成" };
+  const due = task.dueLabel ? ` <span class="muted">· ${esc(task.dueLabel)}</span>` : "";
+  const recur = task.recurLabel ? ` <span class="muted">· ${esc(task.recurLabel)}</span>` : "";
+  const fire = task.fireIndex > 0 ? ` <span class="muted">· 已提醒 ${task.fireIndex} 次</span>` : "";
+  const del = `<button class="todo-act" data-todo-act="delete" data-sender="${esc(sender)}" data-id="${esc(task.id)}" title="删除">🗑</button>`;
+  const act = task.status === "pending"
+    ? `<button class="todo-act" data-todo-act="done" data-sender="${esc(sender)}" data-id="${esc(task.id)}" title="完成">✅</button>${del}`
+    : del;
+  return `<div class="todo-item todo-${state}"><span class="todo-badge">${labels[state] || ""}</span><span class="todo-text">${esc(task.text)}</span><span class="todo-meta">${due}${recur}${fire}</span><span class="todo-actions">${act}</span></div>`;
+}
+
+// ---- 服务与终端（服务启停 + 实时日志终端） ----
+let servicesCache = null;
+let servicesCacheAt = 0;
+let servicesSignature = "";
+let terminalId = "";
+let terminalCursor = 0;
+let terminalTimer = null;
+let terminalLastError = "";
+let workerMonitorCursor = 0;
+let workerMonitorTimer = null;
+let workerMonitorLastError = "";
+let workerMonitorFileId = "";
+let workerMonitorProgressKey = "";
+let workerMonitorWorkerDir = "";
+let workerMonitorWorkerId = "";
+
+async function loadServices(force = false) {
+  const now = Date.now();
+  if (!force && servicesCache && now - servicesCacheAt < 3000) return servicesCache;
+  try {
+    servicesCache = await fetchJson("/api/services");
+  } catch (error) {
+    servicesCache = servicesCache || { ok: true, services: [] };
+  }
+  servicesCacheAt = now;
+  return servicesCache;
+}
+
+function serviceRow(svc) {
+  const running = svc.status === "running";
+  const actions = svc.managed
+    ? `<button class="service-act" data-service-start="${esc(svc.id)}" ${running ? "disabled" : ""}>启动</button><button class="service-act danger" data-service-stop="${esc(svc.id)}" ${running ? "" : "disabled"}>停止</button>`
+    : '<span class="muted-tag">看板自身</span>';
+  return `<div class="service-item" data-service-select="${esc(svc.id)}" title="点击查看日志">
+    <div class="service-head">
+      <span class="service-dot svc-${running ? "running" : "stopped"}"></span>
+      <div class="service-info"><strong>${esc(svc.name)}</strong><small>${esc(svc.desc || svc.id)}</small></div>
+      <span class="service-state ${running ? "is-running" : ""}">${running ? "运行中" : "已停止"}</span>
+    </div>
+    <div class="service-foot"><code>${esc(svc.detail || "")}</code><span class="service-actions">${actions}</span></div>
+  </div>`;
+}
+
+async function renderServicesPage(force = false) {
+  const pageActive = !!document.querySelector('[data-page-view="services"]')?.classList.contains("active");
+  const data = await loadServices(force);
+  const services = data.services || [];
+  const running = services.filter((s) => s.status === "running").length;
+  const badge = $("services-page-badge");
+  if (badge) badge.textContent = `${running}/${services.length} RUNNING`;
+  const listEl = $("services-page-list");
+  if (!listEl) return;
+  if (!pageActive) return; // 非本页时仅刷新缓存（供总览按钮用）
+  if (!services.length) {
+    listEl.innerHTML = '<div class="empty-state">暂无服务</div>';
+    return;
+  }
+  const signature = JSON.stringify(services.map(({ id, status }) => [id, status]));
+  if (signature !== servicesSignature) {
+    servicesSignature = signature;
+    listEl.innerHTML = services.map(serviceRow).join("");
+    listEl.querySelectorAll("[data-service-start]").forEach((btn) => {
+      btn.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        btn.disabled = true;
+        try {
+          const res = await fetchJson(`/api/services?action=start&id=${encodeURIComponent(btn.dataset.serviceStart)}`);
+          showToast(res.message || `已启动${res.pid ? `（pid ${res.pid}）` : ""}`);
+        } catch (error) {
+          showToast(error.message, true);
+        }
+        renderServicesPage(true);
+        updateOverviewStartButton(true);
+      });
+    });
+    listEl.querySelectorAll("[data-service-stop]").forEach((btn) => {
+      btn.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        btn.disabled = true;
+        try {
+          const res = await fetchJson(`/api/services?action=stop&id=${encodeURIComponent(btn.dataset.serviceStop)}`);
+          showToast(res.actions && res.actions.length ? `已停止（${res.actions.length} 项操作）` : "已停止");
+        } catch (error) {
+          showToast(error.message, true);
+        }
+        renderServicesPage(true);
+        updateOverviewStartButton(true);
+      });
+    });
+    listEl.querySelectorAll("[data-service-select]").forEach((el) => {
+      el.addEventListener("click", () => selectTerminal(el.dataset.serviceSelect));
+    });
+  }
+  if (terminalId) {
+    const svc = services.find((s) => s.id === terminalId);
+    if (!svc) {
+      stopTerminalPoll();
+      terminalId = "";
+      terminalCursor = 0;
+      $("terminal-title").textContent = "选择一个服务";
+      $("terminal-body").innerHTML = '<div class="empty-state">服务已移除，从左侧重新选择。</div>';
+    } else {
+      $("terminal-title").textContent = `${svc.name} · ${svc.status === "running" ? "运行中" : "已停止"}`;
+    }
+  }
+}
+
+function terminalLineClass(line) {
+  if (/\[(?:Error|ERROR|FATAL)\]|Traceback \(most recent call last\)/.test(line)) return "error";
+  if (/\[Output\]|\[Agent\]/.test(line)) return "output";
+  if (/LLM Running/.test(line)) return "llm";
+  if (/\[Cache\]/.test(line)) return "cache";
+  if (/\[Debug\]/.test(line)) return "debug";
+  return "";
+}
+
+function appendTerminalLines(lines) {
+  const body = $("terminal-body");
+  if (!body) return;
+  if (body.firstElementChild && body.firstElementChild.classList.contains("empty-state")) body.innerHTML = "";
+  const follow = $("terminal-follow")?.classList.contains("active");
+  const frag = document.createDocumentFragment();
+  lines.forEach((line) => {
+    const div = document.createElement("div");
+    div.className = `t-line ${terminalLineClass(line)}`;
+    div.textContent = line;
+    frag.appendChild(div);
+  });
+  body.appendChild(frag);
+  while (body.childElementCount > 2000) body.removeChild(body.firstChild); // 只保留最近 2000 行
+  if (follow) body.scrollTop = body.scrollHeight;
+}
+
+function stopTerminalPoll() {
+  if (terminalTimer) { clearInterval(terminalTimer); terminalTimer = null; }
+}
+
+function startTerminalPoll() {
+  stopTerminalPoll();
+  const tick = async () => {
+    if (document.hidden) return; // 后台标签不轮询，减少连接占用
+    if (!terminalId) return;
+    try {
+      const res = await fetchJson(`/api/services/logs?id=${encodeURIComponent(terminalId)}&cursor=${terminalCursor}`);
+      terminalLastError = "";
+      if (typeof res.cursor === "number") terminalCursor = res.cursor;
+      if (res.lines && res.lines.length) appendTerminalLines(res.lines);
+    } catch (error) {
+      if (error.message !== terminalLastError) {
+        terminalLastError = error.message;
+        appendTerminalLines([`[terminal] ${error.message}`]);
+      }
+    }
+  };
+  tick();
+  terminalTimer = setInterval(tick, 2000);
+}
+
+function selectTerminal(sid) {
+  stopTerminalPoll();
+  terminalId = sid || "";
+  terminalCursor = 0;
+  terminalLastError = "";
+  const body = $("terminal-body");
+  if (body) body.innerHTML = `<div class="empty-state">正在连接 ${esc(sid)}…</div>`;
+  const follow = $("terminal-follow");
+  if (follow) follow.classList.add("active");
+  if (sid) startTerminalPoll();
+}
+
+function toggleTerminalFollow() {
+  const btn = $("terminal-follow");
+  if (!btn) return;
+  btn.classList.toggle("active");
+  if (btn.classList.contains("active")) {
+    const body = $("terminal-body");
+    if (body) body.scrollTop = body.scrollHeight;
+  }
+}
+
+// ---- Worker 页：worker 输出监视器（最新 worker 模型输出流 + run 进度） ----
+function startWorkerMonitorPoll() {
+  stopWorkerMonitorPoll();
+  const tick = async () => {
+    if (document.hidden) return; // 后台标签不轮询，减少连接占用
+    try {
+      const res = await fetchJson(`/api/workers/monitor?cursor=${workerMonitorCursor}&file=${encodeURIComponent(workerMonitorFileId)}&dir=${encodeURIComponent(workerMonitorWorkerDir)}&id=${encodeURIComponent(workerMonitorWorkerId)}`);
+      workerMonitorLastError = "";
+      if (res.fileId && res.fileId !== workerMonitorFileId) {
+        workerMonitorFileId = res.fileId;
+        appendWorkerMonitorLines([`── ${res.label || "worker"} 输出 ──`]);
+      }
+      if (typeof res.cursor === "number") workerMonitorCursor = res.cursor;
+      if (res.lines && res.lines.length) appendWorkerMonitorLines(res.lines);
+      if (res.progress && res.progress.key !== workerMonitorProgressKey) {
+        workerMonitorProgressKey = res.progress.key;
+        const summary = String(res.progress.summary || "").replace(/\s+/g, " ").slice(0, 120);
+        appendWorkerMonitorLines([`[run] ${res.progress.label || ""} · turn ${res.progress.turn}：${summary}`]);
+      }
+    } catch (error) {
+      if (error.message !== workerMonitorLastError) {
+        workerMonitorLastError = error.message;
+        appendWorkerMonitorLines([`[monitor] ${error.message}`]);
+      }
+    }
+  };
+  tick();
+  workerMonitorTimer = setInterval(tick, 2000);
+}
+
+function stopWorkerMonitorPoll() {
+  if (workerMonitorTimer) { clearInterval(workerMonitorTimer); workerMonitorTimer = null; }
+}
+
+function appendWorkerMonitorLines(lines) {
+  const body = $("worker-monitor-body");
+  if (!body) return;
+  if (body.firstElementChild && body.firstElementChild.classList.contains("empty-state")) body.innerHTML = "";
+  const follow = $("worker-monitor-follow")?.classList.contains("active");
+  const frag = document.createDocumentFragment();
+  lines.forEach((line) => {
+    const div = document.createElement("div");
+    const cls = /^──|^\[run\]/.test(line) ? "sep" : terminalLineClass(line);
+    div.className = `t-line ${cls}`;
+    div.textContent = line;
+    frag.appendChild(div);
+  });
+  body.appendChild(frag);
+  while (body.childElementCount > 2000) body.removeChild(body.firstChild); // 只保留最近 2000 行
+  if (follow) body.scrollTop = body.scrollHeight;
+}
+
+function resetWorkerMonitorState() {
+  workerMonitorCursor = 0;
+  workerMonitorFileId = "";
+  workerMonitorProgressKey = "";
+}
+
+function selectWorkerMonitor(dir, archive, id, label) {
+  stopWorkerMonitorPoll();
+  workerMonitorWorkerDir = dir || "";
+  workerMonitorWorkerId = id || "";
+  resetWorkerMonitorState();
+  const body = $("worker-monitor-body");
+  if (body) body.innerHTML = "";
+  appendWorkerMonitorLines([`── ${label || "worker"} 输出 ──`]);
+  const allBtn = $("worker-monitor-all");
+  if (allBtn) allBtn.hidden = false;
+  const title = $("worker-monitor-title");
+  if (title) title.textContent = `${label || "worker"} 输出`;
+  if (document.querySelector('[data-page-view="workers"]')?.classList.contains("active")) startWorkerMonitorPoll();
+}
+
+function clearWorkerMonitorFilter() {
+  stopWorkerMonitorPoll();
+  workerMonitorWorkerDir = "";
+  workerMonitorWorkerId = "";
+  resetWorkerMonitorState();
+  const body = $("worker-monitor-body");
+  if (body) body.innerHTML = "";
+  appendWorkerMonitorLines(["── 全部 worker 输出 ──"]);
+  const allBtn = $("worker-monitor-all");
+  if (allBtn) allBtn.hidden = true;
+  const title = $("worker-monitor-title");
+  if (title) title.textContent = "Worker 输出监视器";
+  if (document.querySelector('[data-page-view="workers"]')?.classList.contains("active")) startWorkerMonitorPoll();
+}
+
+async function updateOverviewStartButton(force = false) {
+  const btn = $("overview-start");
+  if (!btn) return;
+  const data = await loadServices(force);
+  const main = (data.services || []).find((s) => s.id === "main");
+  if (!main) {
+    btn.textContent = "▶ 一键启动 G4W";
+    btn.classList.remove("running");
+    btn.disabled = true;
+    return;
+  }
+  const running = main.status === "running";
+  btn.textContent = running ? "● 运行中 · 查看日志" : "▶ 一键启动 G4W";
+  btn.classList.toggle("running", running);
+  btn.disabled = false;
+}
+
+async function startG4W() {
+  const btn = $("overview-start");
+  if (!btn || btn.disabled) return;
+  if (btn.classList.contains("running")) { location.hash = "services"; routeTo("services"); return; }
+  btn.disabled = true;
+  btn.textContent = "正在启动…";
+  try {
+    const res = await fetchJson(`/api/services?action=start&id=main`);
+    showToast(res.message || `已启动（pid ${res.pid || "?"}）`);
+    // 与 start_G4W_ga.bat 行为一致：主服务拉起后附带 model monitor（失败不影响主服务）
+    try { await fetchJson(`/api/services?action=start&id=monitor`); } catch (error) { /* 忽略 */ }
+  } catch (error) {
+    showToast(error.message, true);
+    btn.textContent = "▶ 一键启动 G4W";
+  }
+  updateOverviewStartButton(true);
+}
+
 async function loadMemoryDetail(memoryId) {
   if (!memoryId) return;
   currentMemoryId = memoryId;
@@ -1040,8 +1605,15 @@ async function loadMemoryDetail(memoryId) {
 
 function renderMemoryDetail(data) {
   currentMemorySections = data.sections || [];
+  currentMemoryData = data;
   const sections = currentMemorySections.map((section) => `<button class="memory-section-row" data-memory-section="${esc(section.key)}"><span>${esc(section.label)}</span><span class="count">${section.count} 条 · 查看 →</span></button>`).join("");
-  const backups = (data.backups || []).slice(0, 60).map((item) => `<div class="artifact"><div><strong>${esc(item.name)}</strong><small>${esc(item.updatedAt)} · ${formatBytes(item.bytes)}</small></div><span class="muted-tag">历史快照</span></div>`).join("") || '<div class="empty-state">没有历史版本</div>';
+  // 版本历史:默认只显示最新 12 条,其余折叠展开
+  const allBackups = data.backups || [];
+  const backupItem = (item) => `<div class="artifact"><div><strong>${esc(item.name)}</strong><small>${esc(item.updatedAt)} · ${formatBytes(item.bytes)}</small></div><span class="muted-tag">历史快照</span></div>`;
+  const backupsHtml = allBackups.length
+    ? (backupsExpanded ? allBackups : allBackups.slice(0, 12)).map(backupItem).join("")
+      + (allBackups.length > 12 ? `<button class="backup-expand" onclick="expandBackups(this)">${backupsExpanded ? "收起" : `展开全部 ${allBackups.length - 12} 条历史快照`} ${backupsExpanded ? "▴" : "▾"}</button>` : "")
+    : '<div class="empty-state">没有历史版本</div>';
   const total = (data.sections || []).reduce((sum, section) => sum + (section.count || 0), 0);
   const identity = data.identity ? esc(data.identity) : "微信用户";
   const html = `<div class="memory-main">
@@ -1049,14 +1621,145 @@ function renderMemoryDetail(data) {
         <div class="memory-person"><span class="memory-avatar">${esc((data.name || "记").slice(0, 1))}</span><div><h2>${esc(data.name)}</h2><small>${identity}</small></div></div>
         <div class="memory-profile-tags">${data.botName ? `<span class="muted-tag">助手 ${esc(data.botName)}</span>` : ""}<span class="muted-tag">更新 ${esc(data.updatedAt)}</span><span class="muted-tag">${formatBytes(data.activeBytes)}</span><span class="page-badge">${total} 条记忆</span></div>
       </article>
+      <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">USER PROFILE</div><h2>用户画像</h2></div><span class="muted-tag">总体稳定画像 · L4 持续维护</span></div><div class="markdown user-profile">${renderMarkdown(data.userProfile || "（暂无画像，等待 L4 生成）")}</div></article>
       <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">MEMORY BRIEF</div><h2>记忆简报</h2></div></div><div class="markdown memory-brief">${renderMarkdown(data.brief || "暂无记忆简报")}</div></article>
+      <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">PROFILE TIMELINE</div><h2>画像时间轴</h2></div><span class="muted-tag">点击快照查看当时的画像与变化</span></div><div id="profile-timeline" class="profile-timeline"><div class="empty-state">正在读取历史快照…</div></div></article>
       <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">STRUCTURED MEMORY</div><h2>结构化记忆</h2></div><span class="muted-tag">点击分类展开</span></div>${sections || '<div class="empty-state">还没有结构化记忆</div>'}</article>
     </div>
     <aside class="memory-side">
       <article class="context-card glass-card"><div class="eyebrow">MEMORY STATUS</div><h2>存储状态</h2><div class="context-row"><span>账号档案</span><strong>${memoryProfiles.length}</strong></div><div class="context-row"><span>历史版本</span><strong>${(data.backups || []).length}</strong></div><div class="context-row"><span>当前数据</span><strong>${formatBytes(data.activeBytes)}</strong></div><div class="context-row"><span>更新时间</span><strong>${esc(data.updatedAt)}</strong></div><div class="context-row"><span>来源</span><code>${esc(data.source)}</code></div></article>
-      <section class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">VERSION HISTORY</div><h2>版本历史</h2></div></div>${backups}</section>
+      <section class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">VERSION HISTORY</div><h2>版本历史</h2></div></div>${backupsHtml}</section>
     </aside>`;
   $("memory-page-body").innerHTML = html;
+  loadMemoryTimeline(data.id);
+}
+
+function loadMemoryTimeline(memoryId) {
+  const box = $("profile-timeline");
+  if (!box) return;
+  fetchJson(`/api/memory/timeline?id=${encodeURIComponent(memoryId)}`).then((data) => {
+    timelinePoints = data.points || []; // 后端已按新 → 旧排序
+    renderProfileTimeline(box, memoryId);
+  }).catch((error) => {
+    box.innerHTML = `<div class="empty-state">时间轴加载失败：${esc(error.message)}</div>`;
+  });
+}
+
+function renderProfileTimeline(box, memoryId) {
+  const points = timelinePoints;
+  if (!points.length) {
+    box.innerHTML = '<div class="empty-state">还没有历史快照 — L4 压缩后自动生成。</div>';
+    return;
+  }
+  const first = points[0], last = points[points.length - 1];
+  box.innerHTML = `<div class="timeline-range"><span>最新 ${esc(first.updatedAt.split(" ")[0])}</span><span>${points.length} 份快照</span><span>最早 ${esc(last.updatedAt.split(" ")[0])}</span></div><div class="timeline-track">${points.map((point) => {
+    const profileCount = point.counts && point.counts.user_profile != null ? point.counts.user_profile : "-";
+    return `<button class="tl-node" onclick="openBackupSnapshot('${esc(memoryId)}','${esc(point.name)}')" title="${esc(point.updatedAt)} · 画像 ${profileCount} 键 · ${formatBytes(point.bytes)}"><span class="tl-dot"></span><span class="tl-date">${esc(point.updatedAt.split(" ")[0])}</span><span class="tl-meta">${esc(point.updatedAt.split(" ")[1] || "")}</span></button>`;
+  }).join("")}</div>`;
+}
+
+function openBackupSnapshot(memoryId, name) {
+  openDrawer("正在读取快照…", "PROFILE SNAPSHOT", '<div class="empty-state">加载中…</div>');
+  const index = timelinePoints.findIndex((point) => point.name === name);
+  const prevName = index > 0 ? timelinePoints[index - 1].name : null;
+  Promise.all([
+    fetchJson(`/api/memory/backup?id=${encodeURIComponent(memoryId)}&name=${encodeURIComponent(name)}`),
+    prevName ? fetchJson(`/api/memory/backup?id=${encodeURIComponent(memoryId)}&name=${encodeURIComponent(prevName)}`) : Promise.resolve(null),
+  ]).then(([current, prev]) => {
+    openDrawer(`${current.updatedAt} · 画像快照`, "PROFILE SNAPSHOT", renderBackupSnapshot(current, prev));
+  }).catch((error) => {
+    openDrawer("快照读取失败", "ERROR", `<div class="empty-state">${esc(error.message)}</div>`);
+  });
+}
+
+const PROFILE_KEY_LABELS = { user_profile: "用户画像", ongoing_projects: "进行中项目", agent_capabilities_learned: "能力经验", memory_lessons: "记忆经验", user_facts: "用户事实", _meta: "元信息" };
+
+function diffValues(cur, prev) {
+  if (Array.isArray(cur) || Array.isArray(prev)) {
+    const curArr = Array.isArray(cur) ? cur : [];
+    const prevArr = Array.isArray(prev) ? prev : [];
+    const keyOf = (value) => JSON.stringify(value);
+    const prevKeys = new Set(prevArr.map(keyOf));
+    const curKeys = new Set(curArr.map(keyOf));
+    return { added: curArr.filter((value) => !prevKeys.has(keyOf(value))), removed: prevArr.filter((value) => !curKeys.has(keyOf(value))), changed: [] };
+  }
+  if (cur && typeof cur === "object" && prev && typeof prev === "object") {
+    const added = [], removed = [], changed = [];
+    for (const key of Object.keys(prev)) if (!(key in cur)) removed.push([key, prev[key]]);
+    for (const key of Object.keys(cur)) {
+      if (!(key in prev)) added.push([key, cur[key]]);
+      else if (JSON.stringify(cur[key]) !== JSON.stringify(prev[key])) changed.push({ key, before: prev[key], after: cur[key] });
+    }
+    return { added, removed, changed };
+  }
+  if (JSON.stringify(cur) !== JSON.stringify(prev)) return { added: [cur], removed: [prev], changed: [] };
+  return { added: [], removed: [], changed: [] };
+}
+
+function diffBadges(diff) {
+  const badges = [];
+  if (diff.added.length) badges.push(`<span class="diff-badge add">+${diff.added.length}</span>`);
+  if (diff.removed.length) badges.push(`<span class="diff-badge rem">−${diff.removed.length}</span>`);
+  if (diff.changed.length) badges.push(`<span class="diff-badge chg">~${diff.changed.length}</span>`);
+  return badges.length ? `<span class="diff-badges">${badges.join("")}</span>` : "";
+}
+
+function renderSnapEntry(value) {
+  if (Array.isArray(value)) return renderSnapList(value, null);
+  if (value && typeof value === "object") return memoryRecord(value);
+  return `<p>${esc(value ?? "")}</p>`;
+}
+
+function renderSnapList(curArr, prevArr) {
+  const diff = diffValues(curArr, prevArr);
+  const addedKeys = new Set(diff.added.map((value) => JSON.stringify(value)));
+  const removedKeys = new Set(diff.removed.map((value) => JSON.stringify(value)));
+  const parts = [];
+  if (diff.added.length) parts.push(`<div class="snap-note add">新增 ${diff.added.length} 条</div>`);
+  if (diff.removed.length) parts.push(`<div class="snap-note rem">移除 ${diff.removed.length} 条</div>`);
+  for (const item of curArr) {
+    const cls = addedKeys.has(JSON.stringify(item)) ? "snap-added" : "";
+    parts.push(`<div class="snap-item ${cls}">${renderSnapEntry(item)}</div>`);
+  }
+  if (prevArr) {
+    for (const item of prevArr) {
+      if (!addedKeys.has(JSON.stringify(item)) && !curArr.some((cur) => JSON.stringify(cur) === JSON.stringify(item))) {
+        parts.push(`<div class="snap-item snap-removed">${renderSnapEntry(item)}</div>`);
+      }
+    }
+  }
+  return parts.join("");
+}
+
+function renderBackupSnapshot(current, prev) {
+  const curActive = current.active || {};
+  const prevActive = prev && prev.active ? prev.active : null;
+  const keys = [...new Set([...(prevActive ? Object.keys(prevActive) : []), ...Object.keys(curActive)])];
+  const blocks = keys.map((key) => {
+    const label = PROFILE_KEY_LABELS[key] || key;
+    const curValue = curActive[key];
+    const prevValue = prevActive ? prevActive[key] : null;
+    const diff = prevActive ? diffValues(curValue, prevValue) : null;
+    let body;
+    if (Array.isArray(curValue)) {
+      body = renderSnapList(curValue, prevValue);
+    } else if (curValue && typeof curValue === "object") {
+      const rows = Object.entries(curValue).map(([childKey, childValue]) => {
+        const childDiff = prevActive && prevValue && typeof prevValue === "object" ? diffValues(childValue, prevValue[childKey]) : null;
+        const badges = childDiff ? diffBadges(childDiff) : "";
+        const childBody = Array.isArray(childValue) ? renderSnapList(childValue, prevActive && prevValue && Array.isArray(prevValue[childKey]) ? prevValue[childKey] : null) : `<div class="snap-item">${renderSnapEntry(childValue)}</div>`;
+        return `<details class="accordion"><summary><span>${esc(childKey.replaceAll("_", " "))}</span>${badges}</summary><div class="accordion-body">${childBody}</div></details>`;
+      });
+      body = rows.join("");
+    } else {
+      body = `<div class="snap-item">${esc(curValue ?? "")}</div>`;
+    }
+    return `<details class="accordion snap-key"><summary><span>${esc(label)}</span>${diff ? diffBadges(diff) : ""}</summary><div class="accordion-body">${body}</div></details>`;
+  }).join("");
+  const pills = [`<span>${esc(current.updatedAt)}</span>`, `<span>${formatBytes(JSON.stringify(curActive).length)}</span>`, `<span>${keys.length} 个分类</span>`];
+  if (prev) pills.push(`<span>对比 ${esc(prev.updatedAt.split(" ")[0])}</span>`);
+  const briefHtml = current.brief ? `<article class="snap-brief"><div class="eyebrow">当时简报</div><div class="markdown">${renderMarkdown(current.brief)}</div></article>` : "";
+  return `<div class="detail-pills">${pills.join("")}</div>${briefHtml}<div class="snap-keys">${blocks}</div>`;
 }
 
 function selectPromptNode(node, button) {
@@ -1217,6 +1920,26 @@ $("settings-form").addEventListener("submit", saveSettings);
 $("settings-form").addEventListener("input", (event) => { if (event.target.closest("[data-model-target]")) return; settingsDirty = true; $("settings-message").textContent = "有未保存的修改"; });
 document.querySelectorAll("[data-model-target]").forEach((select) => select.addEventListener("change", () => switchModel(select)));
 $("prompt-refresh").addEventListener("click", loadPrompt);
+$("overview-start").addEventListener("click", startG4W);
+$("terminal-follow").addEventListener("click", toggleTerminalFollow);
+$("terminal-clear").addEventListener("click", () => { const body = $("terminal-body"); if (body) body.innerHTML = ""; });
+$("worker-monitor-follow").addEventListener("click", () => {
+  const btn = $("worker-monitor-follow");
+  btn.classList.toggle("active");
+  if (btn.classList.contains("active")) {
+    const body = $("worker-monitor-body");
+    if (body) body.scrollTop = body.scrollHeight;
+  }
+});
+$("worker-monitor-clear").addEventListener("click", () => { const body = $("worker-monitor-body"); if (body) body.innerHTML = ""; });
+$("worker-monitor-all").addEventListener("click", clearWorkerMonitorFilter);
+document.querySelectorAll("[data-todo-tab]").forEach((button) => button.addEventListener("click", () => {
+  todoTab = button.dataset.todoTab;
+  todoPage = 1;
+  renderTodoPage(true);
+}));
+$("todo-prev").addEventListener("click", () => { if (todoPage > 1) { todoPage -= 1; renderTodoPage(true); } });
+$("todo-next").addEventListener("click", () => { todoPage += 1; renderTodoPage(true); });
 document.addEventListener("click", (event) => {
   const close = event.target.closest("[data-close-drawer]"); if (close) { closeDrawer(); return; }
   const nav = event.target.closest(".nav-item"); if (nav) { setSidebarOpen(false); if (location.hash === nav.getAttribute("href")) routeFromHash(); }
@@ -1292,6 +2015,18 @@ $("setup-password2").addEventListener("keydown", (event) => { if (event.key === 
 $("password-save").addEventListener("click", submitPasswordChange);
 $("theme-save").addEventListener("click", saveTheme);
 $("theme-reset").addEventListener("click", resetTheme);
+// 多标签警告：Chrome 对同一域名（127.0.0.1:18180）只有 6 条连接配额，
+// 每个标签页都占用 1 条 SSE 长连接——多开会让 API 请求排队超时（实证事故）
+if ("BroadcastChannel" in window) {
+  const tabChannel = new BroadcastChannel("g4w-dashboard-tabs");
+  let tabWarned = false;
+  tabChannel.onmessage = () => {
+    if (tabWarned) return;
+    tabWarned = true;
+    showToast("检测到看板已在其他标签页打开：每个标签页都占一条 SSE 长连接，多开会耗尽浏览器连接配额导致请求超时，建议只保留一个标签页", true);
+  };
+  tabChannel.postMessage("tab-open");
+}
 document.querySelectorAll(".theme-mode-tabs [data-theme-mode]").forEach((button) => button.addEventListener("click", () => {
   themeEditMode = button.dataset.themeMode;
   document.querySelectorAll(".theme-mode-tabs [data-theme-mode]").forEach((b) => b.classList.toggle("active", b === button));

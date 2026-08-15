@@ -552,6 +552,13 @@ class ConductorSession:
 
 
 class G4WController:
+    # Generic persistent-worker wake routing table: capabilityId → wake method
+    # on this controller (signature (sender_id, message) -> dict). Registered
+    # workers get scheduler-aware wakes instead of a plain send.
+    _PERSISTENT_WAKE_ROUTES = {
+        "worker.l4": "_wake_l4",
+    }
+
     def __init__(self, config, conversations, capabilities, workers, schedules=None, diary=None, timeline=None, timeline_publisher=None, outbox=None, xiaoyi=None, locations=None, l4=None, supervision=None, checkins=None, profiles=None, turn_progress=None, cache_metrics=None, input_capture=None, wechat_maintenance=None, intermediate_sink=None, session_factory=None, sop_catalog=None, events=None, short_path_mirror=None):
         self.config = config
         self.conversations = conversations
@@ -640,6 +647,15 @@ class G4WController:
             "G4W专用模型工具只负责Worker管理与必要Conductor控制。\n"
             "文件、代码、网页、SOP读取以及G4W原生业务SOP均使用GA通用工具和固定Python脚本；使用这些工具不代表继承GA桌面身份。\n"
             "API工具数组按G4W Worker控制工具在前、GA通用执行工具在后固定排序。",
+            "# Persistent Worker 唤醒\n"
+            "用户要求「唤醒/跑一下/让…继续工作」某个 persistent worker（如 worker.l4 记忆整理、worker.supervisor 监督等）时，"
+            "用 G4W_worker_send 发给对应 worker_id 即可：系统会按 worker 类型自动路由——"
+            "worker.l4 自动走完整 L4 流程（生成新窗口→语义挖掘→finalize 把 L4 insight 与新增 transcript 增量写进向量索引，"
+            "embedding 服务不可用会自动拉起）；其他 persistent worker 按常规唤醒开启下一 run。无需其他特殊工具。",
+            "# Embedding 设备策略\n"
+            "向量 embedding 服务只按安装期决定的方式运行（5_embedding_for_G4W.bat：有 NVIDIA 装 GPU 版 torch，否则 CPU 版）。\n"
+            "GPU 版 torch 环境下**禁止**用 EMBED_DEVICE=cpu 或任何方式把服务降级为 CPU 运行；"
+            "CUDA 异常时如实告知用户（如「GPU 异常，向量索引未同步，请修复 GPU 或明确同意切 CPU」），由用户决定，不得私自降级。",
             "# 微信可见对话历史格式\n"
             "API history只包含用户在微信实际看到的纯净消息，不包含工具调用、内部推理或Worker内部Turn。\n"
             "历史时间使用Asia/Shanghai，消息头格式为[MM-DD HH:mm:ss][role]。",
@@ -948,6 +964,22 @@ class G4WController:
                 "# L4 semantic maintenance completed\n" + json.dumps(l4_completion_reports, ensure_ascii=False, indent=2) +
                 "\nReport status, processed dates, user message count, generated files and errors concisely."
             )
+            # 用户画像维护:conductor 职责。worker 只产素材草稿,最终画像由 conductor
+            # 用自己的语气复述落盘(更新/修改/保持不变)。SOP 路径动态构造。
+            try:
+                profile_sop = str(Path(__file__).resolve().parents[1] / "memory" / "sop" / "conductor" / "profile_review_sop.md")
+            except Exception:
+                profile_sop = "memory/sop/conductor/profile_review_sop.md"
+            context_parts.append(
+                "# 用户画像维护（conductor 职责，本轮 worker-final 顺带完成）\n"
+                "L4 worker 已产出画像素材草稿。请按画像 SOP 维护用户画像：\n"
+                f"1. 读画像 SOP：{profile_sop}\n"
+                "2. 读素材草稿（history_insight/user_profile.draft.md，本轮 worker 产出）与现有画像"
+                "（history_insight/user_profile.md，无则为首版）\n"
+                "3. 按 SOP：用你自己的语气，对现有画像做**更新 / 修改 / 保持不变**；保留全部信息点，不删减\n"
+                "4. 有变化 → file_write 落盘 user_profile.md；无变化 → 不写文件\n"
+                "5. 汇报时一句带过画像维护结果，不展开\n"
+            )
         scheduled = [event.get("payload") or {} for event in events if event.get("type") == "system.scheduled"]
         if scheduled:
             context_parts.append("# Scheduled system events due now\n" + json.dumps(scheduled, ensure_ascii=False, indent=2))
@@ -1222,7 +1254,31 @@ class G4WController:
 
     def send_worker(self, sender_id: str, worker_id: str, message: str) -> dict:
         self._require_owned_worker(sender_id, worker_id)
+        detail = self.workers.detail(worker_id) or {}
+        # Generic persistent-worker wake routing: "send" to a persistent worker
+        # means "start/continue its next cycle". Workers whose run needs
+        # scheduler-prepared context register a wake method in
+        # _PERSISTENT_WAKE_ROUTES (e.g. worker.l4 needs a fresh manifest plus
+        # the finalize three-task chain); all others keep the default send
+        # (sleeping → next run, running → inject).
+        if str(detail.get("lifecycle") or "") == "persistent":
+            wake = type(self)._PERSISTENT_WAKE_ROUTES.get(
+                str(detail.get("capabilityId") or "")
+            )
+            if wake:
+                out = getattr(self, wake)(sender_id, message)
+                out.setdefault(
+                    "worker",
+                    {"id": worker_id, "capabilityId": detail.get("capabilityId")},
+                )
+                return out
         return self.workers.send(worker_id, message)
+
+    def _wake_l4(self, sender_id: str, message: str = "") -> dict:
+        """Wake route for worker.l4: full L4 cycle with finalize chain."""
+        out = self.request_l4(sender_id, trigger="manual")
+        out["routedFrom"] = "send_worker:worker.l4"
+        return out
 
     def list_workers(self, sender_id: str) -> list[dict]:
         binding = self._binding_for_sender(sender_id)

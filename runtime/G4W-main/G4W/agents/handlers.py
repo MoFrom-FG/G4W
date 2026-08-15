@@ -1,6 +1,7 @@
 import json
 import hashlib
 import re
+import threading
 import time
 from contextlib import nullcontext
 from pathlib import Path
@@ -16,6 +17,54 @@ _HISTORY_ARCHIVE_REPLY = re.compile(
     r"(?:\r?\n摘要[：:]\s*(?P<summary>[\s\S]*?))?\s*$",
     flags=re.I,
 )
+
+# On-demand embed server start: cooldown so a dead server is not retried on
+# every search (each attempt can take ~30s of model loading).
+_EMBED_START_COOLDOWN_S = 600.0
+_last_embed_start_ts: float = 0.0
+_embed_start_lock = threading.Lock()
+
+# Historical sender segments of the same human user (old WeChat OpenIDs bound
+# to the same GA account before re-login). Ownership is judged by userid +
+# these aliases, never by exact path matching alone — the user's history spans
+# multiple sender ids and must stay retrievable after account migration.
+_LEGACY_SENDER_SEGMENTS = (
+    "o9cq80-zbqm_uexc5ituhqlyfi04_im.wechat",  # 旧微信账号（已迁移到 o9cq8050x...）
+)
+
+
+def _sender_segment(sender_id: str) -> str:
+    return str(sender_id or "").replace("@", "_").lower()
+
+
+def _belongs_to_user(path_or_id: str, sender_id: str) -> bool:
+    """Ownership by userid + legacy aliases (path-independent of account era)."""
+    pl = str(path_or_id or "").replace("\\", "/").lower()
+    seg = _sender_segment(sender_id)
+    if seg and seg in pl:
+        return True
+    return any(alias in pl for alias in _LEGACY_SENDER_SEGMENTS)
+
+
+def _maybe_start_embed() -> bool:
+    """Start the embed server at most once per cooldown window.
+
+    Returns True when the server is healthy (inference-verified) afterwards.
+    Only meaningful when /vector is on — callers gate on that already.
+    """
+    global _last_embed_start_ts
+    now = time.time()
+    with _embed_start_lock:
+        if now - _last_embed_start_ts < _EMBED_START_COOLDOWN_S:
+            return False
+        _last_embed_start_ts = now
+    try:
+        from G4W.memory.vector.embed_lifecycle import ensure_embed_running
+
+        out = ensure_embed_running(timeout_s=30.0)
+        return bool(out.get("ok"))
+    except Exception:
+        return False
 
 
 def _restore_history_archive_reply(text: str) -> str:
@@ -333,6 +382,14 @@ class ConductorHandler(GenericAgentHandler):
             args.get("worker_id", ""),
             args.get("message", ""),
         )
+        if result.get("routedFrom") == "send_worker:worker.l4":
+            return StepOutcome(
+                result,
+                next_prompt=(
+                    "已按 worker.l4 的完整 L4 流程处理（prepare 新窗口→语义挖掘→finalize 三任务链）。"
+                    "向用户简短确认已开始，完成后索引会自动更新。"
+                ),
+            )
         return StepOutcome(result, next_prompt="根据结果自然回复用户。")
 
     def do_G4W_worker_list(self, args, response):
@@ -357,6 +414,66 @@ class ConductorHandler(GenericAgentHandler):
     def do_G4W_worker_stop(self, args, response):
         result = self.controller.stop_worker(self.sender_id, args.get("worker_id", ""))
         return StepOutcome(result, next_prompt="根据停止结果自然回复用户。")
+
+    def _services_store_path(self):
+        config = getattr(self.controller, "config", None)
+        if config is not None and getattr(config, "state_dir", None) is not None:
+            return Path(config.state_dir) / "dashboard-services.json"
+        return None
+
+    def do_G4W_service_register(self, args, response):
+        """把自定义服务登记进看板服务管理（可显示/启动/停止/日志）。"""
+        path = self._services_store_path()
+        if path is None:
+            return StepOutcome({"ok": False, "error": "state_dir 不可用"}, next_prompt="如实告知用户注册失败。")
+        service_id = str(args.get("service_id") or "").strip()
+        command = args.get("command") or []
+        if not service_id or not isinstance(command, list) or not command:
+            return StepOutcome(
+                {"ok": False, "error": "service_id 与 command(list) 必填"},
+                next_prompt="补充 service_id 和启动命令后重试。",
+            )
+        try:
+            state = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {"services": {}}
+            state.setdefault("services", {})[service_id] = {
+                "name": str(args.get("name") or service_id),
+                "desc": str(args.get("desc") or ""),
+                "command": [str(x) for x in command],
+                "cwd": str(args.get("cwd") or ""),
+                "logs": [str(x) for x in (args.get("logs") or [])],
+                "health": dict(args.get("health") or {}),
+                "managed": True,
+                "builtin": False,
+            }
+            path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+            return StepOutcome(
+                {"ok": True, "registered": service_id, "path": str(path)},
+                next_prompt="已注册进看板服务管理，向用户简短确认。",
+            )
+        except Exception as exc:
+            return StepOutcome({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, next_prompt="如实告知失败。")
+
+    def do_G4W_service_remove(self, args, response):
+        """从看板服务管理移除自定义服务（内置服务不可移除）。"""
+        path = self._services_store_path()
+        service_id = str(args.get("service_id") or "").strip()
+        if path is None:
+            return StepOutcome({"ok": False, "error": "state_dir 不可用"}, next_prompt="如实告知用户。")
+        try:
+            if not path.is_file():
+                return StepOutcome({"ok": False, "error": "服务注册表不存在"}, next_prompt="如实告知。")
+            state = json.loads(path.read_text(encoding="utf-8"))
+            services = state.get("services", {})
+            spec = services.get(service_id)
+            if not spec:
+                return StepOutcome({"ok": False, "error": f"unknown service: {service_id}"}, next_prompt="如实告知。")
+            if spec.get("builtin"):
+                return StepOutcome({"ok": False, "error": f"内置服务 {service_id} 不允许移除"}, next_prompt="如实告知。")
+            services.pop(service_id, None)
+            path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+            return StepOutcome({"ok": True, "removed": service_id}, next_prompt="已移除，向用户简短确认。")
+        except Exception as exc:
+            return StepOutcome({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, next_prompt="如实告知失败。")
 
     def do_G4W_memory_search(self, args, response):
         """Explicit Hybrid/HNSW memory search for Conductor (read-only)."""
@@ -417,7 +534,7 @@ class ConductorHandler(GenericAgentHandler):
             def sender_match(p: str) -> bool:
                 if not sender_id:
                     return True
-                return sender_id in p
+                return _belongs_to_user(p, sender_id)
 
             # Soft score floor: pure-vector cosine often ~0.3–0.6; keep low but drop near-zero noise.
             # CAS hybrid often returns ~0.0 filler hits — do NOT fall back to them.
@@ -508,6 +625,32 @@ class ConductorHandler(GenericAgentHandler):
                                 "text": full[:8000],
                             }
                         )
+                    # Incremental window: vector-index watermark → latest chat.
+                    # The hybrid side covers this gap with direct keyword search
+                    # over recent transcript files, so very recent conversations
+                    # are retrievable without waiting for the next index run.
+                    try:
+                        from G4W.memory.hybrid_reader import transcript_window_hits
+                        from G4W.memory.l4_safe import safe_segment
+                        from G4W.memory.vector.transcript_chunk_upsert import (
+                            read_transcript_watermark,
+                        )
+
+                        wm = read_transcript_watermark()
+                        tx_root = (
+                            Path(memory_root)
+                            / "conversations"
+                            / safe_segment(str(sender_id))
+                            / "transcripts"
+                        )
+                        inc = transcript_window_hits(
+                            tx_root, wm, query, k=max(k, 5)
+                        )
+                        if inc:
+                            payload["hybrid"]["incremental_watermark"] = wm
+                            mapped_h.extend(inc)
+                    except Exception:
+                        pass
                     filtered_h, h_note = _prefer_memory_hits(
                         mapped_h, id_key="item_id", path_key="source_path"
                     )
@@ -593,6 +736,35 @@ class ConductorHandler(GenericAgentHandler):
                                 max_alts=_alt_n,
                                 day_neighbors=True,
                             )
+                            # Embedding service down/half-dead (BM25-only or empty)?
+                            # Try starting the server once (cooldown-bounded) and
+                            # retry for semantic recall; surface the outcome to
+                            # the agent instead of silently returning nothing.
+                            # Note: BM25-only results still count as "vector side
+                            # degraded" — start+retry whenever embed failed, so
+                            # the agent is never misled into thinking vectors ran.
+                            if (
+                                getattr(engine, "last_embed_error", None)
+                                and _maybe_start_embed()
+                            ):
+                                raw_v = engine.search_memory(
+                                    query,
+                                    k=max(k * 4, 12),
+                                    expand=True,
+                                    neighbors=True,
+                                    max_alts=_alt_n,
+                                    day_neighbors=True,
+                                )
+                            if not raw_v and getattr(engine, "last_embed_error", None):
+                                payload["vector"]["note"] = (
+                                    "embed 服务不可用（已尝试拉起失败或处于冷却期）→ "
+                                    "向量侧无命中；如需语义检索请告知用户检查向量服务"
+                                )
+                            elif raw_v and getattr(engine, "last_embed_error", None):
+                                payload["vector"]["note"] = (
+                                    "embed 服务不可用，本次为词法(BM25)降级结果；"
+                                    "已尝试拉起服务，重试后仍不可用"
+                                )
                             payload["vector"]["enabled"] = True
                             payload["vector"]["backend"] = str(
                                 getattr(idx, "backend", "?") or "?"

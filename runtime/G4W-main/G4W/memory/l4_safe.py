@@ -39,6 +39,7 @@ REQUIRED_CANDIDATE_FILES = [
     "README.candidate.md",
     "memory_brief.candidate.md",
     "proposed_updates.candidate.md",
+    "user_profile.candidate.md",  # 可选:缺失/校验失败时跳过画像更新,不阻塞 finalize
     "subagent_report.md",
 ]
 
@@ -134,6 +135,14 @@ def markers_path(root: Path, user_id: str) -> Path:
 
 def memory_brief_path(root: Path, user_id: str) -> Path:
     return history_root(root, user_id) / "memory_brief.md"
+
+
+def user_profile_md_path(root: Path, user_id: str) -> Path:
+    return history_root(root, user_id) / "user_profile.md"
+
+
+def user_profile_draft_path(root: Path, user_id: str) -> Path:
+    return history_root(root, user_id) / "user_profile.draft.md"
 
 
 def proposed_updates_path(root: Path, user_id: str) -> Path:
@@ -653,6 +662,7 @@ def build_run_manifest(
             "memory_brief": rel(memory_brief_path(root, user_id), root),
             "proposed_updates": rel(proposed_updates_path(root, user_id), root),
             "README": rel(readme_path(root, user_id), root),
+            "user_profile": rel(user_profile_md_path(root, user_id), root),
         },
         "rules": [
             "Subagent must only read files listed in this manifest.",
@@ -660,6 +670,17 @@ def build_run_manifest(
             "Every formal insight must include timestamp, speaker=user, source_transcript, user_only_source, snippet, confidence.",
             "Do not write transcripts, assistant-replies, memory/users, memory/operational, or all_histories.txt.",
         ],
+        # 用户画像:worker 输出完整叙述文(固定小节)。init=首次(结合素材撰写),
+        # incremental=基于现有画像改写(未变化段落一字不改)。素材引用供首次使用。
+        "user_profile": {
+            "mode": "incremental" if user_profile_md_path(root, user_id).is_file() else "init",
+            "path": rel(user_profile_md_path(root, user_id), root),
+            "source_refs": {
+                "users": rel(wechat_root(root) / "users" / f"{safe_segment(user_id)}.md", root),
+                "operational": rel(wechat_root(root) / "operational" / f"{safe_segment(user_id)}.md", root),
+                "active_knowledge": rel(active_knowledge_path(root, user_id), root),
+            },
+        },
     }
     return manifest
 
@@ -996,11 +1017,71 @@ def append_rejections_to_proposed(candidate_text: str, rejected: List[str], repo
     return "\n".join(lines).rstrip() + "\n"
 
 
+# 用户画像素材草稿(worker 产出,报告体不带语气;最终画像由 conductor 复述维护)
+PROFILE_DRAFT_MAX_CHARS = 12000
+
+
+def validate_profile_candidate(text: str) -> bool:
+    """确定性校验 worker 的画像素材草稿:非空 + 长度上限。
+
+    草稿是"交接物"——内容质量与语气由 SOP 约束(报告体/证据全),
+    最终画像由 conductor 在 worker-final round 复述落盘。
+    """
+    body = str(text or "").strip()
+    if not body:
+        return False
+    if len(body) > PROFILE_DRAFT_MAX_CHARS:
+        return False
+    return True
+
+
+def _upsert_with_embed_retry(fn, **kwargs) -> Dict[str, Any]:
+    """Run an index-upsert callable; retry once after ensuring the embed server.
+
+    When the failure reason is an embedding/remote failure (service down or
+    half-dead), first call ``ensure_embed_running`` (which now requires a real
+    inference probe) and re-run the upsert once. This prevents the 2026-08-13
+    pattern — L4 finalized while the vector index silently stayed stale.
+    Failures remain visible in the returned summary for worker reporting.
+    """
+    out: Dict[str, Any] = fn(**kwargs)
+    reason = str(out.get("embedding_reason") or out.get("reason") or "")
+    if out.get("status") == "error" and reason in (
+        "remote_http_failed",
+        "remote_not_ready",
+        "embedding_failed",
+    ):
+        try:
+            from .vector.embed_lifecycle import ensure_embed_running
+
+            up = ensure_embed_running(timeout_s=45.0)
+            if up.get("ok"):
+                out = fn(**kwargs)
+                out["retried_after_embed_start"] = True
+            else:
+                out["retry_embed_start"] = {
+                    "ok": False,
+                    "detail": up.get("detail") or up.get("status") or "start failed",
+                }
+        except Exception as exc:  # pragma: no cover - defensive
+            out["retry_embed_start"] = {
+                "ok": False,
+                "detail": f"{type(exc).__name__}: {exc}",
+            }
+    return out
+
+
 def validate_finalize(root: Path, user_id: str, run_id: str, dry_run: bool = False) -> Dict[str, Any]:
     preflight(root, user_id)
     manifest = load_manifest(root, user_id, run_id)
     output_dir = subagent_output_dir(root, user_id, run_id)
-    missing = [name for name in REQUIRED_CANDIDATE_FILES if not candidate_path(root, user_id, run_id, name).is_file()]
+    # user_profile.candidate.md 为可选(旧版 worker / 中途升级不产出时跳过画像合并)
+    OPTIONAL_CANDIDATES = {"user_profile.candidate.md"}
+    missing = [
+        name for name in REQUIRED_CANDIDATE_FILES
+        if name not in OPTIONAL_CANDIDATES
+        and not candidate_path(root, user_id, run_id, name).is_file()
+    ]
     if missing:
         return {"status": "validation_failed", "reason": "missing candidate files", "missing": missing, "run_id": run_id}
 
@@ -1050,6 +1131,33 @@ def validate_finalize(root: Path, user_id: str, run_id: str, dry_run: bool = Fal
         memory_brief = memory_brief[:1000].rsplit("\n", 1)[0] + "\n\n<!-- truncated by validator -->"
     readme = readme_candidate.rstrip() + "\n\n---\nvalidator_finalized_at: " + now_iso() + "\n"
 
+    # 用户画像素材草稿:worker 产出(报告体,不带语气),校验后落盘为
+    # user_profile.draft.md 作为 conductor 复述的交接物。
+    # 最终 user_profile.md 由 conductor 在 worker-final round 维护(读草稿+现有
+    # 画像 → neko 语气 → 更新/修改/保持不变)。candidate 缺失/校验失败不阻塞。
+    profile_text = ""
+    user_profile: Dict[str, Any] = {"updated": "", "written": False, "reason": "no_candidate"}
+    try:
+        profile_candidate = load_candidate_text(root, user_id, run_id, "user_profile.candidate.md")
+    except Exception:
+        profile_candidate = ""
+    if str(profile_candidate or "").strip():
+        if validate_profile_candidate(profile_candidate):
+            profile_text = profile_candidate.strip()
+            user_profile = {
+                "updated": now_iso(),
+                "written": True,
+                "bytes": len(profile_text.encode("utf-8")),
+                "path": str(user_profile_draft_path(root, user_id)),
+            }
+        else:
+            user_profile = {
+                "updated": "",
+                "written": False,
+                "reason": "candidate_validation_failed",
+                "path": str(user_profile_draft_path(root, user_id)),
+            }
+
     if dry_run:
         return {
             "status": "dryrun",
@@ -1068,21 +1176,34 @@ def validate_finalize(root: Path, user_id: str, run_id: str, dry_run: bool = Fal
         atomic_write_text(proposed_updates_path(root, user_id), proposed_text)
         atomic_write_text(readme_path(root, user_id), readme)
         atomic_write_json(markers_path(root, user_id), markers)
+        if profile_text:
+            atomic_write_text(user_profile_draft_path(root, user_id), profile_text.rstrip() + "\n")
 
-    # TASK-E: L4-only incremental vector upsert (fail-soft; never blocks finalize).
-    # Order inside upsert_l4_insights_to_index: vector_enabled() total gate → legacy
-    # L4 flag → ensure_embed_running (soft-dep) → embed → HNSW. Off gate: no embed/write.
+    # TASK-E: L4 finalize → vector index chain (fail-soft; never blocks finalize).
+    # Task2: L4 insight upsert; Task3: transcript window upsert (watermark →
+    # latest transcript). When /vector is on and embedding is down, each task
+    # retries once after ensure_embed_running; failures stay visible in the
+    # returned summary and the worker SOP reports them to the user.
     # Do not add a second upsert hook in controller; this is the single write entry.
     vector_upsert: Dict[str, Any] = {"status": "skipped", "reason": "not_attempted"}
+    transcript_upsert: Dict[str, Any] = {"status": "skipped", "reason": "not_attempted"}
     try:
         from .vector.l4_index_upsert import upsert_l4_insights_to_index
 
-        vector_upsert = upsert_l4_insights_to_index(
+        vector_upsert = _upsert_with_embed_retry(
+            upsert_l4_insights_to_index,
             active=active,
             emotion=emotion_data,
             user_id=user_id,
             run_id=run_id,
             dry_run=False,
+        )
+        from .vector.transcript_chunk_upsert import upsert_transcript_window
+
+        transcript_upsert = _upsert_with_embed_retry(
+            upsert_transcript_window,
+            transcripts_root=transcripts_root(root, user_id),
+            run_id=run_id,
         )
     except Exception as exc:  # pragma: no cover - defensive
         vector_upsert = {
@@ -1102,7 +1223,15 @@ def validate_finalize(root: Path, user_id: str, run_id: str, dry_run: bool = Fal
         "backup": backup,
         "readme": str(readme_path(root, user_id)),
         "memory_brief": str(memory_brief_path(root, user_id)),
+        "user_profile": {
+            "updated": str(user_profile.get("updated") or ""),
+            "written": bool(user_profile.get("written")),
+            "reason": user_profile.get("reason") or "",
+            "bytes": int(user_profile.get("bytes") or 0),
+            "path": str(user_profile_draft_path(root, user_id)),
+        },
         "vector_upsert": vector_upsert,
+        "transcript_upsert": transcript_upsert,
     }
 
 

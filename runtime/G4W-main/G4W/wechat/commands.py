@@ -27,6 +27,7 @@ COMMAND_GROUPS = [
         ("👤", "/name <userName>", "设置或查看用户名字"),
         ("🎭", "/identity <identity>", "设置或查看用户身份/日常称呼"),
         ("👤", "/gender <female|male|neutral>", "设置或查看用户性别"),
+("📋", "/todo add|list|done|del|cancel", "管理个人任务清单(checkin 时主动提醒)"),
         ("👤", "/botname <botName>", "设置或查看机器人名字"),
     ]),
     ("⚡️", "能力", [
@@ -153,6 +154,71 @@ def format_vector_status(cfg: dict, effective_enabled: bool) -> str:
         # modules only produces a misleading "No module named numpy" warning.
         lines.append("index meta：skipped（向量外挂尚未安装）")
         return "\n".join(lines)
+
+    # Live probe: config fields (pid/embed_health) are historical snapshots and
+    # must NOT be trusted as current state. Probe port, process and a real
+    # inference request so a dead/half-dead server is reported as such.
+    try:
+        from G4W.memory.vector.embed_lifecycle import (
+            _pid_alive,
+            _pids_listening_on_port,
+            embed_health,
+        )
+
+        port = cfg.get("port")
+        try:
+            port_i = int(port) if port is not None else 0
+        except (TypeError, ValueError):
+            port_i = 0
+        base = str(cfg.get("base_url") or "").strip()
+        listening = _pids_listening_on_port(port_i) if port_i else []
+        cfg_pid = cfg.get("pid")
+        probe = embed_health(base_url=base, timeout_s=3.0, verify_inference=True)
+        lines.append("—— 实时探测 ——")
+        lines.append(f"端口 {port_i} 监听进程：{listening if listening else '无'}")
+        if cfg_pid is not None:
+            lines.append(
+                f"config pid {cfg_pid} 存活：{'是' if _pid_alive(cfg_pid) else '否（已失效）'}"
+            )
+        probe_ok = bool(probe.get("ok"))
+        lines.append(
+            f"embedding 推理探针：{'✅ 可用' if probe_ok else '❌ 不可用'}"
+            f"（{probe.get('detail') or probe.get('method') or '-'}）"
+        )
+        if not listening and not probe_ok:
+            lines.append("结论：服务未运行，向量检索不可用；agent 检索时会尝试按需拉起")
+    except Exception as exc:
+        lines.append(f"实时探测：unavailable ({type(exc).__name__}: {exc})")
+
+    # Index coverage: how fresh is the retrievable data (transcript vs L4).
+    try:
+        import json as _json
+
+        from G4W.memory.vector.sandbox_paths import resolve_vector_index_dir
+
+        meta_path = Path(resolve_vector_index_dir()) / "meta.json"
+        if meta_path.is_file():
+            meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+
+            def _fmt_ts(ts):
+                try:
+                    return datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M")
+                except Exception:
+                    return str(ts)
+
+            lines.append("—— 索引覆盖 ——")
+            lines.append(
+                f"transcript 原文最后入库：{_fmt_ts(meta.get('last_transcript_upsert_at'))}"
+                f"（{meta.get('last_transcript_upsert_run_id') or '-'}）"
+            )
+            lines.append(
+                f"L4 insight 最后入库：{_fmt_ts(meta.get('last_l4_upsert_at'))}"
+                f"（{meta.get('last_l4_upsert_run_id') or '-'}）"
+            )
+        else:
+            lines.append("索引覆盖：meta.json 不存在（尚无索引）")
+    except Exception as exc:
+        lines.append(f"索引覆盖：unavailable ({type(exc).__name__}: {exc})")
     # TASK-F: index fingerprint / mismatch / rebuild hint
     try:
         from G4W.memory.vector import index_meta as _im
@@ -427,6 +493,8 @@ class CommandRouter:
             if not active:
                 return "当前没有待触发提醒或check-in。"
             return "\n".join(f"- {job['id']} | {job['kind']} | {job['content']} | due={job['dueAt']}" for job in active)
+        if name == "todo":
+            return self._handle_todo(sender_id, args)
         if name == "xiaoyi":
             if args:
                 try:
@@ -437,6 +505,7 @@ class CommandRouter:
             if not jobs:
                 return "当前没有小艺任务。"
             return "\n".join(f"- {item['jobId']} | {item.get('status')} | {item.get('prompt', '')[:80]}" for item in jobs[:20])
+
         if name == "location":
             latest = self.service.locations.latest()
             if not latest:
@@ -508,3 +577,55 @@ class CommandRouter:
         if name == "vector":
             return handle_vector_command(args)
         return "未知指令。\n\n" + help_text()
+
+    def _handle_todo(self, sender_id: str, args: str) -> str:
+        """/todo add|list|done <id>|del <id>|cancel <id> — 个人任务清单。"""
+        parts = (args or "").split()
+        if not parts or parts[0].lower() in ("list", "ls"):
+            return self.service.todos.render_menu(sender_id)
+        op = parts[0].lower()
+        try:
+            if op == "add":
+                rest = (args or "")[len(parts[0]):].strip()
+                due = None
+                repeat_minutes = 0
+                due_match = re.search(r"--due\s+(\S+)", rest)
+                if due_match:
+                    due = due_match.group(1)
+                    rest = rest.replace(due_match.group(0), "").strip()
+                repeat_match = re.search(r"--repeat\s+(\d+)", rest)
+                if repeat_match:
+                    repeat_minutes = int(repeat_match.group(1))
+                    rest = rest.replace(repeat_match.group(0), "").strip()
+                if not rest:
+                    return "用法：/todo add <内容> [--due 2026-08-15T12:00] [--repeat 分钟]"
+                item = self.service.todos.add(sender_id, rest, due_at=due,
+                                              recurrence_seconds=repeat_minutes * 60 if repeat_minutes else 0)
+                extra = ""
+                if due:
+                    extra += " · 到点提醒"
+                if repeat_minutes:
+                    extra += f" · 每 {repeat_minutes} 分钟重复"
+                return f"✅ 已添加任务 [{item['id']}] {item['text']}{extra}"
+            if op == "done":
+                if len(parts) < 2:
+                    return "用法：/todo done <id> [完成说明]"
+                todo_id = parts[1]
+                confirm = " ".join(parts[2:])
+                item = self.service.todos.done(sender_id, todo_id, confirm)
+                return f"✅ 已完成 [{item['id']}] {item['text']}"
+            if op == "del":
+                if len(parts) < 2:
+                    return "用法：/todo del <id>"
+                self.service.todos.delete(sender_id, parts[1])
+                return f"🗑️ 已删除任务 {parts[1]}"
+            if op == "cancel":
+                if len(parts) < 2:
+                    return "用法：/todo cancel <id>"
+                item = self.service.todos.cancel(sender_id, parts[1])
+                return f"↩️ 已取消 [{item['id']}] {item['text']}"
+            return "用法：/todo add <内容> [--due 时间] [--repeat 分钟] · /todo list · /todo done <id> · /todo del <id> · /todo cancel <id>"
+        except KeyError:
+            return "⚠️ 找不到该任务编号,用 /todo list 查看"
+        except ValueError as error:
+            return f"⚠️ {error}"

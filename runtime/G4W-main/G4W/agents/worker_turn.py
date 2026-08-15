@@ -7,8 +7,8 @@ from ..core.storage import JsonStore
 class WorkerTurnStore:
     """Persistent per-conversation worker progress reporting preference.
 
-    enabled=True  (default): Conductor reports intermediate worker progress.
-    enabled=False: Conductor only reports when the worker completes (or fails).
+    enabled=True: Conductor reports intermediate worker progress.
+    enabled=False (default): Conductor only reports when the worker completes (or fails).
     """
 
     def __init__(self, path: Path):
@@ -16,7 +16,7 @@ class WorkerTurnStore:
 
     def get(self, binding_key: str) -> bool:
         entry = self.store.read().get("bindings", {}).get(binding_key, {})
-        return bool(entry.get("enabled", True))
+        return bool(entry.get("enabled", False))
 
     def set(self, binding_key: str, enabled: bool) -> dict:
         value = {

@@ -65,11 +65,29 @@ def _load_model():
         if not MODEL_DIR.is_dir():
             raise FileNotFoundError(f"model dir missing: {path}")
         if REQUESTED_DEVICE == "auto":
-            DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+            # 设备策略由安装期决定(torch 版本):GPU 版 torch 强制 CUDA,不可用时
+            # 不许降级 CPU(报错→ask user);CPU 版 torch(核显用户)正常跑 CPU。
+            if torch.cuda.is_available():
+                DEVICE = "cuda"
+            elif torch.version.cuda:
+                raise RuntimeError(
+                    "GPU torch installed (cu%s) but CUDA unavailable; "
+                    "CPU fallback is disabled by policy — fix GPU and retry"
+                    % torch.version.cuda
+                )
+            else:
+                DEVICE = "cpu"
         elif REQUESTED_DEVICE.startswith("cuda") and not torch.cuda.is_available():
             raise RuntimeError(
                 "EMBED_DEVICE requests CUDA, but torch.cuda.is_available() is false"
             )
+        elif REQUESTED_DEVICE.startswith("cpu"):
+            if torch.version.cuda:
+                raise RuntimeError(
+                    "CPU embedding is disabled by policy when GPU torch is installed "
+                    "(cu%s); fix GPU or ask the user instead of degrading" % torch.version.cuda
+                )
+            DEVICE = REQUESTED_DEVICE
         else:
             DEVICE = REQUESTED_DEVICE
         _model = SentenceTransformer(path, device=DEVICE)

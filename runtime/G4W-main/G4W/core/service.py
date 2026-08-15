@@ -17,6 +17,7 @@ from ..memory.maintenance import L4MaintenanceService
 from ..memory.wechat_maintenance import WechatMaintenanceService
 from ..features.supervision import DidaCli, SelfControlService
 from ..memory.checkin import CheckinService
+from ..memory.todo import TodoStore
 from ..features.timeline_publish import TimelinePublisher
 from .scheduler import ScheduledStore
 from .storage import DeferredReplyStore, EventStore, JsonStore, OutboxStore
@@ -83,6 +84,7 @@ class G4WService:
             config.supervision_default_delay_minutes, config.supervision_default_focus_minutes,
         )
         self.checkins = CheckinService(config.state_dir / "checkin-config.json")
+        self.todos = TodoStore(config.state_dir / "todo-state.json")
         self.wechat_maintenance = WechatMaintenanceService(config.state_dir / "wechat-maintenance-state.json")
         self.profiles = JsonStore(config.state_dir / "profiles.json", {"senders": {}})
         self.short_path_mirror = ShortPathMirror(
@@ -191,6 +193,23 @@ class G4WService:
             "didaCli": {"command": self.supervision.dida.command, "available": self.supervision.dida.available()},
         }
 
+    def _sender_to_binding(self) -> dict:
+        """senderId -> bindingKey 映射(用于 todo 到点事件路由)。"""
+        mapping = {}
+        for binding_key, binding in self.conversations.bindings.read().get("bindings", {}).items():
+            sender_id = str(binding.get("senderId") or "")
+            if sender_id:
+                mapping[sender_id] = binding_key
+        return mapping
+
+    def _migrate_legacy_reminders(self) -> int:
+        """启动时把旧 schedules.json 的 reminder job 并入 todo(幂等)。"""
+        return TodoStore.migrate_from_schedules(
+            self.schedules,
+            self.config.state_dir / "todo-state.json",
+            self._sender_to_binding(),
+        )
+
     def run(self):
         account = None
         while account is None:
@@ -200,6 +219,9 @@ class G4WService:
                 print(f"[G4W] waiting for test WeChat login: {error}")
                 time.sleep(5)
         print(f"[G4W] Python conductor started account={account['accountId']} state={self.config.state_dir}")
+        migrated = self._migrate_legacy_reminders()
+        if migrated:
+            print(f"[G4W] todo: migrated {migrated} legacy reminders")
         if self.config.location_enabled:
             status = self.locations.start_server(self.config.location_host, self.config.location_port, self.config.location_token)
             print(f"[G4W] location server started http://{status['host']}:{status['port']}")
@@ -218,8 +240,9 @@ class G4WService:
                 self.workers.scan_stalled(self.config.worker_stall_seconds)
                 self._last_worker_watchdog = time.time()
             self.supervision.process_due()
-            self.checkins.emit_due(self.events, self.l4, self.wechat_maintenance, self.config.user_name)
+            self.checkins.emit_due(self.events, self.l4, self.wechat_maintenance, self.config.user_name, todo_service=self.todos)
             self.schedules.emit_due(self.events, limit=20)
+            self.todos.emit_due(self.events, self._sender_to_binding(), limit=20)
             self.process_dashboard_requests(limit=10)
             self.process_events(limit=20)
             time.sleep(0.2)

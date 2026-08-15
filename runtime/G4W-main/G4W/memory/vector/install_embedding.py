@@ -34,6 +34,7 @@ def _load_sibling(mod_name: str, filename: str):
 vc = _load_sibling("_cb_install_vector_config", "vector_config.py")
 _st_tpl = _load_sibling("_cb_install_st_server_template", "st_server_template.py")
 write_server_py = _st_tpl.write_server_py
+em = _load_sibling("_cb_install_embed_mirrors", "embed_mirrors.py")
 
 PINNED_MODEL = "Qwen3-Embedding-0.6B"
 PINNED_MODEL_REPO = "Qwen/Qwen3-Embedding-0.6B"
@@ -291,6 +292,7 @@ def _nvidia_gpu_probe() -> Dict[str, Any]:
             errors="replace",
             timeout=20,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
         return {
@@ -326,6 +328,12 @@ def _torch_install_plan() -> Dict[str, Any]:
         os.environ.get("G4W_TORCH_INDEX_URL")
         or ""
     ).strip().rstrip("/")
+    if not custom:
+        # 配置文件（测速选优）优先；无配置时 resolve 即内置池顺序
+        try:
+            custom = (em.resolve(_state_dir())["torch"] or [""])[0].rstrip("/")
+        except Exception:
+            custom = ""
     indexes: List[str] = []
     for url in (
         custom,
@@ -367,6 +375,7 @@ def _probe_torch_package(vpy: Path) -> Dict[str, Any]:
             errors="replace",
             timeout=30,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         version = (result.stdout or "").strip().splitlines()
         return {
@@ -467,6 +476,7 @@ def _probe_torch(vpy: Path) -> Dict[str, Any]:
             errors="replace",
             timeout=90,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         stdout = (result.stdout or "").strip()
         details: Dict[str, Any] = {}
@@ -571,6 +581,7 @@ def ensure_windows_vc_runtime(
             text=True,
             timeout=900,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
     except Exception as exc:
         return {
@@ -653,6 +664,7 @@ def ensure_venv(
                 text=True,
                 timeout=120,
                 check=False,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             out["steps"].append(
                 {
@@ -677,19 +689,29 @@ def ensure_venv(
             req.write_text(_requirements_text(), encoding="utf-8")
         try:
             # Prefer CN mirror when reachable; fall back to default PyPI.
+            # 优先级：环境变量 G4W_PIP_INDEX_URL → 配置（测速选优）→ 内置池探测
             index_args: List[str] = []
-            for mirror in (
-                "https://pypi.tuna.tsinghua.edu.cn/simple",
-                "https://mirrors.aliyun.com/pypi/simple",
-            ):
+            pip_override = (os.environ.get("G4W_PIP_INDEX_URL") or "").strip().rstrip("/")
+            if not pip_override:
                 try:
-                    import urllib.request as _u
-
-                    _u.urlopen(mirror + "/pip/", timeout=5)
-                    index_args = ["-i", mirror, "--trusted-host", mirror.split("//", 1)[1].split("/")[0]]
-                    break
+                    pip_override = (em.resolve(_state_dir())["pip"] or [""])[0].rstrip("/")
                 except Exception:
-                    continue
+                    pip_override = ""
+            if pip_override:
+                index_args = ["-i", pip_override, "--trusted-host", pip_override.split("//", 1)[1].split("/")[0]]
+            else:
+                for mirror in (
+                    "https://pypi.tuna.tsinghua.edu.cn/simple",
+                    "https://mirrors.aliyun.com/pypi/simple",
+                ):
+                    try:
+                        import urllib.request as _u
+
+                        _u.urlopen(mirror + "/pip/", timeout=5)
+                        index_args = ["-i", mirror, "--trusted-host", mirror.split("//", 1)[1].split("/")[0]]
+                        break
+                    except Exception:
+                        continue
 
             def _pip_stream(cmd: List[str], timeout_s: int, action: str) -> int:
                 """Run pip with live stdout (no capture_output hang illusion)."""
@@ -711,6 +733,7 @@ def ensure_venv(
                     errors="replace",
                     bufsize=1,
                     env=child_env,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
                 tail: List[str] = []
                 assert proc.stdout is not None
@@ -915,8 +938,13 @@ def write_config(
     return {"ok": True, "path": str(cfg_path), "config": merged, "probe": probe}
 
 
+def _state_dir() -> Path:
+    return runtime_root() / "G4W-data"
+
+
 def _model_endpoints(explicit: Optional[Sequence[str]] = None) -> List[str]:
-    """Ordered model endpoints: explicit/env first, CN mirror, then official."""
+    """Ordered model endpoints: explicit/env first, config (speedtest) pick,
+    CN mirror, then official."""
     raw: List[str] = []
     if explicit:
         raw.extend(str(x or "").strip() for x in explicit)
@@ -925,6 +953,13 @@ def _model_endpoints(explicit: Optional[Sequence[str]] = None) -> List[str]:
             value = (os.environ.get(key) or "").strip()
             if value:
                 raw.append(value)
+        if not raw:
+            try:
+                configured = (em.resolve(_state_dir())["hf"] or [""])[0]
+                if configured:
+                    raw.append(configured)
+            except Exception:
+                pass
         raw.extend(_DEFAULT_MODEL_ENDPOINTS)
     out: List[str] = []
     seen = set()
@@ -954,6 +989,7 @@ def _stream_command(
         errors="replace",
         bufsize=1,
         env=env,
+        creationflags=subprocess.CREATE_NO_WINDOW,
     )
     tail: List[str] = []
     assert proc.stdout is not None

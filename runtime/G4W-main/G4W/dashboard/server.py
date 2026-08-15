@@ -8,6 +8,9 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
+import socket
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -116,6 +119,17 @@ def _timestamp(path: Path) -> float:
         return path.stat().st_mtime
     except OSError:
         return 0.0
+
+
+def _backup_time(path: Path) -> float:
+    """快照时间优先从备份目录名解析(l4compress-YYYYMMDD-HHMMSS = 压缩运行时刻),
+    回退文件 mtime。备份内文件复制时保留原 mtime,不可作为快照时间。"""
+    try:
+        name = path.parents[1].name
+        stamp = name[len("l4compress-"): len("l4compress-") + 15]
+        return time.mktime(time.strptime(stamp, "%Y%m%d-%H%M%S"))
+    except (ValueError, IndexError, OSError):
+        return _timestamp(path)
 
 
 def _human_event(event: dict) -> str:
@@ -348,6 +362,25 @@ class DashboardAuth:
         return {"ok": True, "message": "密码已更新"}
 
 
+_EMBED_MIRRORS_MODULE = None
+
+
+def _embed_mirrors_module():
+    """按文件加载 embed_mirrors.py（不能 import G4W.memory.vector 包：会拉 numpy/hnsw）。"""
+    global _EMBED_MIRRORS_MODULE
+    if _EMBED_MIRRORS_MODULE is None:
+        import importlib.util
+
+        path = Path(__file__).resolve().parents[1] / "memory" / "vector" / "embed_mirrors.py"
+        spec = importlib.util.spec_from_file_location("_dash_embed_mirrors", path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot load {path}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _EMBED_MIRRORS_MODULE = mod
+    return _EMBED_MIRRORS_MODULE
+
+
 class DashboardState:
     def __init__(self, config: Config):
         self.config = config
@@ -451,6 +484,8 @@ class DashboardState:
             "summary": summary[:240],
             "runIndex": int(item.get("runIndex") or 0),
             "updatedAt": item.get("updatedAt") or item.get("createdAt"),
+            "dir": str(item.get("dir") or ""),
+            "archivePath": str(item.get("archivePath") or ""),
             "hasDetail": bool(item.get("dir") or item.get("result") or item.get("archivePath")),
         }
 
@@ -537,9 +572,26 @@ class DashboardState:
         memory_items = self._memory_items(config)
         vector_config = load_vector_config()
         vector_on = bool(vector_config.get("enabled") and vector_config.get("installed"))
+        # 下次主动联系（checkin）：所有 enabled binding 中最近的 nextAt
+        next_checkin_at = 0
+        try:
+            checkin_state = _read_json(state_dir / "checkin-config.json", {"bindings": {}})
+            now = time.time()
+            for binding in (checkin_state.get("bindings") or {}).values():
+                if not isinstance(binding, dict) or not binding.get("enabled"):
+                    continue
+                try:
+                    at = float(binding.get("nextAt") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if at > now and (next_checkin_at == 0 or at < next_checkin_at):
+                    next_checkin_at = at
+        except Exception:
+            pass
 
         return {
             "updatedAt": time.time(),
+            "nextCheckinAt": next_checkin_at,
             "system": {
                 "name": config.bot_name or "G4W",
                 "user": config.user_name or "本地用户",
@@ -594,7 +646,7 @@ class DashboardState:
         for path in backups_root.glob("*/history_insight/active_knowledge.json") if backups_root.is_dir() else []:
             backups.append({
                 "name": path.parents[1].name,
-                "updatedAt": _short_date(_timestamp(path)),
+                "updatedAt": _short_date(_backup_time(path)),
                 "bytes": path.stat().st_size,
             })
         backups.sort(key=lambda item: item["name"], reverse=True)
@@ -616,12 +668,54 @@ class DashboardState:
             "identity": str(profile.get("userIdentity") or ""),
             "botName": str(profile.get("botName") or ""),
             "gender": str(profile.get("userGender") or ""),
+            "userProfile": _read_text(insight / "user_profile.md").strip(),
             "brief": _read_text(brief_path).strip(),
             "sections": sections,
             "backups": backups,
             "source": str(active_path),
             "activeBytes": active_path.stat().st_size if active_path.is_file() else 0,
             "updatedAt": _short_date(_timestamp(active_path)),
+        }
+
+    def memory_timeline(self, memory_id: str) -> dict:
+        """画像时间轴:遍历所有历史快照,返回每份的元信息(键计数等,轻量)。"""
+        config = self._fresh_config()
+        target = config.conversations_dir / safe_segment(memory_id)
+        if target.parent != config.conversations_dir or not target.is_dir():
+            raise FileNotFoundError(memory_id)
+        backups_root = target / "summaries" / ".backups"
+        points = []
+        if backups_root.is_dir():
+            for path in backups_root.glob("l4compress-*/history_insight/active_knowledge.json"):
+                active = _read_json(path, {})
+                points.append({
+                    "name": path.parents[1].name,
+                    "updatedAt": _short_date(_backup_time(path)),
+                    "bytes": path.stat().st_size,
+                    "counts": {
+                        key: (len(value) if isinstance(value, (list, dict)) else 0)
+                        for key, value in active.items()
+                    },
+                    "hasBrief": (path.parent / "memory_brief.md").is_file(),
+                })
+        points.sort(key=lambda item: item["name"], reverse=True)  # 新在前
+        return {"points": points}
+
+    def memory_backup(self, memory_id: str, backup_name: str) -> dict:
+        """单份历史快照详情:当时的完整画像 + 当时简报。"""
+        config = self._fresh_config()
+        target = config.conversations_dir / safe_segment(memory_id)
+        if target.parent != config.conversations_dir or not target.is_dir():
+            raise FileNotFoundError(memory_id)
+        name = safe_segment(backup_name)
+        active_path = target / "summaries" / ".backups" / name / "history_insight" / "active_knowledge.json"
+        if not active_path.is_file():
+            raise FileNotFoundError(backup_name)
+        return {
+            "name": name,
+            "updatedAt": _short_date(_backup_time(active_path)),
+            "active": _read_json(active_path, {}),
+            "brief": _read_text(active_path.parent / "memory_brief.md").strip(),
         }
 
     def timeline_data(self) -> dict:
@@ -652,6 +746,60 @@ class DashboardState:
             return config.conversations_dir / safe_segment(sender_id) / "summaries" / "diary", sender_id
         candidates = sorted(config.conversations_dir.glob("*/summaries/diary"), key=_timestamp, reverse=True)
         return (candidates[0], candidates[0].parents[1].name) if candidates else (config.diary_dir, "")
+
+    # ---------- 待办（与微信 /todo 同源） ----------
+
+    def _todo_store(self, config: Config):
+        from ..memory.todo import TodoStore
+
+        return TodoStore(config.state_dir / "todo-state.json")
+
+    def todo_list(self) -> dict:
+        config = self._fresh_config()
+        try:
+            from ..memory.todo import _fmt_local
+
+            store = self._todo_store(config)
+            raw = store.store.read().get("tasks", {})
+            tasks = {}
+            for sender_id, items in (raw or {}).items():
+                tasks[sender_id] = [
+                    {
+                        "id": t.get("id"),
+                        "text": t.get("text"),
+                        "status": t.get("status"),
+                        "dueAt": t.get("dueAt"),
+                        "dueLabel": _fmt_local(t.get("dueAt")),
+                        "recurrenceSeconds": t.get("recurrenceSeconds") or 0,
+                        "recurLabel": store._recur_label(t),
+                        "classify": store._classify(t),
+                        "createdAt": t.get("createdAt"),
+                        "createdLabel": _fmt_local(t.get("createdAt")),
+                        "completedAt": t.get("completedAt"),
+                        "fireIndex": t.get("fireIndex") or 0,
+                        "source": t.get("source") or "",
+                    }
+                    for t in items
+                ]
+            return {"ok": True, "tasks": tasks, "total": sum(len(v) for v in tasks.values())}
+        except Exception as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    def todo_action(self, sender_id: str, todo_id: str, action: str) -> dict:
+        config = self._fresh_config()
+        try:
+            store = self._todo_store(config)
+            if action == "done":
+                task = store.done(sender_id, todo_id)
+                return {"ok": True, "action": "done", "task": task}
+            if action == "delete":
+                store.delete(sender_id, todo_id)
+                return {"ok": True, "action": "delete", "id": todo_id}
+            return {"ok": False, "error": f"unknown action: {action}"}
+        except KeyError as exc:
+            return {"ok": False, "error": f"todo not found: {exc}"}
+        except Exception as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
     def diary_index(self) -> dict:
         config = self._fresh_config()
@@ -693,6 +841,698 @@ class DashboardState:
             "updatedAt": _short_date(_timestamp(path)),
         }
 
+    # ---------- 服务注册表（可视化启停 + 日志；agent 可动态注册/移除） ----------
+
+    def _services_store(self, config: Config) -> dict:
+        path = config.state_dir / "dashboard-services.json"
+        state = _read_json(path, {"services": {}})
+        if not isinstance(state, dict):
+            state = {"services": {}}
+        return {"path": path, "state": state}
+
+    def _ensure_builtin_services(self, config: Config) -> dict:
+        """内置服务定义；内置条目以代码为准整体同步（名称/命令/健康更新生效），agent 注册条目不覆盖。"""
+        store = self._services_store(config)
+        state = store["state"]
+        services = state.setdefault("services", {})
+        root = Path(config.workspace_root)
+        base_py = root / "runtime" / "python" / "python.exe"
+        venv_py = root / "runtime" / "app" / ".venv" / "Scripts" / "python.exe"
+        # 统一用 base python 直启：venv python 是 redirector（子进程新开控制台窗口），
+        # CREATE_NO_WINDOW 加在 redirector 上不生效；依赖经 _env_for_service 的 PYTHONPATH 提供
+        if not base_py.is_file():
+            base_py = venv_py
+        ga_home = root / "runtime" / "G4W-main"
+        emb_root = root / "runtime" / "G4W-embedding"
+        emb_py = emb_root / ".venv" / "Scripts" / "python.exe"
+        builtin = {
+            "main": {
+                "name": "G4W 主服务",
+                "desc": "Conductor 主服务（-m G4W start）",
+                "command": [str(base_py), "-u", "-m", "G4W", "start"],
+                "cwd": str(ga_home),
+                "logs": [str(root / "runtime" / "g4w.service.log")],
+                "health": {"kind": "pidfile", "value": str(config.pid_file)},
+                "managed": True,
+                "builtin": True,
+            },
+            "monitor": {
+                "name": "模型输出监视器",
+                "desc": "Model monitor（-m G4W monitor，随主服务自动退出）",
+                "command": [str(base_py), "-u", "-m", "G4W", "monitor"],
+                "cwd": str(ga_home),
+                "logs": [str(root / "runtime" / "g4w.monitor.log")],
+                "health": {"kind": "cmdline", "value": "g4w monitor"},
+                "managed": True,
+                "builtin": True,
+            },
+            "embedding": {
+                "name": "向量 Embedding",
+                "desc": "ST 推理服务（127.0.0.1:8081，GPU 强制策略）",
+                "command": [str(base_py), "server.py"],
+                "cwd": str(emb_root),
+                "logs": [str(root / "runtime" / "g4w-embedding.log")],
+                "health": {"kind": "port", "value": "127.0.0.1:8081"},
+                "managed": True,
+                "builtin": True,
+            },
+            "timeline": {
+                "name": "时间线服务",
+                "desc": "独立时间线服务（18181 + 站点 18182）",
+                "command": [str(base_py), str(root / "runtime" / "G4W-data" / "timeline" / "start_timeline_serve.py")],
+                "cwd": str(root / "runtime" / "G4W-main"),
+                "logs": [str(root / "runtime" / "G4W-data" / "timeline" / "serve-startup.log")],
+                "health": {"kind": "port", "value": "127.0.0.1:18181"},
+                "managed": True,
+                "builtin": True,
+            },
+            "dashboard": {
+                "name": "看板",
+                "desc": "当前控制中心（18180）",
+                "command": [],
+                "cwd": "",
+                "logs": [str(root / "runtime" / "dashboard.stdout.log")],
+                "health": {"kind": "port", "value": "127.0.0.1:18180"},
+                "managed": False,
+                "builtin": True,
+            },
+        }
+        changed = False
+        for sid, spec in builtin.items():
+            existing = services.get(sid)
+            if existing is None or existing.get("builtin"):
+                if existing != spec:
+                    services[sid] = spec
+                    changed = True
+        # 清理：注册表中 builtin 但代码已移除的条目（如旧版内置服务下线）
+        for sid in [k for k, v in services.items() if v.get("builtin") and k not in builtin]:
+            del services[sid]
+            changed = True
+        if changed:
+            store["path"].write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        return state
+
+    @staticmethod
+    def _port_open(host: str, port: int, timeout: float = 0.3) -> bool:
+        try:
+            with socket.create_connection((host, int(port)), timeout=timeout):
+                return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def _pid_alive(pid: int) -> bool:
+        if not pid or pid <= 0:
+            return False
+        try:
+            import psutil
+
+            return psutil.pid_exists(int(pid))
+        except Exception:
+            try:
+                os.kill(int(pid), 0)
+                return True
+            except OSError:
+                return False
+
+    def _service_status(self, config: Config, sid: str, spec: dict) -> dict:
+        health = spec.get("health") or {}
+        kind = str(health.get("kind") or "")
+        status = "stopped"
+        detail = ""
+        if kind == "pidfile":
+            pid_path = Path(str(health.get("value") or ""))
+            if pid_path.is_file():
+                try:
+                    pid = int(pid_path.read_text(encoding="utf-8").strip())
+                    if self._pid_alive(pid):
+                        status, detail = "running", f"pid={pid}"
+                    else:
+                        detail = f"stale pid {pid}"
+                except Exception:
+                    pass
+        elif kind == "port":
+            value = str(health.get("value") or "")
+            host, _, port = value.partition(":")
+            if self._port_open(host or "127.0.0.1", int(port or 0)):
+                status, detail = "running", f"port {port}"
+            else:
+                detail = f"port {port} 未监听"
+        elif kind == "cmdline":
+            needle = str(health.get("value") or "").lower()
+            pids = self._cmdline_pids(needle)
+            if pids:
+                status, detail = "running", f"pid={pids[0]}"
+            else:
+                detail = f"进程特征 '{needle}' 未匹配"
+        return {"id": sid, "name": spec.get("name") or sid, "desc": spec.get("desc") or "",
+                "managed": bool(spec.get("managed")), "builtin": bool(spec.get("builtin")),
+                "logs": spec.get("logs") or [], "status": status, "detail": detail}
+
+    def services_list(self) -> dict:
+        config = self._fresh_config()
+        state = self._ensure_builtin_services(config)
+        services = state.get("services", {})
+        # 端口探测并发执行：关闭端口的 connect 可能要等满超时（防火墙策略），
+        # 串行会叠加延迟（实测 3 个关闭端口串行 ~1.8s）
+        items = []
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(8, max(1, len(services)))) as pool:
+                items = list(pool.map(
+                    lambda sid_spec: self._service_status(config, sid_spec[0], sid_spec[1]),
+                    list(services.items()),
+                ))
+        except Exception:
+            items = [self._service_status(config, sid, spec) for sid, spec in services.items()]
+        return {
+            "ok": True,
+            "services": items,
+            "source": str(self._services_store(config)["path"]),
+        }
+
+    def _env_for_service(self, config: Config, spec: dict) -> dict:
+        env = os.environ.copy()
+        root = Path(config.workspace_root)
+        env.setdefault("G4W_WORKSPACE_ROOT", str(root))
+        env.setdefault("G4W_STATE_DIR", str(config.state_dir))
+        env.setdefault("G4W_HOME", str(root / "runtime" / "G4W-main"))
+        env.setdefault("GA_APP_DIR", str(root / "runtime" / "app"))
+        site_packages = []
+        for venv in (root / "runtime" / "app" / ".venv", root / "runtime" / "G4W-embedding" / ".venv"):
+            sp = venv / "Lib" / "site-packages"
+            if sp.is_dir():
+                site_packages.append(str(sp))
+        # base python 直启时依赖来自各 venv 的 site-packages。
+        # 注意：不能用 setdefault——bat 已设置 PYTHONPATH 时不会生效（实证 bug），
+        # 必须把 venv site-packages 追加进现有值并去重。
+        parts: list[str] = []
+        for entry in str(env.get("PYTHONPATH") or "").split(os.pathsep):
+            entry = entry.strip()
+            if entry and entry not in parts:
+                parts.append(entry)
+        for entry in (str(root / "runtime" / "G4W-main"), str(root / "runtime" / "app")):
+            if entry not in parts:
+                parts.append(entry)
+        for sp in site_packages:
+            if sp not in parts:
+                parts.append(sp)
+        env["PYTHONPATH"] = os.pathsep.join(parts)
+        env.setdefault("PYTHONUTF8", "1")
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+        # 从 G4W-main/.env 补充 EMBEDDING_* / G4W_VECTOR_*
+        env_path = root / "runtime" / "G4W-main" / ".env"
+        try:
+            if env_path.is_file():
+                for raw in env_path.read_text(encoding="utf-8-sig").splitlines():
+                    s = raw.strip()
+                    if not s or s.startswith("#") or "=" not in s:
+                        continue
+                    k, v = s.split("=", 1)
+                    k = k.strip()
+                    if k.startswith("EMBEDDING_") or k.startswith("G4W_VECTOR_"):
+                        env.setdefault(k, v.strip().strip("'\""))
+        except Exception:
+            pass
+        return env
+
+    def service_start(self, service_id: str) -> dict:
+        config = self._fresh_config()
+        state = self._ensure_builtin_services(config)
+        spec = state.get("services", {}).get(service_id)
+        if not spec:
+            return {"ok": False, "error": f"unknown service: {service_id}"}
+        if not spec.get("command"):
+            return {"ok": False, "error": f"service {service_id} 不支持启动"}
+        current = self._service_status(config, service_id, spec)
+        if current["status"] == "running":
+            return {"ok": True, "message": "已在运行", "status": "running", "id": service_id}
+        cmd = list(spec.get("command") or [])
+        cwd = str(spec.get("cwd") or str(Path(config.workspace_root)))
+        log_path = None
+        for p in spec.get("logs") or []:
+            candidate = Path(p)
+            try:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                log_path = candidate.open("ab")
+                break
+            except Exception:
+                continue
+        popen_kwargs = {
+            "cwd": cwd,
+            "env": self._env_for_service(config, spec),
+            "stdout": log_path or subprocess.DEVNULL,
+            "stderr": subprocess.STDOUT,
+            "shell": False,
+        }
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = (
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                | getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            )
+            popen_kwargs["close_fds"] = False
+        try:
+            proc = subprocess.Popen(cmd, **popen_kwargs)
+        except Exception as exc:
+            return {"ok": False, "error": f"启动失败: {type(exc).__name__}: {exc}", "id": service_id}
+        return {"ok": True, "started": True, "pid": proc.pid, "id": service_id,
+                "log": str(log_path.name) if log_path else None}
+
+    def service_stop(self, service_id: str) -> dict:
+        config = self._fresh_config()
+        state = self._ensure_builtin_services(config)
+        spec = state.get("services", {}).get(service_id)
+        if not spec:
+            return {"ok": False, "error": f"unknown service: {service_id}"}
+        if not spec.get("managed"):
+            return {"ok": False, "error": f"service {service_id} 不允许通过看板停止"}
+        health = spec.get("health") or {}
+        kind = str(health.get("kind") or "")
+        stopped = False
+        actions = []
+        try:
+            import psutil
+        except Exception:
+            psutil = None
+        # 1) pidfile
+        if kind == "pidfile":
+            pid_path = Path(str(health.get("value") or ""))
+            if pid_path.is_file():
+                try:
+                    pid = int(pid_path.read_text(encoding="utf-8").strip())
+                    if pid and self._pid_alive(pid):
+                        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                                       capture_output=True, timeout=15)
+                        stopped = True
+                        actions.append(f"taskkill pid {pid}（进程树）")
+                except Exception:
+                    pass
+        # 2) port 监听者（校验命令行特征，防误杀）
+        if kind == "port" and not stopped:
+            value = str(health.get("value") or "")
+            host, _, port = value.partition(":")
+            port = int(port or 0)
+            if port and psutil is not None:
+                for conn in psutil.net_connections():
+                    try:
+                        if conn.status == "LISTEN" and conn.laddr.port == port and conn.pid:
+                            proc = psutil.Process(conn.pid)
+                            blob = " ".join(proc.cmdline() or []).lower()
+                            sid = service_id.lower()
+                            if sid in blob or sid in str(proc.name() or "").lower():
+                                subprocess.run(["taskkill", "/PID", str(conn.pid), "/T", "/F"],
+                                               capture_output=True, timeout=15)
+                                stopped = True
+                                actions.append(f"taskkill pid {conn.pid}（端口 {port} 监听者）")
+                    except Exception:
+                        continue
+        # 3) cmdline 特征（monitor 等服务，无端口/pidfile）
+        if kind == "cmdline" and not stopped and psutil is not None:
+            needle = str(health.get("value") or "").lower()
+            for proc_id in self._cmdline_pids(needle):
+                try:
+                    subprocess.run(["taskkill", "/PID", str(proc_id), "/T", "/F"],
+                                   capture_output=True, timeout=15)
+                    stopped = True
+                    actions.append(f"taskkill pid {proc_id}（cmdline 特征 {needle}）")
+                except Exception:
+                    continue
+        return {"ok": True, "stopped": stopped, "id": service_id, "actions": actions}
+
+    def _cmdline_pids(self, needle: str) -> list[int]:
+        """按 cmdline 特征找 pid；结果缓存 3 秒。
+
+        psutil 对每个进程取 cmdline 在 Windows 上很慢（全进程约 1.2s），
+        服务列表每 3 秒轮询一次，不能每次都全扫。只对 python 进程取
+        cmdline（服务都是 python 起的），并缓存整表。
+        """
+        now = time.time()
+        cache = self.__dict__.setdefault("_cmdline_cache", {"at": 0.0, "hits": {}})
+        if now - cache["at"] > 3.0:
+            hits: dict[str, list[int]] = {}
+            try:
+                import psutil
+
+                for proc in psutil.process_iter(["pid", "name"]):
+                    try:
+                        name = str(proc.info.get("name") or "").lower()
+                        if "python" not in name:
+                            continue
+                        blob = " ".join(proc.cmdline() or []).lower()
+                        for word in blob.split():
+                            hits.setdefault(word, []).append(proc.info["pid"])
+                            # 同时索引路径最后一段：install_embedding.py 需匹配 ...\vector\install_embedding.py
+                            base = word.replace("\\", "/").rsplit("/", 1)[-1]
+                            if base and base != word:
+                                hits.setdefault(base, []).append(proc.info["pid"])
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            cache["at"] = now
+            cache["hits"] = hits
+        words = [word for word in str(needle or "").lower().split() if word]
+        if not words:
+            return []
+        common = set(cache["hits"].get(words[0], []))
+        for word in words[1:]:
+            common &= set(cache["hits"].get(word, []))
+        return sorted(common)
+
+    def service_logs(self, service_id: str, cursor: int = 0) -> dict:
+        config = self._fresh_config()
+        state = self._ensure_builtin_services(config)
+        spec = state.get("services", {}).get(service_id)
+        if not spec:
+            return {"ok": False, "error": f"unknown service: {service_id}"}
+        logs = spec.get("logs") or []
+        if not logs:
+            return {"ok": True, "lines": [], "cursor": cursor, "service": service_id}
+        path = Path(str(logs[0]))
+        try:
+            size = path.stat().st_size if path.is_file() else 0
+            start = max(0, int(cursor or 0))
+            if size <= start:
+                return {"ok": True, "lines": [], "cursor": size, "service": service_id}
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                f.seek(start)
+                chunk = f.read(max(size - start, 0))
+            lines = chunk.splitlines()
+            # 只保留尾部 500 行,避免超大日志撑爆响应
+            if len(lines) > 500:
+                lines = lines[-500:]
+            return {"ok": True, "lines": lines, "cursor": size, "service": service_id}
+        except Exception as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "service": service_id}
+
+    def worker_monitor(self, cursor: int = 0, file_id: str = "", worker_dir: str = "", worker_id: str = "") -> dict:
+        """Worker 页监视器数据源：tail worker 模型输出流 + 历史信息回退。
+
+        live：tail 最新 model_responses_*.txt（worker_runner 实时模型输出）+
+        progress.json 进度摘要（字符串 key 去重，避免大整数经 JSON/JS 丢精度）。
+        没有实时输出时回退历史：优先该 worker 最近 run 的 report.md，
+        archived 则读本地 zip 内 report.md，zip 不存在/读不了则用注册表
+        里的 task/result/summary。history 模式返回 fileId="hist:<key>"，
+        前端带去重（再次轮询不再重复返回）。
+        """
+        config = self._fresh_config()
+        root = Path(config.state_dir) / "memory" / "conversations"
+        filter_dir: Path | None = None
+        label = ""
+        if str(worker_dir or "").strip():
+            try:
+                candidate = Path(str(worker_dir).strip()).resolve()
+                if candidate == root or root in candidate.parents:
+                    filter_dir = candidate
+                    label = filter_dir.name
+            except Exception:
+                filter_dir = None
+        archive_path = ""
+        if filter_dir is None and str(worker_id or "").strip():
+            try:
+                registry = _read_json(config.worker_registry_file, {"workers": {}})
+                item = (registry.get("workers") or {}).get(str(worker_id).strip())
+                if isinstance(item, dict):
+                    d = str(item.get("dir") or "")
+                    if d and Path(d).is_dir():
+                        filter_dir = Path(d).resolve()
+                        label = Path(d).name
+                    else:
+                        archive_path = str(item.get("archivePath") or "")
+                        if not label:
+                            label = str(item.get("topic") or worker_id)
+            except Exception:
+                pass
+
+        def iter_workers_root():
+            try:
+                for sender in root.iterdir():
+                    workers_dir = sender / "workers"
+                    if workers_dir.is_dir():
+                        yield workers_dir
+            except Exception:
+                return
+
+        # --- 实时输出（仅扫 workers 树，避免全量 conversations rglob 卡 2s+；
+        #    archived worker（有 archivePath 无活目录）跳过 live 直接走历史） ---
+        responses: list[Path] = []
+        if not (archive_path and filter_dir is None):
+            try:
+                if filter_dir is not None:
+                    if filter_dir.is_dir():
+                        responses = list(filter_dir.rglob("model_responses_*.txt"))
+                else:
+                    for workers_root in iter_workers_root():
+                        responses.extend(workers_root.rglob("model_responses_*.txt"))
+            except Exception:
+                pass
+        responses.sort(key=lambda p: p.stat().st_mtime_ns, reverse=True)
+        active = responses[0] if responses else None
+        if active is not None and not label:
+            try:
+                # .../workers/<date>/<topic>-<id>/runtime/model_responses/<file>
+                label = active.parents[2].name
+            except Exception:
+                label = active.parent.name
+        progress = None
+        try:
+            best_path: Path | None = None
+            best_mtime = 0
+            if filter_dir is not None:
+                candidates = list(filter_dir.rglob("progress.json")) if filter_dir.is_dir() else []
+            elif archive_path:
+                candidates = []
+            else:
+                candidates = []
+                for workers_root in iter_workers_root():
+                    candidates.extend(workers_root.rglob("progress.json"))
+            for path in candidates:
+                try:
+                    mtime_ns = path.stat().st_mtime_ns
+                except Exception:
+                    continue
+                if mtime_ns > best_mtime:
+                    best_path, best_mtime = path, mtime_ns
+            if best_path is not None:
+                try:
+                    data = json.loads(best_path.read_text(encoding="utf-8"))
+                except Exception:
+                    data = {}
+                if isinstance(data, dict):
+                    try:
+                        plabel = best_path.parents[4].name
+                    except Exception:
+                        plabel = ""
+                    progress = {
+                        "turn": int(data.get("turn") or 0),
+                        "summary": str(data.get("summary") or ""),
+                        "label": plabel,
+                        "key": f"{best_path}|{best_mtime}",
+                    }
+        except Exception:
+            pass
+        lines: list[str] = []
+        new_cursor = int(cursor or 0)
+        if active is not None:
+            try:
+                size = active.stat().st_size
+                if str(active) != str(file_id or ""):
+                    # 新文件：只显示尾部（防超大 run 撑爆），游标跳到文件末尾
+                    start = max(0, size - 20000)
+                    with active.open("r", encoding="utf-8", errors="replace") as f:
+                        f.seek(start)
+                        lines = f.read().splitlines()
+                    if len(lines) > 300:
+                        lines = lines[-300:]
+                    new_cursor = size
+                elif size > new_cursor:
+                    with active.open("r", encoding="utf-8", errors="replace") as f:
+                        f.seek(new_cursor)
+                        lines = f.read().splitlines()
+                    new_cursor = size
+            except Exception as exc:
+                return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "active": bool(active)}
+            return {"ok": True, "active": True, "history": False,
+                    "fileId": str(active), "label": label, "cursor": new_cursor,
+                    "lines": lines, "progress": progress,
+                    "filtered": filter_dir is not None, "filterLabel": label}
+
+        # --- 历史回退：worker 当前没有实时输出 ---
+        history_lines: list[str] = []
+        history_key = f"hist:{filter_dir or archive_path or worker_id}"
+        try:
+            report_sources: list[tuple[str, Path]] = []
+            if filter_dir is not None and filter_dir.is_dir():
+                for path in filter_dir.rglob("report.md"):
+                    report_sources.append((str(path), path))
+            elif archive_path:
+                local_zip = Path(archive_path)
+                if local_zip.is_file():
+                    import zipfile
+                    with zipfile.ZipFile(local_zip) as zf:
+                        reports = sorted(
+                            (name for name in zf.namelist() if name.endswith("report.md")),
+                            key=lambda name: [int(part[4:]) if part.startswith("run-") else 0 for part in name.replace("\\", "/").split("/")],
+                        )
+                        if reports:
+                            with zf.open(reports[-1]) as f:
+                                report_sources.append((reports[-1], None))
+                                history_lines = f.read().decode("utf-8", errors="replace").splitlines()
+            if report_sources and not history_lines and filter_dir is not None:
+                report_sources.sort(key=lambda pair: pair[0], reverse=True)
+                path = report_sources[0][1]
+                if path is not None:
+                    try:
+                        history_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    except Exception:
+                        history_lines = []
+            if history_lines:
+                history_lines = [f"[历史] 该 worker 当前未运行，显示最近一次运行报告：", ""] + history_lines
+                if len(history_lines) > 250:
+                    history_lines = history_lines[:250] + ["…（已截断）"]
+        except Exception:
+            history_lines = []
+        if not history_lines:
+            # 注册表兜底：task / result / summary
+            try:
+                registry = _read_json(config.worker_registry_file, {"workers": {}})
+                item = (registry.get("workers") or {}).get(str(worker_id or "").strip()) or {}
+                if not isinstance(item, dict):
+                    item = {}
+                topic = str(item.get("topic") or label or worker_id or "worker")
+                task = str(item.get("task") or "")
+                summary = str(item.get("summary") or "")
+                result = item.get("result") if isinstance(item.get("result"), dict) else {}
+                history_lines.append(f"[历史] {topic} 暂无本地输出（可能已归档到其他设备）")
+                if task:
+                    history_lines += ["", "任务：", task]
+                if summary:
+                    history_lines += ["", "摘要：", summary]
+                if result:
+                    history_lines += ["", "结果：" + json.dumps(result, ensure_ascii=False)[:600]]
+            except Exception:
+                history_lines = [f"[历史] {label or worker_id} 暂无输出"]
+        if str(file_id) == history_key:
+            history_lines = []
+        return {"ok": True, "active": False, "history": True, "fileId": history_key,
+                "label": label, "cursor": 0, "lines": history_lines, "progress": None,
+                "filtered": filter_dir is not None, "filterLabel": label}
+
+    def service_register(self, service_id: str, name: str, command: list, cwd: str = "",
+                         logs: list = None, health: dict = None, desc: str = "") -> dict:
+        """agent 动态注册服务（看板可显示/启停）。"""
+        config = self._fresh_config()
+        store = self._services_store(config)
+        state = store["state"]
+        services = state.setdefault("services", {})
+        if not str(service_id or "").strip():
+            return {"ok": False, "error": "service_id 必填"}
+        services[service_id] = {
+            "name": str(name or service_id),
+            "desc": str(desc or ""),
+            "command": list(command or []),
+            "cwd": str(cwd or ""),
+            "logs": list(logs or []),
+            "health": dict(health or {}),
+            "managed": True,
+            "builtin": False,
+        }
+        store["path"].write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"ok": True, "registered": service_id}
+
+    def service_remove(self, service_id: str) -> dict:
+        config = self._fresh_config()
+        store = self._services_store(config)
+        state = store["state"]
+        services = state.get("services", {})
+        spec = services.get(service_id)
+        if not spec:
+            return {"ok": False, "error": f"unknown service: {service_id}"}
+        if spec.get("builtin"):
+            return {"ok": False, "error": f"内置服务 {service_id} 不允许移除"}
+        services.pop(service_id, None)
+        store["path"].write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"ok": True, "removed": service_id}
+
+    # ---------- Embedding 配置 / 测速 / 安装 ----------
+    def _embedding_paths(self, config: Config) -> tuple:
+        g4w_root = Path(config.state_dir).parent.parent  # state_dir = runtime\G4W-data
+        return (
+            g4w_root,
+            g4w_root / "runtime" / "G4W-embedding",
+            g4w_root / "runtime" / "G4W-main" / "G4W" / "memory" / "vector" / "install_embedding.py",
+        )
+
+    def embedding_config(self) -> dict:
+        config = self._fresh_config()
+        em = _embed_mirrors_module()
+        _, emb_root, _install_py = self._embedding_paths(config)
+        return {
+            "ok": True,
+            "config": em.load_config(config.state_dir),
+            "status": em.installed_status(emb_root),
+        }
+
+    def embedding_save_config(self, network: str) -> dict:
+        config = self._fresh_config()
+        em = _embed_mirrors_module()
+        if network not in ("domestic", "abroad"):
+            return {"ok": False, "error": "network 必须是 domestic（国内）或 abroad（国外）"}
+        cfg = em.load_config(config.state_dir)
+        cfg["network"] = network
+        em.save_config(config.state_dir, cfg)
+        return {"ok": True, "config": cfg}
+
+    def embedding_speedtest(self) -> dict:
+        config = self._fresh_config()
+        em = _embed_mirrors_module()
+        return em.speedtest(config.state_dir, force=True)
+
+    def embedding_install(self) -> dict:
+        """启动 Embedding 安装任务：DETACHED 进程 + 日志落盘 + 注册为服务（服务页可看进度/停止）。"""
+        config = self._fresh_config()
+        em = _embed_mirrors_module()
+        g4w_root, emb_root, install_py = self._embedding_paths(config)
+        log_path = g4w_root / "runtime" / "embedding-install.log"
+        python = g4w_root / "runtime" / "python" / "python.exe"
+        if not install_py.is_file() or not python.is_file():
+            return {"ok": False, "error": "环境不完整：缺少 runtime\\python 或 install_embedding.py"}
+        if self._cmdline_pids("install_embedding.py"):
+            return {"ok": False, "error": "安装任务已在运行（服务与终端页可查看进度）"}
+        env = self._env_for_service(config, {"command": [], "cwd": "", "logs": [], "health": {}})
+        env.update(em.install_env(config.state_dir))
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
+        try:
+            out = open(log_path, "a", encoding="utf-8", errors="replace")
+        except OSError:
+            out = subprocess.DEVNULL
+        proc = subprocess.Popen(
+            [str(python), "-u", str(install_py), "--yes", "--root", str(emb_root)],
+            cwd=str(g4w_root / "runtime" / "G4W-main"),
+            env=env, creationflags=flags, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+        )
+        spec = {
+            "name": "Embedding 安装任务",
+            "desc": "向量检索环境安装（torch + sentence-transformers + 模型下载，约 4-8GB）。完成后自动变为已停止。",
+            "command": [str(python), "-u", str(install_py), "--yes", "--root", str(emb_root)],
+            "cwd": str(g4w_root / "runtime" / "G4W-main"),
+            "logs": [str(log_path)],
+            "health": {"kind": "cmdline", "value": "install_embedding.py"},
+            "managed": True,
+            "builtin": False,
+        }
+        try:
+            store = self._services_store(config)
+            state = store["state"]
+            state.setdefault("services", {})["embedding-install"] = spec
+            store["path"].write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        return {"ok": True, "pid": proc.pid, "log": str(log_path)}
+
     def knowledge_detail(self, document_id: str) -> dict:
         config = self._fresh_config()
         root = config.state_dir / "knowledge"
@@ -717,12 +1557,12 @@ class DashboardState:
         if text_path and (text_path == allowed_root or allowed_root in text_path.parents) and text_path.is_file():
             content = _read_text(text_path)
             content_source = "extracted"
-        elif stored_path.suffix.lower() == ".pdf":
+        elif stored_path.suffix.lower() in (".pdf", ".docx"):
             try:
                 extracted, _ = extract_text(stored_path)
                 quality = validate_extracted_text(extracted)
                 if not quality.get("ok"):
-                    raise ValueError(str(quality.get("reason") or "PDF 没有可读文本"))
+                    raise ValueError(str(quality.get("reason") or "文档没有可读文本"))
                 text_path = root / "documents" / f"{document_id}.extracted.txt"
                 text_path.write_text(extracted, encoding="utf-8")
                 document["text_path"] = str(text_path)
@@ -731,7 +1571,11 @@ class DashboardState:
                 content = extracted
                 content_source = "extracted"
             except Exception as error:
-                extraction_warning = f"PDF 文本提取失败：{error}"
+                extraction_warning = f"文本提取失败：{error}"
+        elif stored_path.suffix.lower() == ".doc":
+            extraction_warning = "旧版 .doc（二进制）不支持提取，建议另存为 .docx 或 PDF 后重新添加"
+            content = ""
+            content_source = "unsupported"
         else:
             content = _read_text(stored_path)
         content_limit = 1_200_000
@@ -984,7 +1828,7 @@ class DashboardState:
             "workerModel": config.worker_model,
             "proModel": config.pro_model,
             "turnEnabled": turn.get(binding_key) if binding_key else True,
-            "workerTurnEnabled": worker_turn.get(binding_key) if binding_key else True,
+            "workerTurnEnabled": worker_turn.get(binding_key) if binding_key else False,
             "inputCaptureEnabled": input_capture.get(binding_key) if binding_key else False,
             "chunkChars": max(1, min(int(chunk.get("minChunkChars") or 10), 3800)),
             "checkinEnabled": bool(checkin.get("enabled", config.checkin_enabled)),
@@ -1209,6 +2053,21 @@ class DashboardState:
 
 class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "G4WDashboard/0.2"
+    # HTTP/1.1 + Content-Length → 连接复用（keep-alive）。原 1.0 每次响应都关连接，
+    # 前端 1s/2s/3s 级轮询导致连接风暴（数百 TIME_WAIT），代理连接池被占满后页面冻结。
+    protocol_version = "HTTP/1.1"
+
+    def handle(self) -> None:
+        """吞掉客户端断连类异常,避免框架打印噪音 traceback。
+
+        浏览器刷新/关闭页面时,可能在读取请求行(rfile.readline)或写出
+        响应时中止连接(ConnectionAbortedError/BrokenPipeError/
+        ConnectionResetError)——发生在 http.server 框架层,do_GET 捕获不到。
+        """
+        try:
+            super().handle()
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            pass
 
     @property
     def dashboard(self) -> DashboardState:
@@ -1284,6 +2143,59 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if path == "/api/memory":
                 self._send_json(self.dashboard.memory_detail(str((query.get("id") or [""])[0])))
                 return
+            if path == "/api/memory/timeline":
+                self._send_json(self.dashboard.memory_timeline(str((query.get("id") or [""])[0])))
+                return
+            if path == "/api/memory/backup":
+                self._send_json(self.dashboard.memory_backup(
+                    str((query.get("id") or [""])[0]),
+                    str((query.get("name") or [""])[0]),
+                ))
+                return
+            if path == "/api/todo":
+                action = str((query.get("action") or [""])[0])
+                if action in ("done", "delete"):
+                    self._send_json(self.dashboard.todo_action(
+                        str((query.get("sender") or [""])[0]),
+                        str((query.get("id") or [""])[0]),
+                        action,
+                    ))
+                else:
+                    self._send_json(self.dashboard.todo_list())
+                return
+            if path in ("/api/embedding/config", "/api/embedding/status"):
+                self._send_json(self.dashboard.embedding_config())
+                return
+            if path == "/api/services":
+                action = str((query.get("action") or [""])[0])
+                sid = str((query.get("id") or [""])[0])
+                if action == "start" and sid:
+                    self._send_json(self.dashboard.service_start(sid))
+                elif action == "stop" and sid:
+                    self._send_json(self.dashboard.service_stop(sid))
+                elif action == "register":
+                    self._send_json(self.dashboard.service_register(
+                        sid,
+                        str((query.get("name") or [""])[0]),
+                        json.loads(str((query.get("command") or "[]")[0]) or "[]"),
+                        cwd=str((query.get("cwd") or [""])[0]),
+                        logs=json.loads(str((query.get("logs") or "[]")[0]) or "[]"),
+                        health=json.loads(str((query.get("health") or "{}")[0]) or "{}"),
+                        desc=str((query.get("desc") or [""])[0]),
+                    ))
+                elif action == "remove" and sid:
+                    self._send_json(self.dashboard.service_remove(sid))
+                else:
+                    self._send_json(self.dashboard.services_list())
+                return
+            if path == "/api/services/logs":
+                sid = str((query.get("id") or [""])[0])
+                try:
+                    cursor = int(str((query.get("cursor") or ["0"])[0]) or "0")
+                except (TypeError, ValueError):
+                    cursor = 0
+                self._send_json(self.dashboard.service_logs(sid, cursor))
+                return
             if path == "/api/timeline":
                 self._send_json(self.dashboard.timeline_data())
                 return
@@ -1306,6 +2218,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if path == "/api/worker":
                 self._send_json(self.dashboard.worker_detail(str((query.get("id") or [""])[0])))
                 return
+            if path == "/api/workers/monitor":
+                try:
+                    cursor = int(str((query.get("cursor") or ["0"])[0]) or "0")
+                except (TypeError, ValueError):
+                    cursor = 0
+                self._send_json(self.dashboard.worker_monitor(
+                    cursor,
+                    str((query.get("file") or [""])[0]),
+                    str((query.get("dir") or [""])[0]),
+                    str((query.get("id") or [""])[0]),
+                ))
+                return
             if path == "/api/prompt":
                 self._send_json(self.dashboard.prompt_detail())
                 return
@@ -1325,6 +2249,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
         except FileNotFoundError as error:
             self._send_json({"ok": False, "error": f"未找到：{error}"}, 404)
+            return
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            # 客户端主动断开(刷新/关闭页面):静默结束,不尝试回写响应
             return
         except Exception as error:
             self._send_json({"ok": False, "error": str(error)}, 500)
@@ -1376,6 +2303,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(result)
                 return
+            if path == "/api/embedding/config":
+                if not self._require_auth():
+                    return
+                payload = self._read_json_body()
+                self._send_json(self.dashboard.embedding_save_config(str(payload.get("network") or "")))
+                return
+            if path == "/api/embedding/speedtest":
+                if not self._require_auth():
+                    return
+                self._send_json(self.dashboard.embedding_speedtest())
+                return
+            if path == "/api/embedding/install":
+                if not self._require_auth():
+                    return
+                self._send_json(self.dashboard.embedding_install())
+                return
+            if path == "/api/debug-log":
+                # 前端 JS 错误上报（诊断用，写 G4W-data/debug-js.log）
+                payload = self._read_json_body()
+                try:
+                    dbg = Path(self.dashboard.config.state_dir) / "debug-js.log"
+                    dbg.parent.mkdir(parents=True, exist_ok=True)
+                    with dbg.open("a", encoding="utf-8", errors="replace") as f:
+                        f.write(f"{time.strftime('%H:%M:%S')} {json.dumps(payload, ensure_ascii=False)[:600]}\n")
+                except Exception:
+                    pass
+                self._send_json({"ok": True})
+                return
             if path not in {"/api/settings", "/api/model"}:
                 self._send_json({"ok": False, "error": "Not found"}, 404)
                 return
@@ -1397,9 +2352,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
         self.end_headers()
+        # 流式响应无 Content-Length：HTTP/1.1 下必须显式关闭连接，
+        # 否则 keep-alive 挂起让客户端一直等响应结束
+        self.close_connection = True
         previous = ""
         try:
-            for _ in range(25):
+            for _ in range(300):
                 snapshot = self.dashboard.snapshot()
                 serialized = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
                 if serialized != previous:
@@ -1407,7 +2365,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self.wfile.flush()
                     previous = serialized
                 time.sleep(1)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return
 
     def _serve_static(self, path: str) -> None:
@@ -1427,11 +2385,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_bytes(body, f"{content_type}; charset=utf-8" if content_type.startswith("text/") else content_type)
 
 
+def _warmup(server) -> None:
+    """启动预热：先跑一遍重 IO 的接口，把 Windows 文件缓存热起来。
+
+    实测冷缓存下首个 snapshot / worker_monitor 可能慢几百 ms，用户
+    第一次点 Worker 页会明显卡顿；预热后稳定在 ~75ms / ~26ms。
+    """
+    try:
+        time.sleep(0.3)
+        state = server.dashboard  # type: ignore[attr-defined]
+        state.snapshot()
+        state.services_list()
+        state.worker_monitor(0, "")
+    except Exception:
+        pass
+
+
 def run_dashboard(config: Config | None = None, host: str = "127.0.0.1", port: int = 18180) -> int:
     config = config or Config.load()
+    # 禁止端口复用：Windows 上 SO_REUSEADDR 允许重复绑定同一端口，
+    # 会同时跑两个看板实例、请求被随机分发（实证：用户页面时好时坏）。
+    # 关闭后重复启动会直接报 "address already in use"，行为更清晰。
+    ThreadingHTTPServer.allow_reuse_address = False
     server = ThreadingHTTPServer((host, int(port)), DashboardHandler)
     server.dashboard = DashboardState(config)  # type: ignore[attr-defined]
     server.auth = DashboardAuth(config.state_dir)  # type: ignore[attr-defined]
+    threading.Thread(target=_warmup, args=(server,), daemon=True).start()
     print(f"[G4W] Dashboard listening at http://{host}:{port}")
     try:
         server.serve_forever()

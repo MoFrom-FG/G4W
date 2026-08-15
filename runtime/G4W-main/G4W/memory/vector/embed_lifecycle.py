@@ -53,16 +53,18 @@ _LAUNCH_BAT_NAMES = (
 
 _DEFAULT_PORT = 8081
 _DEFAULT_START_TIMEOUT_S = 120.0  # ST first load can be slow on CPU
-_DEFAULT_EMBED_DEVICE = "cuda"
+_DEFAULT_EMBED_DEVICE = "auto"
 
 
 def _desired_embed_device() -> str:
-    """Default to GPU unless explicitly overridden by environment."""
-    return (
-        os.environ.get("G4W_EMBEDDING_DEVICE")
-        or os.environ.get("EMBED_DEVICE")
-        or _DEFAULT_EMBED_DEVICE
-    ).strip() or _DEFAULT_EMBED_DEVICE
+    """Device policy lives in the embed server (torch build decides).
+
+    The GA main environment has no torch, so the desired device cannot be
+    probed here. We hand "auto" to the server, which enforces the policy:
+    GPU torch → CUDA mandatory (no CPU fallback); CPU torch (integrated-GPU
+    machines decided at install time) → CPU is fine.
+    """
+    return "auto"
 
 
 def _health_device_matches(health: Dict[str, Any], desired_device: str) -> bool:
@@ -71,6 +73,18 @@ def _health_device_matches(health: Dict[str, Any], desired_device: str) -> bool:
         return True
     actual = str(body.get("device") or "").strip().lower()
     desired = str(desired_device or "").strip().lower()
+    if desired == "auto":
+        # 设备权威在服务端(auto 按 torch 版本执行策略);但 GPU 机器上若发现
+        # CPU 服务(旧 server/手动降级残留)视为不匹配,强制重启纠正。
+        if actual == "cpu":
+            try:
+                import shutil
+
+                if shutil.which("nvidia-smi"):
+                    return False
+            except Exception:
+                pass
+        return bool(actual)
     if not actual or not desired:
         return True
     return actual == desired
@@ -172,7 +186,7 @@ def _schedule_idle_stop(*, pid: Optional[int], port: int, base_url: str) -> None
             current_pid = cfg.get("pid")
             if pid is not None and current_pid not in (pid, str(pid)):
                 return
-            h = embed_health(base_url=base_url, timeout_s=2.0)
+            h = embed_health(base_url=base_url, timeout_s=2.0, verify_inference=False)
             if h.get("ok"):
                 stop_embed(pid=pid, port=port)
         except Exception:
@@ -211,10 +225,21 @@ def embed_health(
     *,
     base_url: Optional[str] = None,
     timeout_s: float = 3.0,
+    verify_inference: bool = True,
 ) -> Dict[str, Any]:
-    """Probe embed HTTP service. Prefer GET /health, fallback POST /v1/embeddings."""
+    """Probe embed HTTP service. Prefer GET /health, then POST /v1/embeddings.
+
+    ``verify_inference=True`` (default) requires a real embeddings probe even
+    when /health responds OK. A half-dead process whose health route responds
+    but whose inference path is broken must be reported unhealthy (observed
+    2026-08-13: health ok 12.9ms while embed_batch failed → silent index
+    lag). Lightweight callers (e.g. idle auto-stop) may pass
+    ``verify_inference=False`` to skip the probe.
+    """
     base = (base_url or _cfg_base_url()).rstrip("/")
     health_err: Optional[str] = None
+    health_ok = False
+    health_body: Any = None
     t0 = time.perf_counter()
 
     # 1) /health
@@ -230,21 +255,27 @@ def embed_health(
         except Exception:
             data = raw
         if ok_body and 200 <= status < 300:
-            return {
-                "ok": True,
-                "latency_ms": round(latency, 1),
-                "detail": "health ok",
-                "base_url": base,
-                "method": "health",
-                "body": data if isinstance(data, dict) else {"raw": str(data)[:300]},
-            }
-        health_err = f"health status={status} body={raw[:120]}"
+            health_ok = True
+            health_body = data if isinstance(data, dict) else {"raw": str(data)[:300]}
+            if not verify_inference:
+                return {
+                    "ok": True,
+                    "latency_ms": round(latency, 1),
+                    "detail": "health ok",
+                    "base_url": base,
+                    "method": "health",
+                    "body": health_body,
+                }
+            # health ok but inference not yet verified → fall through to probe
+        else:
+            health_err = f"health status={status} body={raw[:120]}"
     except HTTPError as exc:
         health_err = f"health HTTPError {exc.code}"
     except (URLError, TimeoutError, OSError) as exc:
         health_err = f"health {type(exc).__name__}: {exc}"
 
-    # 2) OpenAI-compatible embeddings probe
+    # 2) OpenAI-compatible embeddings probe: inference verification when
+    #    /health ok; fallback liveness when /health failed.
     t1 = time.perf_counter()
     try:
         status, raw = _http_post_json(
@@ -260,6 +291,15 @@ def embed_health(
             if isinstance(arr, list) and arr:
                 has_emb = "embedding" in (arr[0] or {})
         if 200 <= status < 300 and has_emb:
+            if health_ok:
+                return {
+                    "ok": True,
+                    "latency_ms": round(latency, 1),
+                    "detail": "inference verified (embeddings ok)",
+                    "base_url": base,
+                    "method": "embeddings",
+                    "body": health_body,
+                }
             return {
                 "ok": True,
                 "latency_ms": round(latency, 1),
@@ -270,7 +310,10 @@ def embed_health(
         return {
             "ok": False,
             "latency_ms": round(latency, 1),
-            "detail": f"embeddings bad shape; prior={health_err}; body={raw[:160]}",
+            "detail": (
+                f"inference broken: embeddings bad shape; prior_health={health_err}; "
+                f"body={raw[:160]}"
+            ),
             "base_url": base,
             "method": "embeddings",
         }
@@ -435,10 +478,14 @@ def _terminate_pid(pid: int, *, timeout_s: float = 5.0) -> Dict[str, Any]:
         return info
 
 
-def stop_embed() -> Dict[str, Any]:
-    """Stop embed server by config.pid then port listeners that look like ours."""
+def stop_embed(pid: Optional[int] = None, port: Optional[int] = None) -> Dict[str, Any]:
+    """Stop embed server by explicit pid (optional) then config.pid then port listeners.
+
+    ``pid``/``port`` are optional overrides — all callers (idle auto-stop,
+    device-mismatch restart, half-dead relaunch, CLI stop) pass either or none.
+    """
     cfg = vc.load_config(use_cache=False)
-    port = _cfg_port(cfg)
+    port = int(port) if port is not None else _cfg_port(cfg)
     result: Dict[str, Any] = {
         "ok": True,
         "stopped": False,
@@ -449,10 +496,17 @@ def stop_embed() -> Dict[str, Any]:
     }
 
     candidates: List[int] = []
+    if pid is not None:
+        try:
+            if int(pid) > 0:
+                candidates.append(int(pid))
+        except (TypeError, ValueError):
+            pass
     raw_pid = cfg.get("pid")
     try:
         if raw_pid is not None and int(raw_pid) > 0:
-            candidates.append(int(raw_pid))
+            if int(raw_pid) not in candidates:
+                candidates.append(int(raw_pid))
     except (TypeError, ValueError):
         pass
     for p in _pids_listening_on_port(port):
@@ -665,8 +719,9 @@ def ensure_embed_running(*, timeout_s: float = _DEFAULT_START_TIMEOUT_S) -> Dict
     out["base_url"] = base
     out["desired_device"] = desired_device
 
-    # already healthy?
-    h = embed_health(base_url=base, timeout_s=2.0)
+    # already healthy? (inference-verified: health ok alone is NOT enough —
+    # a half-dead server can answer /health while embed_batch fails)
+    h = embed_health(base_url=base, timeout_s=3.0)
     out["health"] = h
     if h.get("ok") and _health_device_matches(h, desired_device):
         out["ok"] = True
@@ -697,7 +752,7 @@ def ensure_embed_running(*, timeout_s: float = _DEFAULT_START_TIMEOUT_S) -> Dict
     if pid_i and _pid_alive(pid_i) and _port_open("127.0.0.1", port):
         deadline = time.time() + min(timeout_s, 60.0)
         while time.time() < deadline:
-            h = embed_health(base_url=base, timeout_s=2.0)
+            h = embed_health(base_url=base, timeout_s=3.0)
             out["health"] = h
             if h.get("ok") and _health_device_matches(h, desired_device):
                 out["ok"] = True
@@ -721,6 +776,18 @@ def ensure_embed_running(*, timeout_s: float = _DEFAULT_START_TIMEOUT_S) -> Dict
                 stop_embed(pid=pid_i, port=port)
                 break
             time.sleep(1.0)
+
+    # Half-dead server: process alive + port open, but inference verification
+    # keeps failing. Stop it before launching a replacement so the new server
+    # can bind the port (2026-08-13 incident: health ok, embed_batch failed).
+    if _port_open("127.0.0.1", port):
+        _log.warning(
+            "embed_lifecycle: port %s occupied by unresponsive/half-dead embed server; "
+            "stopping before relaunch",
+            port,
+        )
+        stop_embed(pid=pid_i if pid_i else None, port=port)
+        time.sleep(0.5)
 
     discovery = discover_embed_launchers()
     argv, err, shell = _build_launch_command(cfg, discovery)

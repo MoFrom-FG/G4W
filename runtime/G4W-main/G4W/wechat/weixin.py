@@ -85,8 +85,10 @@ class WeixinChannel:
             f"<div class='qr'>{svg}</div><p>请使用微信扫描二维码，保持登录命令运行。</p><p><a href=\"{escaped}\">{escaped}</a></p></main></html>",
             encoding="utf-8",
         )
-        try: webbrowser.open(page.as_uri())
-        except Exception: pass
+        if os.environ.get("G4W_NO_BROWSER") != "1":
+            # 桌面向导模式（G4W_NO_BROWSER=1）由壳层读取本 HTML 自渲染二维码，不弹浏览器
+            try: webbrowser.open(page.as_uri())
+            except Exception: pass
         print(f"[G4W] login page: {page}")
         deadline = time.time() + 480
         while time.time() < deadline:

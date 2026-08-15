@@ -380,6 +380,10 @@ class HybridQueryEngine:
     def __post_init__(self) -> None:
         if self.index is None:
             self.index = BruteIndex(dim=self.dim)
+        # Set by search()/search_memory() when the embed service is down or
+        # half-dead; callers use it to distinguish "no relevant content" from
+        # "vector retrieval unavailable" and may retry after starting the server.
+        self.last_embed_error: Optional[str] = None
 
     def upsert(
         self,
@@ -460,16 +464,29 @@ class HybridQueryEngine:
         pool_n = int(keyword_pool if keyword_pool is not None else self.keyword_pool)
         pool_n = max(pool_n, k)
 
-        qvec = embed_text(q, dim=self.dim)
-        # Over-fetch: long personal corpora dilute whole-file vectors; BM25
-        # (CJK bigrams) is the main rescue, but still pull a wider ANN set.
-        raw = self.index.search(qvec, k=max(pool_n * 5, k * 20, 200))
-        if raw and isinstance(raw[0], SearchHit):
-            vec_map = _hits_to_map(raw)
-        else:
-            # tolerate tuple (id, score) legacy
-            vec_map = {str(a): float(b) for a, b in (raw or [])}
-        vec_map = {i: s for i, s in vec_map.items() if i in allow_ids}
+        qvec = None
+        try:
+            qvec = embed_text(q, dim=self.dim)
+            self.last_embed_error = None
+        except Exception as exc:
+            # Embedding service down/half-dead: degrade to pure BM25 instead of
+            # failing the whole search. Callers see last_embed_error and may
+            # start the server and retry for semantic recall.
+            if "EmbeddingError" in type(exc).__name__ or "embed" in str(exc).lower():
+                self.last_embed_error = f"{type(exc).__name__}: {exc}"
+            qvec = None
+
+        vec_map: Dict[str, float] = {}
+        if qvec is not None:
+            # Over-fetch: long personal corpora dilute whole-file vectors; BM25
+            # (CJK bigrams) is the main rescue, but still pull a wider ANN set.
+            raw = self.index.search(qvec, k=max(pool_n * 5, k * 20, 200))
+            if raw and isinstance(raw[0], SearchHit):
+                vec_map = _hits_to_map(raw)
+            else:
+                # tolerate tuple (id, score) legacy
+                vec_map = {str(a): float(b) for a, b in (raw or [])}
+            vec_map = {i: s for i, s in vec_map.items() if i in allow_ids}
         vec_top = [
             i
             for i, _ in sorted(vec_map.items(), key=lambda x: x[1], reverse=True)[
@@ -508,8 +525,12 @@ class HybridQueryEngine:
             lex_raw = float(bm_pos.get(iid, 0.0))
             lex = (lex_raw / max_bm) if max_bm > 0 else 0.0
             # Pure-vector mode: score = vector sim; hybrid: alpha blend.
+            # Embed unavailable → pure lexical scores (no dilution).
             if bm_pos:
-                score = self.alpha * v + (1.0 - self.alpha) * lex
+                if qvec is None:
+                    score = lex
+                else:
+                    score = self.alpha * v + (1.0 - self.alpha) * lex
             else:
                 score = v
             body = self.docs.get(iid) or ""
@@ -578,7 +599,14 @@ class HybridQueryEngine:
                 w = 0.92
             try:
                 part = self.search(vq, k=per_k)
-            except Exception:
+                # NOTE: do NOT clear last_embed_error here — search() manages it
+                # (embed success clears, embed failure sets). BM25-only results
+                # must keep the flag so callers know vector side is unavailable.
+            except Exception as exc:
+                # Embedding service failure must stay visible: an empty result
+                # is ambiguous ("nothing relevant" vs "vector side is down").
+                if "EmbeddingError" in type(exc).__name__ or "embed" in str(exc).lower():
+                    self.last_embed_error = f"{type(exc).__name__}: {exc}"
                 part = []
             for h in part:
                 iid = h.item_id

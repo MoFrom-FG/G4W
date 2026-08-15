@@ -86,7 +86,21 @@ def stop_service(config: Config) -> dict:
     else:
         os.kill(pid, signal.SIGTERM)
     config.pid_file.unlink(missing_ok=True)
-    return {"ok": True, "stopped": True, "pid": pid}
+
+    # The embed server runs detached (CREATE_NEW_PROCESS_GROUP) and is NOT part
+    # of the main process tree, so taskkill /T above cannot reach it. stop_embed
+    # kills only config.pid + port listeners whose cmdline looks like our embed
+    # server — never unrelated python processes.
+    embed_result: dict = {"attempted": False}
+    try:
+        from ..memory.vector.embed_lifecycle import stop_embed
+
+        embed_result = stop_embed()
+        embed_result["attempted"] = True
+    except Exception as exc:  # pragma: no cover - defensive
+        embed_result = {"attempted": True, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    return {"ok": True, "stopped": True, "pid": pid, "embed": embed_result}
 
 
 def main():

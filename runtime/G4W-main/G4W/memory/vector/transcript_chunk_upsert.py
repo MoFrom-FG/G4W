@@ -375,3 +375,146 @@ def maybe_upsert_after_transcript_append(
     except Exception as exc:
         _log.warning("maybe_upsert_after_transcript_append: %s", exc, exc_info=True)
         return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def transcript_files_since(
+    transcripts_root: PathLike,
+    watermark: float,
+) -> List[Path]:
+    """Transcript files (``**/*.md``) with mtime strictly after ``watermark``.
+
+    Sorted ascending by mtime for deterministic item ids. Never raises;
+    returns [] on any failure.
+    """
+    try:
+        root = Path(transcripts_root)
+        if not root.is_dir():
+            return []
+        files = []
+        for p in root.rglob("*.md"):
+            try:
+                if p.is_file() and p.stat().st_mtime > watermark:
+                    files.append(p)
+            except Exception:
+                continue
+        files.sort(key=lambda p: p.stat().st_mtime)
+        return files
+    except Exception:
+        _log.warning("transcript_files_since failed", exc_info=True)
+        return []
+
+
+def read_transcript_watermark(index_dir: Optional[Path] = None) -> float:
+    """``last_transcript_upsert_at`` from index meta.json (0.0 when absent)."""
+    try:
+        from .sandbox_paths import resolve_vector_index_dir
+
+        live = Path(index_dir) if index_dir is not None else Path(resolve_vector_index_dir())
+        meta_path = live / "meta.json"
+        if meta_path.is_file():
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            try:
+                return float(meta.get("last_transcript_upsert_at") or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+    except Exception:
+        pass
+    return 0.0
+
+
+def upsert_transcript_window(
+    *,
+    transcripts_root: PathLike,
+    index_dir: Optional[Path] = None,
+    dry_run: bool = False,
+    max_items: int = 4000,
+    run_id: str = "",
+) -> Dict[str, Any]:
+    """Upsert transcript files newer than the index watermark.
+
+    Task-3 of the L4 finalize chain: advances the transcript hard-evidence
+    layer from ``last_transcript_upsert_at`` to the latest transcript file, so
+    the vector index no longer lags behind chat history.
+
+    - Gates: product ``vector_enabled()`` (off → skipped), retrieval flag,
+      ``G4W_TRANSCRIPT_CHUNK_UPSERT``, index ready.
+    - Files are processed one by one (oldest first); each file is chunked with
+      full-build rules so ids stay deterministic and re-runs are idempotent.
+    - Returns summary dict; **never raises**.
+    """
+    summary: Dict[str, Any] = {
+        "status": "skipped",
+        "upserted": 0,
+        "window_files": 0,
+        "dry_run": dry_run,
+    }
+    try:
+        if not transcript_chunk_upsert_enabled():
+            summary["reason"] = f"{_ENV_FLAG} disabled"
+            return summary
+
+        # Product total gate: /vector off → no embed / no write (mirrors
+        # upsert_l4_insights_to_index). Hybrid (keyword) stays the default path.
+        try:
+            from .vector_config import vector_enabled as _addon_vector_enabled
+
+            if not _addon_vector_enabled():
+                summary["reason"] = "vector_addon disabled"
+                return summary
+        except Exception as exc:
+            summary["reason"] = "vector_config_unavailable"
+            summary["detail"] = f"{type(exc).__name__}: {exc}"
+            return summary
+
+        watermark = read_transcript_watermark(index_dir)
+        summary["watermark"] = watermark
+        files = transcript_files_since(transcripts_root, watermark)
+        summary["window_files"] = len(files)
+        if not files:
+            summary["status"] = "empty"
+            summary["reason"] = "no transcripts newer than watermark"
+            return summary
+
+        total = 0
+        per_file: List[Dict[str, Any]] = []
+        errors: List[str] = []
+        for p in files:
+            r = upsert_transcript_file(
+                p,
+                # NOTE: do NOT pass data_root=transcripts_root here — item ids
+                # must be the full memory-relative form
+                # (conversations/<sender>/transcripts/yyyy/mm/yyyy-mm-dd.md)
+                # so retrieval filters (is_transcript / sender ownership) and
+                # file_read verification work. _to_rel_posix falls back to the
+                # "memory" segment marker automatically.
+                index_dir=index_dir,
+                dry_run=dry_run,
+                max_items=max_items,
+                run_id=run_id or "window:transcript",
+            )
+            per_file.append(
+                {
+                    "path": str(p),
+                    "status": r.get("status"),
+                    "upserted": int(r.get("upserted") or 0),
+                    "reason": r.get("reason") or r.get("error") or "",
+                }
+            )
+            total += int(r.get("upserted") or 0)
+            if r.get("status") == "error":
+                errors.append(str(p))
+                summary["embedding_reason"] = r.get("embedding_reason") or (
+                    "remote_http_failed" if "remote" in str(r.get("error") or "") else "error"
+                )
+        summary["upserted"] = total
+        summary["files"] = per_file
+        summary["status"] = "done" if not errors else "partial"
+        if errors:
+            summary["error_files"] = errors
+            summary["error"] = f"{len(errors)} file(s) failed: {errors[0]}"
+        return summary
+    except Exception as exc:
+        _log.warning("upsert_transcript_window failed: %s", exc, exc_info=True)
+        summary["status"] = "error"
+        summary["error"] = f"{type(exc).__name__}: {exc}"
+        return summary

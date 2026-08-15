@@ -390,3 +390,92 @@ def hybrid_section_for(
         return reader.format_section(resolved)
     except Exception as e:
         return f"## Hybrid Memory Hits\n(hybrid inject soft-fail: {e})"
+
+
+_WORD_RE = re.compile(r"[A-Za-z0-9]+")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
+
+
+def _query_terms(query: str) -> List[str]:
+    """Query terms for the incremental window: CJK bigrams + ascii words."""
+    terms: List[str] = []
+    for w in _CJK_RE.findall(query or ""):
+        for i in range(len(w) - 1):
+            bigram = w[i : i + 2]
+            if bigram not in terms:
+                terms.append(bigram)
+    for w in _WORD_RE.findall(query or ""):
+        wl = w.lower()
+        if wl not in terms:
+            terms.append(wl)
+    return terms[:32]
+
+
+def _hit_lines(lines: List[str], terms: List[str], *, radius: int = 1) -> List[int]:
+    out = []
+    for i, line in enumerate(lines):
+        low = line.lower()
+        if any(t in low for t in terms):
+            out.append(i)
+    return out
+
+
+def transcript_window_hits(
+    transcripts_root: Path,
+    watermark: float,
+    query: str,
+    *,
+    k: int = 5,
+    max_preview_chars: int = 240,
+) -> List[Dict[str, Any]]:
+    """Keyword hits over transcript files newer than ``watermark``.
+
+    This is the hybrid side of the dual-path design: the vector index covers
+    history up to ``last_transcript_upsert_at`` (watermark), while this
+    function covers the gap from the watermark to the latest chat records, so
+    agents can find very recent conversations without waiting for the next
+    L4/transcript index run. Line-anchored previews let agents ``file_read``
+    the exact quote afterwards. Read-only; never raises (returns []).
+    """
+    try:
+        from .vector.transcript_chunk_upsert import transcript_files_since
+
+        terms = _query_terms(query)
+        if not terms:
+            return []
+        files = transcript_files_since(transcripts_root, watermark)
+        hits: List[Dict[str, Any]] = []
+        for p in files:
+            try:
+                body = p.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            lines = body.splitlines()
+            matched = _hit_lines(lines, terms)
+            if not matched:
+                continue
+            score = 0.0
+            for li in matched:
+                low = lines[li].lower()
+                score += sum(1.0 + len(t) / 10.0 for t in terms if t in low)
+            # preview: first matched line ±1 line
+            first = matched[0]
+            lo, hi = max(0, first - 1), min(len(lines), first + 2)
+            preview = "\n".join(lines[lo:hi]).strip()
+            full = "\n".join(lines[max(0, first - 1) : min(len(lines), first + 6)]).strip()
+            if len(preview) > max_preview_chars:
+                preview = preview[:max_preview_chars] + "…"
+            hits.append(
+                {
+                    "item_id": f"txw:{p.name}:{first}",
+                    "source_path": str(p),
+                    "score": round(score, 4),
+                    "text_preview": preview,
+                    "text": full[:8000],
+                    "anchor": f"#{first + 1}",
+                }
+            )
+        hits.sort(key=lambda h: h["score"], reverse=True)
+        return hits[:k]
+    except Exception:
+        return []

@@ -66,7 +66,54 @@ def extract_text(path: str | Path) -> tuple[str, list[dict[str, Any]]]:
     suffix = p.suffix.lower()
     if suffix == ".pdf":
         return _read_pdf(p)
+    if suffix == ".docx":
+        return _read_docx(p)
+    if suffix == ".doc":
+        raise ValueError("旧版 .doc（二进制）不支持提取，请另存为 .docx 或 PDF")
     text = p.read_text(encoding="utf-8", errors="replace")
+    return text, [{"page": None, "text": text}]
+
+
+def _read_docx(p: Path) -> tuple[str, list[dict[str, Any]]]:
+    """.docx 文本提取：纯标准库（zipfile + XML），无需任何第三方依赖。
+
+    段落按 <w:p> 提取，标题（pStyle=HeadingN）转 Markdown # 前缀，
+    便于知识库预览与检索。旧版二进制 .doc 不支持。
+    """
+    try:
+        import zipfile
+        from xml.etree import ElementTree as ET
+
+        with zipfile.ZipFile(p) as archive:
+            xml_bytes = archive.read("word/document.xml")
+    except Exception as exc:
+        raise ValueError(f"无法解析 .docx：{type(exc).__name__}: {exc}") from exc
+    root = ET.fromstring(xml_bytes)
+    lines: list[str] = []
+    for para in root.iter("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"):
+        style = ""
+        ppr = para.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pPr")
+        if ppr is not None:
+            pstyle = ppr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pStyle")
+            if pstyle is not None:
+                style = str(pstyle.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val") or "")
+        parts: list[str] = []
+        for node in para.iter():
+            if node.tag.endswith("}t"):
+                parts.append(node.text or "")
+        text = "".join(parts).strip()
+        if not text:
+            continue
+        heading = 0
+        low = style.lower()
+        if "heading" in low:
+            digits = "".join(ch for ch in low if ch.isdigit())
+            heading = int(digits[:1]) if digits else 1
+        if heading:
+            lines.append(f"{'#' * heading} {text}")
+        else:
+            lines.append(text)
+    text = "\n".join(lines).strip()
     return text, [{"page": None, "text": text}]
 
 

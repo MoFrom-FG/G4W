@@ -194,6 +194,32 @@ def _scheduling(context: dict, action: str, arguments: dict) -> dict:
     raise ValueError(f"unknown scheduling action: {action}")
 
 
+def _todo(context: dict, action: str, arguments: dict) -> dict:
+    """确定性任务清单(todo)。创建前必须先 ask_user 确认;完成/取消只能由用户确认。"""
+    from ..memory.todo import TodoStore
+
+    store = TodoStore(Path(context["stateDir"]).resolve() / "todo-state.json")
+    sender_id = context.get("senderId", "")
+    operation = str(action or "").removeprefix("todo_")
+    if operation == "add":
+        return store.add(sender_id, str(arguments.get("text") or ""),
+                         due_at=arguments.get("due_at"),
+                         recurrence_seconds=int(arguments.get("recurrence_seconds", 0) or 0),
+                         source="llm")
+    if operation == "list":
+        return {"tasks": store.list(sender_id)}
+    if operation == "done":
+        return store.done(sender_id, str(arguments.get("todo_id") or ""),
+                          confirm_text=str(arguments.get("confirm_text") or ""))
+    if operation == "cancel":
+        return store.cancel(sender_id, str(arguments.get("todo_id") or ""))
+    if operation == "del":
+        return {"deleted": store.delete(sender_id, str(arguments.get("todo_id") or ""))}
+    if operation in ("menu", "render"):
+        return {"menu": store.render_menu(sender_id)}
+    raise ValueError(f"unknown todo action: {action}")
+
+
 def execute(domain: str, action: str, arguments: dict | None = None, context_path: str | Path = "G4W-context.json") -> dict:
     name = str(domain or "").strip().lower().replace("_", "-")
     action = str(action or "status").strip().lower()
@@ -211,6 +237,8 @@ def execute(domain: str, action: str, arguments: dict | None = None, context_pat
         return _dida(action, args)
     if name == "scheduling":
         return _scheduling(context, action, args)
+    if name == "todo":
+        return _todo(context, action, args)
     raise ValueError(f"unknown G4W native SOP domain: {domain}")
 
 
