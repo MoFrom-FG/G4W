@@ -161,7 +161,7 @@ class TestHybridQuery(unittest.TestCase):
         self.assertIn("婚宴", toks)
         docs = {
             "noise": "系统配置与日志摘要",
-            "hit": "今天吃朋友的婚宴，在商场附近",
+            "hit": "今天去参加朋友的婚宴，在商场附近",
         }
         scores = _bm25_scores("六月初婚宴", docs)
         self.assertGreater(scores.get("hit", 0.0), scores.get("noise", 0.0))
@@ -171,7 +171,7 @@ class TestHybridQuery(unittest.TestCase):
         """Prod index often has no tier_records; empty records must not kill search."""
         idx = BruteIndex(dim=384)
         docs = {
-            "conversations/x/transcripts/2026-06-20.md": "吃朋友的婚宴 六月初",
+            "conversations/x/transcripts/2026-06-20.md": "去参加朋友的婚宴 六月初",
             "conductor/meta.json": "worker routing table",
         }
         # seed vectors via direct add + hash-ish embedding from engine path
@@ -199,7 +199,7 @@ class TestHybridQuery(unittest.TestCase):
         )
         eng.upsert(
             "conversations/x/transcripts/2026-06-20.md",
-            "User: 吃朋友的婚宴 六月初",
+            "User: 去参加朋友的婚宴 六月初",
         )
         hits = eng.search("婚宴", k=5)
         self.assertTrue(hits)
@@ -211,10 +211,10 @@ class TestHybridQuery(unittest.TestCase):
         mall = expand_memory_queries("我前两天去商场吃了什么", max_alts=3)
         self.assertEqual(mall[0], "我前两天去商场吃了什么")
         joined = " ".join(mall)
-        self.assertTrue("大悦城" in joined or "购物中心" in joined)
+        self.assertTrue("购物中心" in joined)
 
         acne = expand_memory_queries("最近脸上痘痘怎么样了", max_alts=3)
-        self.assertTrue(any("针清" in q or "祛痘" in q for q in acne))
+        self.assertTrue(any("祛痘" in q for q in acne))
 
     def test_adjacent_chunk_ids(self):
         from G4W.memory.vector.hybrid_query import adjacent_chunk_ids
@@ -229,7 +229,7 @@ class TestHybridQuery(unittest.TestCase):
         eng = HybridQueryEngine(index=BruteIndex(dim=384), dim=384, keyword_pool=8)
         eng.upsert(
             "conversations/x/transcripts/2026-06-09.md#c3",
-            "User: 我这会在大悦城长安大排档，晚上吃点好的",
+            "User: 我这会在商场附近的大排档，晚上吃点好的",
         )
         eng.upsert(
             "conversations/x/transcripts/2026-07-01.md#c0",
@@ -238,7 +238,7 @@ class TestHybridQuery(unittest.TestCase):
         hits = eng.search_memory("我前两天去商场吃了什么", k=5, expand=True, neighbors=False)
         self.assertTrue(hits)
         self.assertTrue(
-            any("大悦城" in (h.text_preview or "") or "长安" in (h.text_preview or "") for h in hits),
+            any("大排档" in (h.text_preview or "") or "商场" in (h.text_preview or "") for h in hits),
             f"expected mall place hit, got {[h.text_preview for h in hits]}",
         )
 
@@ -248,13 +248,13 @@ class TestHybridQuery(unittest.TestCase):
         from G4W.memory.vector.hybrid_query import _content_quality_boost
 
         event = (
-            "[2026-06-20 08:53:36 Asia/Shanghai] User: 吃朋友的婚宴\n"
-            "[2026-06-20 08:53:40 Asia/Shanghai] Assistant: 主人～今天正式婚宴呀"
+            "[2026-06-20 08:53:36 Asia/Shanghai] User: 去参加朋友的婚宴\n"
+            "[2026-06-20 08:53:40 Asia/Shanghai] Assistant: 今天正式婚宴呀"
         )
         echo = (
             "[2026-07-24 12:58:10 Asia/Shanghai] User: 婚宴\n"
-            "[2026-07-24 12:58:24 Asia/Shanghai] Assistant: 喵～婚宴！对哦！记起来了！"
-            "主人6月份去参加朋友的婚宴啦～让neko翻一下原文"
+            "[2026-07-24 12:58:24 Asia/Shanghai] Assistant: 哈哈婚宴！对哦！记起来了！"
+            "我6月份去参加朋友的婚宴啦～让助手翻一下原文"
         )
         self.assertGreater(
             _content_quality_boost(event),

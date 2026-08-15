@@ -70,8 +70,7 @@ def _path_score_boost(item_id: str) -> float:
 # Assistant "I remember / let me look up" echo of past events — not primary evidence.
 # Do NOT match contemporaneous phrasing like 「原来今天是正式婚宴」(same-day chat).
 _META_RECALL = re.compile(
-    r"记起来了|翻一下原文|让\s*neko\s*翻|neko记起来|主人\d+月份去|"
-    r"让neko翻一下|neko帮你翻|翻到了|查到了.*(婚宴|商场|针清)",
+    r"记起来了|翻一下原文|翻到了|查到了",
     re.I,
 )
 # Retrieval-system meta chat (today's test probes) — not life-event evidence.
@@ -84,15 +83,13 @@ _META_SYSTEM = re.compile(
 _USER_EVENT = re.compile(
     r"(?:"
     r"\]\s*User:\s*(?:(?!\]\s*(?:User|Assistant):).){0,100}?"
-    r"(吃朋友的婚宴|去参加.{0,12}婚宴|在大悦城|大悦城长安大排档|"
-    r"长安大排档|祛痘机构.{0,12}针清|做了个针清|做针清|"
-    r"上了\s*\d{3,4}|冲到\s*\d{3,4}|到了\s*\d{3,4}|巅峰\s*\d{3,4}|"
-    r"我还上了|巅峰1800|吃的肯德基.{0,24}1800|1800.{0,12}美滋滋)"
+    r"(去参加.{0,12}(?:婚宴|婚礼|喜酒)|去了.{0,8}(?:医院|诊所)|做了.{0,8}(?:手术|检查|治疗)|"
+    r"吃了.{0,12}(?:饭|餐|宴)|买了.{0,12}(?:东西|车|房)|上了\s*\d{3,4})"
     r"|"
     # bare user_only lines (no speaker chrome)
     r"(?:^|\n)\s*(?:\[\d{4}[^\n\]]*\]\s*)?(?:User:\s*)?"
-    r"(吃朋友的婚宴|在大悦城|大悦城长安大排档|长安大排档|做了个针清|做针清|"
-    r"上了\s*\d{3,4}|我还上了|巅峰1800好难上)"
+    r"(去参加.{0,12}(?:婚宴|婚礼|喜酒)|去了.{0,8}(?:医院|诊所)|做了.{0,8}(?:手术|检查|治疗)|"
+    r"吃了.{0,12}(?:饭|餐|宴)|买了.{0,12}(?:东西|车|房)|上了\s*\d{3,4})"
     r")",
     re.I | re.S,
 )
@@ -131,23 +128,23 @@ def _content_quality_boost(text: str) -> float:
 # Query-side synonym bridges for personal-life recall (no re-index needed).
 # Each trigger adds short alternate queries; original query always kept first.
 _QUERY_EXPAND_RULES: List[tuple] = [
-    # place / dining (user says 商场, transcript has 大悦城/长安大排档)
-    (re.compile(r"商场|购物中心|mall", re.I), ["大悦城", "购物中心 餐厅", "商场 吃饭 餐厅"]),
-    (re.compile(r"哪家店|吃的啥|吃了什么|晚饭|吃饭"), ["餐厅 大排档", "商场 吃饭", "大悦城 长安大排档"]),
-    (re.compile(r"大排档|长安"), ["长安大排档", "大悦城 吃饭"]),
-    # skincare / acne
-    (re.compile(r"痘痘|爆痘|脸上.*痘"), ["针清", "祛痘 针清", "爆痘 脸上"]),
-    (re.compile(r"针清|祛痘|收拾痘"), ["针清 痘痘", "脸上 针清", "祛痘"]),
-    # wedding
-    (re.compile(r"婚宴|婚礼|结婚"), ["吃朋友的婚宴", "婚宴"]),
-    # game rank / score (段位突破 ↔ 我还上了1800)
+    # place / dining (generic)
+    (re.compile(r"商场|购物中心|mall", re.I), ["购物中心 餐厅", "商场 吃饭 餐厅"]),
+    (re.compile(r"哪家店|吃的啥|吃了什么|晚饭|吃饭"), ["餐厅 吃饭", "商场 吃饭", "附近 餐厅"]),
+    (re.compile(r"大排档|夜市"), ["大排档 吃饭", "夜市 小吃"]),
+    # skincare / acne (generic)
+    (re.compile(r"痘痘|爆痘|脸上.*痘"), ["祛痘", "祛痘 皮肤", "爆痘 脸上"]),
+    (re.compile(r"祛痘|皮肤管理|护肤"), ["祛痘 护肤", "皮肤 护理"]),
+    # wedding (generic)
+    (re.compile(r"婚宴|婚礼|结婚|喜酒"), ["参加婚宴", "婚礼 喜酒"]),
+    # game rank / score (generic)
     (
         re.compile(r"段位|上分|冲分|突破|打到多少|多少分|冲击"),
-        ["上了1800", "巅峰赛 1800", "我还上了", "巅峰 上分"],
+        ["上分 突破", "段位 上分", "冲分 记录"],
     ),
     (
-        re.compile(r"王者荣耀|巅峰赛|打王者|打巅峰"),
-        ["巅峰赛", "上分 1800", "上了1800", "王者 巅峰"],
+        re.compile(r"排位|匹配|对局|战绩"),
+        ["排位 战绩", "上分 记录", "对局 统计"],
     ),
     # soft time+where (semantic rescue)
     (re.compile(r"去哪|去哪儿|去了哪"), ["出去 玩 吃饭", "行程 安排"]),

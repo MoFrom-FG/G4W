@@ -15,7 +15,7 @@ from G4W.memory.sop_catalog import SopCatalog
 
 class TurnAndContextTests(unittest.TestCase):
     def test_protocol_markers_are_not_visible(self):
-        self.assertEqual(clean_visible_reply("LLM Running (Turn 2) ...\n\n让neko看看～"), "让neko看看～")
+        self.assertEqual(clean_visible_reply("LLM Running (Turn 2) ...\n\n让助手看看～"), "让助手看看～")
         self.assertEqual(clean_visible_reply("Turn 3 ...\n[ROUND END]"), "")
         self.assertEqual(clean_visible_reply("<silent/>"), "")
 
@@ -146,9 +146,9 @@ class TurnAndContextTests(unittest.TestCase):
                 emit_intermediate=lambda sender_id, text, round_id, turn: emitted.append((text, round_id, turn)),
             )
             response_queue = queue.Queue()
-            response_queue.put({"next": "", "turn": 1, "outputs": ["让neko看看～\n<summary>内部</summary>"]})
-            response_queue.put({"next": "", "turn": 2, "outputs": ["让neko看看～\n<summary>内部</summary>", "最终回复"]})
-            response_queue.put({"done": "最终回复", "turn": 2, "outputs": ["让neko看看～", "最终回复"]})
+            response_queue.put({"next": "", "turn": 1, "outputs": ["让助手看看～\n<summary>内部</summary>"]})
+            response_queue.put({"next": "", "turn": 2, "outputs": ["让助手看看～\n<summary>内部</summary>", "最终回复"]})
+            response_queue.put({"done": "最终回复", "turn": 2, "outputs": ["让助手看看～", "最终回复"]})
             backend = types.SimpleNamespace(history=[])
             agent = types.SimpleNamespace(
                 llmclient=types.SimpleNamespace(backend=backend),
@@ -166,7 +166,7 @@ class TurnAndContextTests(unittest.TestCase):
             reply = session.run("处理事件", event_context="消息", round_id="round-1")
 
             self.assertEqual(reply, "最终回复")
-            self.assertEqual(emitted, [("让neko看看～", "round-1", 1)])
+            self.assertEqual(emitted, [("让助手看看～", "round-1", 1)])
             self.assertEqual(session.last_turn, 2)
 
     def test_silent_round_is_written_to_real_output_file(self):

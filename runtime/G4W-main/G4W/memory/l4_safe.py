@@ -1134,7 +1134,7 @@ def validate_finalize(root: Path, user_id: str, run_id: str, dry_run: bool = Fal
     # 用户画像素材草稿:worker 产出(报告体,不带语气),校验后落盘为
     # user_profile.draft.md 作为 conductor 复述的交接物。
     # 最终 user_profile.md 由 conductor 在 worker-final round 维护(读草稿+现有
-    # 画像 → neko 语气 → 更新/修改/保持不变)。candidate 缺失/校验失败不阻塞。
+    # 画像 → 助手（conductor）语气 → 更新/修改/保持不变)。candidate 缺失/校验失败不阻塞。
     profile_text = ""
     user_profile: Dict[str, Any] = {"updated": "", "written": False, "reason": "no_candidate"}
     try:
