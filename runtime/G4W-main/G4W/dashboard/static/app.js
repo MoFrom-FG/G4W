@@ -347,6 +347,12 @@ function renderDonut(categories, totalMinutes) {
 let diaryData = null;
 let currentDiaryDate = "";
 let diaryMonth = "";
+let sopData = null;
+let currentSopPath = "";
+let sopScope = localStorage.getItem("g4w-sop-scope") || "sop-user";
+let lastSopAttempt = 0;
+/** 展开中的目录路径集合（相对 scope 根，"" = 根） */
+let sopExpanded = new Set();
 let modelsLoading = false;
 let eventFilter = "all";
 let knowledgeQuery = "";
@@ -409,6 +415,266 @@ function renderMarkdown(value) {
   return output;
 }
 
+/** 通用 LCS 序列 diff（单元：行 / 句 / 词） */
+function diffSequence(curArr, prevArr) {
+  const n = curArr.length;
+  const m = prevArr.length;
+  const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = curArr[i] === prevArr[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const ops = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (curArr[i] === prevArr[j]) {
+      ops.push({ type: "same", text: curArr[i] });
+      i += 1;
+      j += 1;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      ops.push({ type: "add", text: curArr[i] });
+      i += 1;
+    } else {
+      ops.push({ type: "del", text: prevArr[j] });
+      j += 1;
+    }
+  }
+  while (i < n) {
+    ops.push({ type: "add", text: curArr[i] });
+    i += 1;
+  }
+  while (j < m) {
+    ops.push({ type: "del", text: prevArr[j] });
+    j += 1;
+  }
+  return ops;
+}
+
+/** 按中英文句子切分；保留标点，空白单独成片 */
+function splitSentences(text) {
+  const raw = String(text || "");
+  if (!raw) return [];
+  // 句号类切分，标点跟在前一句；换行保留为独立单元避免段落粘连
+  const parts = raw.split(/([。！？；;!?]+\s*|\n+)/);
+  const out = [];
+  for (let k = 0; k < parts.length; k++) {
+    const piece = parts[k];
+    if (piece === undefined || piece === "") continue;
+    if (/^[。！？；;!?]+\s*$/.test(piece) || /^\n+$/.test(piece)) {
+      if (out.length) out[out.length - 1] += piece;
+      else out.push(piece);
+    } else {
+      out.push(piece);
+    }
+  }
+  return out.length ? out : [raw];
+}
+
+/** 词级（CJK 字 / 英文词）切分，用于同一句内的局部插入 */
+function splitWords(text) {
+  const raw = String(text || "");
+  if (!raw) return [];
+  return raw.match(/[\u4e00-\u9fff]|[A-Za-z0-9_]+|[^\sA-Za-z0-9_\u4e00-\u9fff]|\s+/g) || [raw];
+}
+
+function isTrivial(text) {
+  return !String(text || "").replace(/\s+/g, "").length;
+}
+
+/**
+ * 画像 diff：
+ * 1) 先按行 LCS
+ * 2) 对齐上的「改写行」再按句 diff
+ * 3) 仍不对齐的句再按词 diff（只标改动的句子/词，不整段染色）
+ */
+function diffProfileSmart(curText, prevText) {
+  const curLines = String(curText || "").replace(/\r\n/g, "\n").split("\n");
+  const prevLines = String(prevText || "").replace(/\r\n/g, "\n").split("\n");
+  const lineOps = diffSequence(curLines, prevLines);
+  const segments = [];
+  let i = 0;
+  while (i < lineOps.length) {
+    const op = lineOps[i];
+    if (op.type === "same") {
+      segments.push({ type: "same", text: op.text });
+      i += 1;
+      continue;
+    }
+    // 收集连续 add/del 块，尝试配对为“同行改写”
+    const adds = [];
+    const dels = [];
+    while (i < lineOps.length && lineOps[i].type !== "same") {
+      if (lineOps[i].type === "add") adds.push(lineOps[i].text);
+      else dels.push(lineOps[i].text);
+      i += 1;
+    }
+    // 空行直接透传
+    if (!adds.length && dels.every(isTrivial)) {
+      for (const d of dels) segments.push({ type: "same", text: d });
+      continue;
+    }
+    if (!dels.length && adds.every(isTrivial)) {
+      for (const a of adds) segments.push({ type: "same", text: a });
+      continue;
+    }
+    // 多对多：按顺序 zip 成句级混合段；多余的 add/del 单独挂
+    const pairs = Math.min(adds.length, dels.length);
+    for (let k = 0; k < pairs; k++) {
+      const a = adds[k];
+      const d = dels[k];
+      if (a === d) {
+        segments.push({ type: "same", text: a });
+        continue;
+      }
+      if (isTrivial(a) && isTrivial(d)) {
+        segments.push({ type: "same", text: a });
+        continue;
+      }
+      // 句级
+      const sentOps = diffSequence(splitSentences(a), splitSentences(d));
+      // 若整句几乎全变，再对“改写句”做词级，避免整段删除线
+      const refined = [];
+      let si = 0;
+      while (si < sentOps.length) {
+        const sOp = sentOps[si];
+        if (sOp.type === "same") {
+          refined.push(sOp);
+          si += 1;
+          continue;
+        }
+        const sAdds = [];
+        const sDels = [];
+        while (si < sentOps.length && sentOps[si].type !== "same") {
+          if (sentOps[si].type === "add") sAdds.push(sentOps[si].text);
+          else sDels.push(sentOps[si].text);
+          si += 1;
+        }
+        const sp = Math.min(sAdds.length, sDels.length);
+        for (let t = 0; t < sp; t++) {
+          const sa = sAdds[t];
+          const sd = sDels[t];
+          if (sa === sd) {
+            refined.push({ type: "same", text: sa });
+            continue;
+          }
+          // 词级：只在句内标插入/删除
+          const wordOps = diffSequence(splitWords(sa), splitWords(sd));
+          // 若词级变更比例过高（>70%），退回整句 add+del，避免碎成满屏色块
+          const changed = wordOps.filter((w) => w.type !== "same" && !isTrivial(w.text)).length;
+          const total = wordOps.filter((w) => !isTrivial(w.text)).length || 1;
+          if (changed / total > 0.7) {
+            if (!isTrivial(sd)) refined.push({ type: "del", text: sd });
+            if (!isTrivial(sa)) refined.push({ type: "add", text: sa });
+          } else {
+            for (const w of wordOps) {
+              if (isTrivial(w.text) && w.type !== "same") {
+                // 空白跟在 same 上，避免单独高亮
+                if (refined.length) refined[refined.length - 1].text += w.text;
+                else refined.push({ type: "same", text: w.text });
+              } else {
+                refined.push(w);
+              }
+            }
+          }
+        }
+        for (let t = sp; t < sDels.length; t++) {
+          if (!isTrivial(sDels[t])) refined.push({ type: "del", text: sDels[t] });
+        }
+        for (let t = sp; t < sAdds.length; t++) {
+          if (!isTrivial(sAdds[t])) refined.push({ type: "add", text: sAdds[t] });
+        }
+      }
+      segments.push({ type: "mixed", parts: refined, newline: true });
+    }
+    for (let k = pairs; k < dels.length; k++) {
+      if (!isTrivial(dels[k])) segments.push({ type: "del", text: dels[k] });
+      else segments.push({ type: "same", text: dels[k] });
+    }
+    for (let k = pairs; k < adds.length; k++) {
+      if (!isTrivial(adds[k])) segments.push({ type: "add", text: adds[k] });
+      else segments.push({ type: "same", text: adds[k] });
+    }
+  }
+  return segments;
+}
+
+function escInline(text) {
+  return esc(String(text || "")).replace(/\n/g, "<br>");
+}
+
+function renderProfileDiff(curText, prevText) {
+  const cur = String(curText || "").trim();
+  const prev = String(prevText || "").trim();
+  if (!cur) return renderMarkdown("（暂无画像，等待 L4 生成）");
+  if (!prev || prev === cur) return renderMarkdown(cur);
+  const segments = diffProfileSmart(cur, prev);
+  let addCount = 0;
+  let delCount = 0;
+  const countOps = (ops) => {
+    for (const op of ops) {
+      if (op.type === "add" && !isTrivial(op.text)) addCount += 1;
+      if (op.type === "del" && !isTrivial(op.text)) delCount += 1;
+      if (op.type === "mixed" && op.parts) countOps(op.parts);
+    }
+  };
+  countOps(segments);
+
+  const parts = [];
+  if (addCount || delCount) {
+    parts.push(
+      `<div class="profile-diff-legend">` +
+      (addCount ? `<span class="prof-legend-add">+${addCount} 处新增</span>` : "") +
+      (delCount ? `<span class="prof-legend-del">−${delCount} 处删除</span>` : "") +
+      `<span class="prof-legend-hint">相对上一版 · 句子级主题色标记</span></div>`
+    );
+  }
+
+  // 把 same 行攒成 markdown 块；变更片段用 inline span 插入，避免整段染色
+  let sameBuf = [];
+  const flushSame = () => {
+    if (!sameBuf.length) return;
+    const block = sameBuf.join("\n");
+    sameBuf = [];
+    if (block.trim()) parts.push(`<div class="prof-same">${renderMarkdown(block)}</div>`);
+    else if (block.includes("\n")) parts.push(`<div class="prof-same">${"<br>".repeat(block.split("\n").length - 1)}</div>`);
+  };
+
+  const renderInlineOps = (ops) => {
+    let html = "";
+    for (const op of ops) {
+      if (op.type === "same") html += escInline(op.text);
+      else if (op.type === "add") html += `<span class="prof-ins">${escInline(op.text)}</span>`;
+      else if (op.type === "del") html += `<span class="prof-del-inline">${escInline(op.text)}</span>`;
+    }
+    return html;
+  };
+
+  for (const seg of segments) {
+    if (seg.type === "same") {
+      sameBuf.push(seg.text);
+      continue;
+    }
+    flushSame();
+    if (seg.type === "mixed") {
+      // 混合行：内联红/绿句，不跑 markdown 以免拆标签
+      parts.push(`<p class="prof-line">${renderInlineOps(seg.parts || [])}</p>`);
+      continue;
+    }
+    if (isTrivial(seg.text)) continue;
+    if (seg.type === "add") {
+      // 纯新增整句/整行：主题色，无删除线
+      parts.push(`<p class="prof-line"><span class="prof-ins">${escInline(seg.text)}</span></p>`);
+    } else if (seg.type === "del") {
+      // 纯删除：主题色 + 删除线
+      parts.push(`<p class="prof-line"><span class="prof-del-inline">${escInline(seg.text)}</span></p>`);
+    }
+  }
+  flushSame();
+  return parts.join("") || renderMarkdown(cur);
+}
+
 function fixMathFormula(formula) {
   return formula
     .replace(/#/g, "\\#")
@@ -426,7 +692,7 @@ function showToast(message, isError = false) {
   showToast.timer = setTimeout(() => { toast.hidden = true; }, 3600);
 }
 
-const pageTitles = { overview: "Overview", workers: "Workers", memory: "Memory", timeline: "Timeline", diary: "Diary", todo: "待办", services: "服务与终端", knowledge: "Knowledge", events: "System Activity", environment: "Environment", prompt: "System Prompt" };
+const pageTitles = { overview: "Overview", workers: "Workers", memory: "Memory", sop: "SOP", timeline: "Timeline", diary: "Diary", todo: "待办", services: "服务与终端", knowledge: "Knowledge", events: "System Activity", environment: "Environment", prompt: "System Prompt" };
 
 function setSidebarOpen(open) {
   $("sidebar").classList.toggle("open", open);
@@ -445,6 +711,7 @@ function routeTo(page) {
   if (target === "prompt" && !promptData) loadPrompt();
   if (target === "timeline" && !timelineData) loadTimeline();
   if (target === "diary" && !diaryData) loadDiary();
+  if (target === "sop" && !sopData) loadSopIndex();
   if (target === "environment") loadModels();
   if (target === "services") { renderServicesPage(true); if (terminalId) startTerminalPoll(); }
   else if (terminalTimer) stopTerminalPoll();
@@ -725,6 +992,7 @@ function render(data) {
   const nowMs = Date.now();
   if (activeView === "timeline" && !timelineData && nowMs - lastTimelineAttempt > 5000) loadTimeline();
   if (activeView === "diary" && !diaryData && nowMs - lastDiaryAttempt > 5000) loadDiary();
+  if (activeView === "sop" && !sopData && nowMs - lastSopAttempt > 5000) loadSopIndex();
 }
 
 async function fetchJson(url, options) {
@@ -757,6 +1025,130 @@ async function refresh() {
   try { render(await fetchJson("/api/dashboard")); }
   catch (error) { if (!dashboardData) render(fallback); console.warn("G4W dashboard refresh failed", error); }
 }
+
+  function currentPage() {
+    return document.querySelector("[data-page-view].active")?.dataset.pageView || "overview";
+  }
+
+  function markRefreshed(label) {
+    const now = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    const stamp = $("refresh-stamp");
+    const last = $("last-updated");
+    if (stamp) stamp.textContent = now;
+    if (last) last.textContent = now;
+    showToast(`${label}已刷新 · ${now}`);
+    const view = document.querySelector("[data-page-view].active");
+    if (view) {
+      view.classList.remove("just-refreshed");
+      void view.offsetWidth;
+      view.classList.add("just-refreshed");
+    }
+  }
+
+  function resetPageCaches() {
+    timelineData = null;
+    diaryData = null;
+    sopData = null;
+    currentSopPath = "";
+    promptData = null;
+    currentMemoryId = "";
+    currentMemoryData = null;
+    todoLastFetchAt = 0;
+    servicesCache = null;
+    servicesCacheAt = 0;
+    servicesSignature = "";
+    embeddingLastLoadAt = 0;
+    const conductor = $("setting-conductor-model");
+    if (conductor) conductor.dataset.loaded = "";
+  }
+
+
+  async function refreshActivePage() {
+    const page = document.querySelector("[data-page-view].active")?.dataset.pageView || "overview";
+    if (page === "timeline") { timelineData = null; return loadTimeline(); }
+    if (page === "diary") {
+      await loadDiary();
+      if (currentDiaryDate) return openDiary(currentDiaryDate);
+      return;
+    }
+    if (page === "sop") {
+      await loadSopIndex(true);
+      if (currentSopPath) return openSop(currentSopPath);
+      return;
+    }
+    if (page === "memory") {
+      const id = $("memory-profile-select")?.value || currentMemoryId;
+      currentMemoryId = "";
+        if (id) return loadMemoryDetail(id);
+      return;
+    }
+    if (page === "todo") { todoLastFetchAt = 0; return renderTodoPage(true); }
+    if (page === "services") { servicesCache = null; servicesCacheAt = 0; servicesSignature = ""; return renderServicesPage(true); }
+    if (page === "prompt") { promptData = null; return loadPrompt(); }
+    if (page === "environment") {
+      await loadModels(true);
+      embeddingLastLoadAt = 0;
+        const conductor = $("setting-conductor-model");
+        if (conductor) conductor.dataset.loaded = "";
+        return loadEmbeddingConfig(true);
+      }
+      if (page === "workers") {
+        workerMonitorCursor = 0;
+        return startWorkerMonitorPoll();
+    }
+  }
+
+  async function refreshNow() {
+    const button = $("refresh-button");
+    if (button) {
+      button.classList.add("is-refreshing");
+      button.disabled = true;
+    }
+    try {
+      await refresh();
+      const stamp = $("last-updated");
+      if (stamp) stamp.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+        markRefreshed(pageTitles[currentPage()] || "当前页");
+      await refreshActivePage();
+    } catch (error) {
+      console.warn("G4W dashboard manual refresh failed", error);
+      showToast(error.message || "刷新失败", true);
+    } finally {
+      if (button) {
+        if (overlay) overlay.hidden = true;
+          button.classList.remove("is-refreshing");
+        button.disabled = false;
+      }
+    }
+  }
+
+  async function refreshNowFixed() {
+    const button = $("refresh-button");
+    const overlay = $("refresh-overlay");
+    const page = currentPage();
+    const label = pageTitles[page] || "当前页";
+    if (button) {
+      button.classList.add("is-refreshing");
+      button.disabled = true;
+    }
+    if (overlay) overlay.hidden = false;
+    try {
+      resetPageCaches();
+      await refresh();
+      await refreshActivePage();
+      markRefreshed(label);
+    } catch (error) {
+      if (!dashboardData) render(fallback);
+      console.warn("G4W dashboard manual refresh failed", error);
+      showToast(error.message || "刷新失败", true);
+    } finally {
+      if (overlay) overlay.hidden = true;
+      if (button) {
+        button.classList.remove("is-refreshing");
+        button.disabled = false;
+      }
+    }
+  }
 
 const timelineCategories = {
   life: "生活", work: "工作", study: "学习", exercise: "运动", entertainment: "娱乐",
@@ -1003,6 +1395,179 @@ function moveDiary(direction) {
   const index = entries.findIndex((entry) => entry.date === currentDiaryDate);
   const target = entries[index + direction];
   if (target) openDiary(target.date);
+}
+
+function visibleSopFiles() {
+  const files = (sopData || {}).files || [];
+  const query = ($("sop-search")?.value || "").trim().toLowerCase();
+  if (!query) return files;
+  return files.filter((file) => [file.path, file.title, file.name, file.folder, file.excerpt].join(" ").toLowerCase().includes(query));
+}
+
+/** 构建目录树：{ name, path, dirs: Map, files: [] } */
+function buildSopTree(files) {
+  const root = { name: "", path: "", dirs: new Map(), files: [] };
+  for (const file of files) {
+    const parts = String(file.path || "").split("/").filter(Boolean);
+    if (!parts.length) continue;
+    let node = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const name = parts[i];
+      const dirPath = parts.slice(0, i + 1).join("/");
+      if (!node.dirs.has(name)) node.dirs.set(name, { name, path: dirPath, dirs: new Map(), files: [] });
+      node = node.dirs.get(name);
+    }
+    node.files.push(file);
+  }
+  return root;
+}
+
+function countSopTreeFiles(node) {
+  let n = (node.files || []).length;
+  for (const child of (node.dirs || new Map()).values()) n += countSopTreeFiles(child);
+  return n;
+}
+
+function ensureSopPathExpanded(relPath) {
+  const parts = String(relPath || "").split("/").filter(Boolean);
+  for (let i = 1; i < parts.length; i++) sopExpanded.add(parts.slice(0, i).join("/"));
+}
+
+function expandSopSearchMatches(files, query) {
+  if (!query) return;
+  for (const file of files) {
+    const hay = [file.path, file.title, file.name, file.folder, file.excerpt].join(" ").toLowerCase();
+    if (hay.includes(query)) ensureSopPathExpanded(file.path);
+  }
+}
+
+function renderSopTreeHtml(node, depth) {
+  const rows = [];
+  const dirNames = [...node.dirs.keys()].sort((a, b) => a.localeCompare(b, "zh"));
+  for (const name of dirNames) {
+    const child = node.dirs.get(name);
+    const open = sopExpanded.has(child.path);
+    const count = countSopTreeFiles(child);
+    rows.push(
+      `<button type="button" class="sop-dir ${open ? "open" : ""}" data-sop-dir="${esc(child.path)}" style="--sop-depth:${depth}">` +
+      `<span class="sop-caret">${open ? "▾" : "▸"}</span>` +
+      `<span class="sop-dir-icon">📁</span>` +
+      `<strong>${esc(child.name)}</strong>` +
+      `<span class="sop-count">${count}</span></button>`
+    );
+    if (open) rows.push(renderSopTreeHtml(child, depth + 1));
+  }
+  const files = [...(node.files || [])].sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh"));
+  for (const file of files) {
+    const active = file.path === currentSopPath ? "active" : "";
+    const ext = (file.ext || "").toUpperCase() || "FILE";
+    rows.push(
+      `<button type="button" class="sop-file ${active}" data-sop-path="${esc(file.path)}" style="--sop-depth:${depth}" title="${esc(file.path)}">` +
+      `<span class="sop-file-icon">📄</span>` +
+      `<span class="sop-file-main"><strong>${esc(file.name)}</strong>` +
+      `<small>${esc(ext)}${file.title && file.title !== file.name ? " · " + esc(file.title) : ""}</small></span></button>`
+    );
+  }
+  return rows.join("");
+}
+
+function renderSopIndex() {
+  const files = visibleSopFiles();
+  const total = ((sopData || {}).files || []).length;
+  if ($("sop-page-badge")) $("sop-page-badge").textContent = `${files.length}${files.length !== total ? ` / ${total}` : ""} FILES`;
+  const list = $("sop-file-list");
+  if (!list) return;
+  if (!files.length) {
+    list.innerHTML = '<div class="empty-state">没有符合条件的 SOP 文件</div>';
+    return;
+  }
+  const query = ($("sop-search")?.value || "").trim().toLowerCase();
+  // 搜索时自动展开命中路径；打开文件时展开其祖先目录
+  if (query) expandSopSearchMatches(files, query);
+  if (currentSopPath) ensureSopPathExpanded(currentSopPath);
+  const tree = buildSopTree(files);
+  list.innerHTML = `<div class="sop-tree">${renderSopTreeHtml(tree, 0)}</div>`;
+}
+
+function toggleSopDir(dirPath) {
+  const key = String(dirPath || "");
+  if (sopExpanded.has(key)) sopExpanded.delete(key);
+  else sopExpanded.add(key);
+  renderSopIndex();
+}
+
+async function loadSopIndex(force = false) {
+  lastSopAttempt = Date.now();
+  const scopeSelect = $("sop-scope");
+  if (scopeSelect && !force) {
+    if ([...scopeSelect.options].some((opt) => opt.value === sopScope)) scopeSelect.value = sopScope;
+  }
+  try {
+    sopData = await fetchJson(`/api/sop?scope=${encodeURIComponent(sopScope)}`);
+    if (scopeSelect && Array.isArray(sopData.scopes) && sopData.scopes.length) {
+      scopeSelect.innerHTML = sopData.scopes.map((item) => {
+        const label = item.id === "sop-user" ? `用户 SOP（sop-user）` : `共享 SOP（sop）`;
+        const count = item.exists ? ` · ${item.count}` : " · 不存在";
+        return `<option value="${esc(item.id)}">${esc(label + count)}</option>`;
+      }).join("");
+      if ([...scopeSelect.options].some((opt) => opt.value === sopScope)) scopeSelect.value = sopScope;
+      else {
+        sopScope = scopeSelect.value || "sop-user";
+        localStorage.setItem("g4w-sop-scope", sopScope);
+      }
+    }
+    // 切换目录时收起展开状态；若有当前文件则只展开其祖先
+    if (force) sopExpanded = new Set();
+    if (currentSopPath) ensureSopPathExpanded(currentSopPath);
+    renderSopIndex();
+    const files = visibleSopFiles();
+    // 不自动打开第一份，避免一进页就铺开阅读区；仅在已有选中失效时换一篇
+    if (currentSopPath && files.length && !files.some((f) => f.path === currentSopPath)) {
+      await openSop(files[0].path);
+    }
+  } catch (error) {
+    if ($("sop-file-list")) $("sop-file-list").innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
+  }
+}
+
+async function openSop(relPath) {
+  currentSopPath = relPath;
+  renderSopIndex();
+  if ($("sop-title")) $("sop-title").textContent = "正在读取…";
+  if ($("sop-content")) $("sop-content").innerHTML = '<div class="empty-state">加载中…</div>';
+  try {
+    const data = await fetchJson(`/api/sop?scope=${encodeURIComponent(sopScope)}&path=${encodeURIComponent(relPath)}`);
+    const entry = ((sopData || {}).files || []).find((item) => item.path === relPath);
+    if ($("sop-title")) $("sop-title").textContent = data.title || entry?.title || data.name || relPath;
+    if ($("sop-meta")) {
+      $("sop-meta").innerHTML = [
+        data.ext ? String(data.ext).toUpperCase() : "",
+        data.path || relPath,
+        data.sections ? `${data.sections} 个章节` : "",
+        data.bytes != null ? formatBytes(data.bytes) : "",
+        data.updatedAt || "",
+        data.source || "",
+      ].filter(Boolean).map((value) => `<span>${esc(value)}</span>`).join("");
+    }
+    if ($("sop-content")) {
+      // md 直接渲染；json/txt/py 服务端已包代码围栏
+      $("sop-content").innerHTML = renderMarkdown(data.content || "（空文件）");
+    }
+    const files = visibleSopFiles();
+    const index = files.findIndex((item) => item.path === relPath);
+    if ($("sop-prev")) $("sop-prev").disabled = index <= 0;
+    if ($("sop-next")) $("sop-next").disabled = index < 0 || index >= files.length - 1;
+  } catch (error) {
+    if ($("sop-title")) $("sop-title").textContent = "SOP 读取失败";
+    if ($("sop-content")) $("sop-content").innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
+  }
+}
+
+function moveSop(direction) {
+  const files = visibleSopFiles();
+  const index = files.findIndex((item) => item.path === currentSopPath);
+  const target = files[index + direction];
+  if (target) openSop(target.path);
 }
 
 async function openKnowledge(documentId) {
@@ -1621,7 +2186,7 @@ function renderMemoryDetail(data) {
         <div class="memory-person"><span class="memory-avatar">${esc((data.name || "记").slice(0, 1))}</span><div><h2>${esc(data.name)}</h2><small>${identity}</small></div></div>
         <div class="memory-profile-tags">${data.botName ? `<span class="muted-tag">助手 ${esc(data.botName)}</span>` : ""}<span class="muted-tag">更新 ${esc(data.updatedAt)}</span><span class="muted-tag">${formatBytes(data.activeBytes)}</span><span class="page-badge">${total} 条记忆</span></div>
       </article>
-      <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">USER PROFILE</div><h2>用户画像</h2></div><span class="muted-tag">总体稳定画像 · L4 持续维护</span></div><div class="markdown user-profile">${renderMarkdown(data.userProfile || "（暂无画像，等待 L4 生成）")}</div></article>
+      <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">USER PROFILE</div><h2>用户画像</h2></div><span class="muted-tag">${data.userProfilePrev ? "相对上一版 · 主题色标变更" : "总体稳定画像 · L4 持续维护"}</span></div><div class="markdown user-profile">${renderProfileDiff(data.userProfile, data.userProfilePrev)}</div></article>
       <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">MEMORY BRIEF</div><h2>记忆简报</h2></div></div><div class="markdown memory-brief">${renderMarkdown(data.brief || "暂无记忆简报")}</div></article>
       <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">PROFILE TIMELINE</div><h2>画像时间轴</h2></div><span class="muted-tag">点击快照查看当时的画像与变化</span></div><div id="profile-timeline" class="profile-timeline"><div class="empty-state">正在读取历史快照…</div></div></article>
       <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">STRUCTURED MEMORY</div><h2>结构化记忆</h2></div><span class="muted-tag">点击分类展开</span></div>${sections || '<div class="empty-state">还没有结构化记忆</div>'}</article>
@@ -1867,7 +2432,7 @@ async function saveSettings(event) {
   finally { button.disabled = false; button.textContent = "保存设置"; }
 }
 
-$("refresh-button").addEventListener("click", refresh);
+$("refresh-button").addEventListener("click", refreshNowFixed);
 $("theme-button").addEventListener("click", cycleTheme);
 $("menu-button").addEventListener("click", () => setSidebarOpen(!$("sidebar").classList.contains("open")));
 $("sidebar-close").addEventListener("click", () => setSidebarOpen(false));
@@ -1914,6 +2479,22 @@ $("diary-month").addEventListener("change", (event) => {
 });
 $("diary-prev").addEventListener("click", () => moveDiary(1));
 $("diary-next").addEventListener("click", () => moveDiary(-1));
+$("sop-scope")?.addEventListener("change", (event) => {
+  sopScope = event.target.value || "sop-user";
+  localStorage.setItem("g4w-sop-scope", sopScope);
+  currentSopPath = "";
+  sopData = null;
+  sopExpanded = new Set();
+  if ($("sop-title")) $("sop-title").textContent = "选择一份 SOP";
+  if ($("sop-meta")) $("sop-meta").innerHTML = "";
+  if ($("sop-content")) $("sop-content").innerHTML = '<div class="empty-state">从左侧目录展开并选择文件。</div>';
+  loadSopIndex(true);
+});
+$("sop-search")?.addEventListener("input", () => {
+  renderSopIndex();
+});
+$("sop-prev")?.addEventListener("click", () => moveSop(-1));
+$("sop-next")?.addEventListener("click", () => moveSop(1));
 $("knowledge-search").addEventListener("input", (event) => { knowledgeQuery = event.target.value; renderKnowledgeCatalog(dashboardData?.knowledge?.items || []); });
 $("knowledge-tag").addEventListener("change", (event) => { knowledgeTag = event.target.value; renderKnowledgeCatalog(dashboardData?.knowledge?.items || []); });
 $("settings-form").addEventListener("submit", saveSettings);
@@ -1972,6 +2553,8 @@ document.addEventListener("click", (event) => {
   const timelineEvent = event.target.closest("[data-timeline-event]");
   if (timelineEvent) { openTimelineEvent(timelineEvent.dataset.timelineEvent, timelineEvent.dataset.timelineDate); return; }
   const diary = event.target.closest("[data-diary-date]"); if (diary) { openDiary(diary.dataset.diaryDate); return; }
+  const sopDir = event.target.closest("[data-sop-dir]"); if (sopDir) { toggleSopDir(sopDir.dataset.sopDir); return; }
+  const sopFile = event.target.closest("[data-sop-path]"); if (sopFile) { openSop(sopFile.dataset.sopPath); return; }
   const worker = event.target.closest("[data-worker-id]"); if (worker) { openWorker(worker.dataset.workerId); return; }
   const memorySection = event.target.closest("[data-memory-section]");
   if (memorySection) { openMemorySection(memorySection.dataset.memorySection); return; }

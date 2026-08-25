@@ -662,13 +662,32 @@ class DashboardState:
             value = active.get(key, [] if key != "user_profile" else {})
             count = len(value) if isinstance(value, (list, dict)) else 0
             sections.append({"key": key, "label": label, "count": count, "items": value})
+        # 上一版画像：优先 user_profile.prev.md（conductor 覆盖写时留档），否则最近备份里的画像
+        profile_path = insight / "user_profile.md"
+        prev_path = insight / "user_profile.prev.md"
+        user_profile = _read_text(profile_path).strip()
+        user_profile_prev = _read_text(prev_path).strip()
+        profile_prev_source = "prev" if user_profile_prev else ""
+        if not user_profile_prev and backups_root.is_dir():
+            for bak in sorted(
+                backups_root.glob("*/history_insight/user_profile.md"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            ):
+                candidate = _read_text(bak).strip()
+                if candidate and candidate != user_profile:
+                    user_profile_prev = candidate
+                    profile_prev_source = bak.parents[1].name
+                    break
         return {
             "id": target.name,
             "name": str(profile.get("userName") or target.name),
             "identity": str(profile.get("userIdentity") or ""),
             "botName": str(profile.get("botName") or ""),
             "gender": str(profile.get("userGender") or ""),
-            "userProfile": _read_text(insight / "user_profile.md").strip(),
+            "userProfile": user_profile,
+            "userProfilePrev": user_profile_prev,
+            "userProfilePrevSource": profile_prev_source,
             "brief": _read_text(brief_path).strip(),
             "sections": sections,
             "backups": backups,
@@ -839,6 +858,146 @@ class DashboardState:
             "source": str(path),
             "sections": sum(1 for line in content.splitlines() if line.startswith("## ")),
             "updatedAt": _short_date(_timestamp(path)),
+        }
+
+    # ---------- SOP 浏览（共享 sop / 用户 sop-user） ----------
+
+    _SOP_EXTS = {".md", ".json", ".txt", ".py"}
+
+    def _sop_roots(self, config: Config) -> dict[str, Path]:
+        """scope → 绝对根目录。sop 默认 shared_memory_root；sop-user 与之并列。"""
+        from ..core.config import PACKAGE_DIR as _PKG
+        sop_root = Path(config.sop_dir).resolve()
+        # shared_memory_root 可能直接指向 .../memory/sop
+        parent = sop_root.parent
+        user_root = (parent / "sop-user").resolve()
+        # 兼容：若用户目录不在并列位置，再试包内 memory/sop-user
+        if not user_root.is_dir():
+            alt = (_PKG / "memory" / "sop-user").resolve()
+            if alt.is_dir():
+                user_root = alt
+        return {"sop": sop_root, "sop-user": user_root}
+
+    def _sop_resolve(self, config: Config, scope: str, rel: str = "") -> tuple[Path, Path]:
+        roots = self._sop_roots(config)
+        key = str(scope or "sop-user").strip().lower()
+        if key not in roots:
+            raise FileNotFoundError(scope)
+        root = roots[key]
+        if not root.is_dir():
+            raise FileNotFoundError(key)
+        rel_norm = str(rel or "").replace("\\", "/").lstrip("/")
+        if rel_norm in ("", "."):
+            return root, root
+        # 禁止越界
+        if ".." in Path(rel_norm).parts:
+            raise FileNotFoundError(rel)
+        target = (root / rel_norm).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise FileNotFoundError(rel) from exc
+        return root, target
+
+    def sop_index(self, scope: str = "sop-user") -> dict:
+        config = self._fresh_config()
+        key = str(scope or "sop-user").strip().lower() or "sop-user"
+        if key not in ("sop", "sop-user"):
+            key = "sop-user"
+        roots = self._sop_roots(config)
+        root = roots.get(key)
+        files = []
+        if root is not None and root.is_dir():
+            for path in root.rglob("*"):
+                if not path.is_file():
+                    continue
+                if path.suffix.lower() not in self._SOP_EXTS:
+                    continue
+                # 跳过常见噪音目录
+                parts = set(path.relative_to(root).parts)
+                if parts & {"__pycache__", ".git", "node_modules", ".venv"}:
+                    continue
+                rel = path.relative_to(root).as_posix()
+                content_head = ""
+                try:
+                    raw = path.read_text(encoding="utf-8-sig", errors="replace")
+                    content_head = raw[:400]
+                except Exception:
+                    raw = ""
+                title = path.name
+                if path.suffix.lower() == ".md":
+                    for line in (raw or "").splitlines():
+                        stripped = line.strip()
+                        if stripped.startswith("#"):
+                            title = stripped.lstrip("#").strip() or title
+                            break
+                plain = re.sub(r"\s+", " ", re.sub(r"^#{1,6}\s+", "", content_head, flags=re.M)).strip()
+                files.append({
+                    "path": rel,
+                    "name": path.name,
+                    "title": title,
+                    "ext": path.suffix.lower().lstrip("."),
+                    "folder": path.parent.relative_to(root).as_posix() if path.parent != root else "",
+                    "excerpt": plain[:140],
+                    "bytes": path.stat().st_size,
+                    "updatedAt": _short_date(_timestamp(path)),
+                })
+        files.sort(key=lambda item: (item.get("folder") or "", item.get("path") or ""))
+        available = []
+        for name, path in roots.items():
+            available.append({
+                "id": name,
+                "label": "用户 SOP" if name == "sop-user" else "共享 SOP",
+                "exists": path.is_dir(),
+                "root": str(path),
+                "count": sum(
+                    1 for p in path.rglob("*")
+                    if p.is_file() and p.suffix.lower() in self._SOP_EXTS
+                ) if path.is_dir() else 0,
+            })
+        return {
+            "scope": key,
+            "root": str(root) if root else "",
+            "files": files,
+            "count": len(files),
+            "scopes": available,
+        }
+
+    def sop_detail(self, scope: str, rel_path: str) -> dict:
+        config = self._fresh_config()
+        key = str(scope or "sop-user").strip().lower() or "sop-user"
+        root, target = self._sop_resolve(config, key, rel_path)
+        if not target.is_file() or target.suffix.lower() not in self._SOP_EXTS:
+            raise FileNotFoundError(rel_path)
+        raw = _read_text(target)
+        ext = target.suffix.lower().lstrip(".")
+        # 前端统一用 markdown 渲染：非 md 包进代码围栏
+        if ext == "md":
+            content = raw
+        else:
+            fence = "json" if ext == "json" else ("python" if ext == "py" else "text")
+            body = raw if raw.endswith("\n") else raw + "\n"
+            content = f"```{fence}\n{body}```"
+        title = target.name
+        if ext == "md":
+            for line in raw.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    title = stripped.lstrip("#").strip() or title
+                    break
+        rel = target.relative_to(root).as_posix()
+        return {
+            "scope": key,
+            "path": rel,
+            "name": target.name,
+            "title": title,
+            "ext": ext,
+            "content": content,
+            "raw": raw,
+            "source": str(target),
+            "bytes": target.stat().st_size,
+            "updatedAt": _short_date(_timestamp(target)),
+            "sections": sum(1 for line in raw.splitlines() if line.startswith("## ")) if ext == "md" else 0,
         }
 
     # ---------- 服务注册表（可视化启停 + 日志；agent 可动态注册/移除） ----------
@@ -2202,6 +2361,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if path == "/api/diary":
                 date = str((query.get("date") or [""])[0])
                 self._send_json(self.dashboard.diary_detail(date) if date else self.dashboard.diary_index())
+                return
+            if path == "/api/sop":
+                scope = str((query.get("scope") or ["sop-user"])[0]) or "sop-user"
+                rel = str((query.get("path") or [""])[0])
+                if rel:
+                    self._send_json(self.dashboard.sop_detail(scope, rel))
+                else:
+                    self._send_json(self.dashboard.sop_index(scope))
                 return
             if path == "/api/knowledge":
                 self._send_json(self.dashboard.knowledge_detail(str((query.get("id") or [""])[0])))

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#111714" />
   <title>G4W Control Center</title>
-  <link rel="stylesheet" href="/styles.css?v=20260815" />
+  <link rel="stylesheet" href="/styles.css?v=20260816-refresh3" />
   <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
 </head>
 <body>
@@ -38,6 +38,7 @@
         <a class="nav-item active" data-page="overview" href="#overview"><span>⌂</span>总览</a>
         <a class="nav-item" data-page="workers" href="#workers"><span>◈</span>Worker</a>
         <a class="nav-item" data-page="memory" href="#memory"><span>✦</span>长期记忆</a>
+        <a class="nav-item" data-page="sop" href="#sop"><span>☰</span>SOP</a>
         <div class="nav-label">个人记录</div>
         <a class="nav-item" data-page="timeline" href="#timeline"><span>◷</span>时间轴</a>
         <a class="nav-item" data-page="diary" href="#diary"><span>✎</span>日记</a>
@@ -64,7 +65,8 @@
         <div class="breadcrumbs">G4W <span>/</span> <b id="page-name">Overview</b></div>
         <div class="top-actions">
           <span class="live-pill"><i></i><span id="top-status">STANDBY</span></span>
-          <button class="icon-button" id="refresh-button" title="刷新">↻</button>
+          <small class="refresh-stamp" id="refresh-stamp">--:--:--</small>
+            <button class="icon-button" id="refresh-button" type="button" title="刷新当前页">↻</button>
           <button class="theme-button" id="theme-button" title="切换主题" aria-label="切换主题"><span id="theme-icon">◐</span></button>
         </div>
       </header>
@@ -123,6 +125,25 @@
       <section class="page-view" data-page-view="memory">
         <div class="page-header"><div><div class="eyebrow">LONG-TERM CONTEXT</div><h1>长期记忆</h1><p>按账号切换，查看各自的长期记忆档案。</p></div><div class="memory-switch"><label for="memory-profile-select">记忆账号</label><select id="memory-profile-select" aria-label="选择记忆账号"></select></div></div>
         <div class="memory-layout" id="memory-page-body"><div class="empty-state glass-card">正在读取记忆…</div></div>
+      </section>
+
+      <section class="page-view" data-page-view="sop">
+        <div class="page-header"><div><div class="eyebrow">PROCEDURE LIBRARY</div><h1>SOP</h1><p>浏览共享与用户自定义的流程说明（md / json / txt / py），右侧 Markdown 阅读。</p></div><span class="page-badge" id="sop-page-badge">0 FILES</span></div>
+        <div class="diary-layout sop-layout">
+          <aside class="diary-index glass-card">
+            <label class="diary-month-field">目录<select id="sop-scope" aria-label="选择 SOP 目录"><option value="sop-user">用户 SOP（sop-user）</option><option value="sop">共享 SOP（sop）</option></select></label>
+            <label class="search-field">搜索文件<input id="sop-search" placeholder="路径、标题或摘要" /></label>
+            <div class="diary-date-list" id="sop-file-list"><div class="empty-state">正在读取 SOP…</div></div>
+          </aside>
+          <article class="diary-reader glass-card">
+            <header>
+              <div><div class="eyebrow">SOP DOCUMENT</div><h2 id="sop-title">选择一份 SOP</h2></div>
+              <div class="diary-actions"><button id="sop-prev" aria-label="上一份">←</button><button id="sop-next" aria-label="下一份">→</button></div>
+            </header>
+            <div class="diary-meta" id="sop-meta"></div>
+            <div class="markdown diary-content" id="sop-content"><div class="empty-state">从左侧选择文件查看 SOP 内容。</div></div>
+          </article>
+        </div>
       </section>
 
       <section class="page-view" data-page-view="timeline">
@@ -208,10 +229,11 @@
     <div class="drawer-backdrop" data-close-drawer></div>
     <aside class="drawer"><header><div><div class="eyebrow" id="drawer-eyebrow">DETAIL</div><h2 id="drawer-title">详情</h2></div><button class="drawer-close" data-close-drawer>×</button></header><div class="drawer-body" id="drawer-body"></div></aside>
   </div>
-  <div class="toast" id="toast" hidden></div>
+  <div class="refresh-overlay" id="refresh-overlay" hidden><div class="refresh-overlay-card"><b>正在刷新</b><span>重新读取当前页数据…</span></div></div>
+    <div class="toast" id="toast" hidden></div>
   <div class="timeline-tooltip" id="timeline-tooltip" role="tooltip" hidden></div>
   <script src="/vendor/markdown-it.min.js"></script>
   <script src="/vendor/katex/katex.min.js"></script>
-  <script src="/app.js?v=20260815"></script>
+  <script src="/app.js?v=20260816-refresh3"></script>
 </body>
 </html>

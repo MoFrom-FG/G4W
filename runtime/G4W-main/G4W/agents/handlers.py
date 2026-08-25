@@ -324,6 +324,24 @@ class ConductorHandler(GenericAgentHandler):
             yield "[G4W] Shared SOP write requires the L0 management flow.\n"
             return blocked
         self._file_read_results = {}
+        # 用户画像覆盖写之前先留一份 prev，看板用主题色 diff 标新增/删除。
+        # content 可能在 response 标签里，这里只负责备份旧文件（有内容就留）。
+        try:
+            from pathlib import Path as _Path
+            write_path = str(args.get("path") or "")
+            norm = write_path.replace("\\", "/")
+            if norm.endswith("history_insight/user_profile.md") or norm.endswith("/user_profile.md"):
+                get_abs = getattr(self, "_get_abs_path", None)
+                target = _Path(get_abs(write_path) if callable(get_abs) else write_path)
+                if not target.is_absolute():
+                    target = (_Path.cwd() / target).resolve()
+                if target.is_file() and target.stat().st_size > 0:
+                    prev = target.with_name("user_profile.prev.md")
+                    old = target.read_text(encoding="utf-8-sig", errors="replace")
+                    if old.strip():
+                        prev.write_text(old if old.endswith("\n") else old + "\n", encoding="utf-8")
+        except Exception:
+            pass
         outcome = yield from super().do_file_write(args, response)
         try:
             ok = True
@@ -346,6 +364,23 @@ class ConductorHandler(GenericAgentHandler):
             yield "[G4W] Shared SOP patch requires the L0 management flow.\n"
             return blocked
         self._file_read_results = {}
+        # 画像 patch 前同样留 prev，供看板主题色 diff
+        try:
+            from pathlib import Path as _Path
+            write_path = str(args.get("path") or "")
+            norm = write_path.replace("\\", "/")
+            if norm.endswith("history_insight/user_profile.md") or norm.endswith("/user_profile.md"):
+                get_abs = getattr(self, "_get_abs_path", None)
+                target = _Path(get_abs(write_path) if callable(get_abs) else write_path)
+                if not target.is_absolute():
+                    target = (_Path.cwd() / target).resolve()
+                if target.is_file() and target.stat().st_size > 0:
+                    prev = target.with_name("user_profile.prev.md")
+                    old = target.read_text(encoding="utf-8-sig", errors="replace")
+                    if old.strip():
+                        prev.write_text(old if old.endswith("\n") else old + "\n", encoding="utf-8")
+        except Exception:
+            pass
         outcome = yield from super().do_file_patch(args, response)
         try:
             ok = True
