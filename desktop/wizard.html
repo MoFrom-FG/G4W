@@ -61,7 +61,7 @@ button { padding:9px 20px; border:0; border-radius:9px; font-size:13px; cursor:p
   <div class="sub">只需一次性配置，之后双击 G4W.exe 即可直接使用</div>
   <div class="steps" id="steps">
     <div class="step" data-step="prepare"><b>① 准备环境</b>离线安装</div>
-    <div class="step" data-step="key"><b>② API Key</b>DeepSeek</div>
+    <div class="step" data-step="key"><b>② API Key</b>模型 Key（可跳过）</div>
     <div class="step" data-step="env"><b>③ 环境配置</b>昵称与模型</div>
     <div class="step" data-step="login"><b>④ 扫码登录</b>微信账号</div>
   </div>
@@ -79,12 +79,13 @@ button { padding:9px 20px; border:0; border-radius:9px; font-size:13px; cursor:p
 
   <!-- ② API Key -->
   <div class="card hidden" data-card="key">
-    <h2>配置 DeepSeek API Key</h2>
-    <div class="desc">密钥只保存在本机 <code>runtime\app\mykey.py</code>，不会上传。</div>
-    <label>API Key（platform.deepseek.com 获取）</label>
+    <h2>配置模型 API Key</h2>
+    <div class="desc">密钥只保存在本机 <code>runtime\app\mykey.py</code>，不会上传。<b>不强制 DeepSeek</b>——任何 OpenAI 兼容的服务都能用（通义 / Kimi / 火山 / 中转站…），也可以<b>先跳过</b>，装好之后在控制中心「环境配置 → 供应商配置 / 模型配置」里再配置。</div>
+    <label>API Key（DeepSeek 在 platform.deepseek.com 获取；其他服务商填其提供的 Key）</label>
     <input id="key-input" type="password" placeholder="sk-..." autocomplete="off">
     <div class="row">
-      <div class="msg info grow" id="key-msg">填写后保存</div>
+      <div class="msg info grow" id="key-msg">填写后保存，或点右侧“先跳过”</div>
+      <button class="btn-ghost" id="key-skip">先跳过，稍后在看板配置</button>
       <button class="btn-primary" id="key-save">保存</button>
     </div>
   </div>
@@ -126,8 +127,8 @@ button { padding:9px 20px; border:0; border-radius:9px; font-size:13px; cursor:p
   <!-- 完成 -->
   <div class="card hidden" data-card="done">
     <h2>🎉 全部就绪</h2>
-    <div class="desc">G4W 已配置完成，现在进入控制中心。</div>
-    <div class="row"><button class="btn-primary" id="done-open">进入控制中心</button></div>
+    <div class="desc">G4W 已配置完成，正在自动进入控制中心……（若没有自动切换，点下面的按钮）</div>
+    <div class="row"><button class="btn-primary" id="done-open">立即进入控制中心</button></div>
     <div class="msg info" id="done-msg"></div>
   </div>
 </div>
@@ -287,7 +288,7 @@ async function pollLogin() {
       msg($('login-msg'), '登录成功 ✓', 'ok');
       $('qr-box').innerHTML = '<div class="qr-tip">已登录</div>';
       setStep('login', 'done');
-      setTimeout(() => showCard('done'), 600);
+      setTimeout(() => showDone(), 600);
       return;
     }
     if (r.svg) {
@@ -303,32 +304,64 @@ async function pollLogin() {
   } catch (e) { /* 单次轮询失败忽略，下一轮继续 */ }
 }
 
-// 完成（v3.0.3：先停掉向导页所有定时器再请求看板；后端端口等待已挪到壳的后台线程，
-// 所以这里不会因为等后端而冻结界面）
-$('done-open').addEventListener('click', async () => {
+// 完成：自动进入控制中心（v3.1.2 起），按钮保留作为手动兜底
+let autoOpenStarted = false;
+function openDashboard(manual) {
   const btn = $('done-open');
+  if (autoOpenStarted && !manual) return;
+  autoOpenStarted = true;
   if (prepareTimer) { clearInterval(prepareTimer); prepareTimer = null; }
   if (loginTimer) { clearInterval(loginTimer); loginTimer = null; }
   if (waitingTimer) { clearTimeout(waitingTimer); waitingTimer = null; }
-  btn.disabled = true;
-  msg($('done-msg'), '正在启动看板后端…（首次启动约 5~20 秒，窗口会自动切换）', 'info');
-  try {
-    const r = await apiCallT('open_dashboard', 15000);
+  if (btn) btn.disabled = true;
+  msg($('done-msg'), '正在启动看板后端…（首次启动约 5~20 秒，窗口会自动切换；若长时间没反应，点上面的按钮重试）', 'info');
+  apiCallT('open_dashboard', 15000).then((r) => {
     if (!r || !r.ok) {
       msg($('done-msg'), (r && r.error) || '启动失败：请查看 runtime\\shell.log', 'err');
-      btn.disabled = false;
+      if (btn) btn.disabled = false;
+      autoOpenStarted = false;
+    }
+  }).catch((e) => {
+    msg($('done-msg'), String(e), 'err');
+    if (btn) btn.disabled = false;
+    autoOpenStarted = false;
+  });
+}
+function showDone() {
+  showCard('done');
+  const btn = $('done-open');
+  if (btn) btn.disabled = false;
+  autoOpenStarted = false;
+  setTimeout(() => openDashboard(false), 1200);   // 自动进入（失败后按钮仍可点）
+}
+
+// ② 先跳过填 Key：桌面向导页是 file:// 加载的，相对 fetch 不可用，所以走桥（skip_key）
+async function keySkip() {
+  const btn = $('key-skip');
+  if (btn) btn.disabled = true;
+  msg($('key-msg'), '正在跳过…', 'info');
+  try {
+    const r = await apiCall('skip_key');
+    if (r && r.ok) {
+      msg($('key-msg'), '已跳过：之后在控制中心「环境配置 → 供应商配置 / 模型配置」里配置即可 ✓', 'ok');
+      setStep('key', 'done');
+      setTimeout(() => showCard('env'), 700);
+    } else {
+      msg($('key-msg'), (r && r.error) || '跳过失败', 'err');
     }
   } catch (e) {
-    msg($('done-msg'), String(e), 'err');
-    btn.disabled = false;
+    msg($('key-msg'), String(e), 'err');
   }
-});
+  if (btn) btn.disabled = false;
+}
 
 // 事件绑定
 $('prepare-start').addEventListener('click', prepareStart);
 $('key-save').addEventListener('click', keySave);
+$('key-skip').addEventListener('click', keySkip);
 $('env-save').addEventListener('click', envSave);
 $('login-refresh').addEventListener('click', loginRefresh);
+$('done-open').addEventListener('click', () => openDashboard(true));
 
 // ===== 桥接等待 + 自检（v3.0.1 修复）=====
 // 背景：PyInstaller 打包后 pywebview 的 JS 桥接是**异步注入**的。旧版在脚本末尾
@@ -349,7 +382,7 @@ function bridgeReady() {
 }
 // v3.0.3：桥接就绪前禁用所有操作按钮 —— 避免用户在 pywebview 仍在注入/加载时点击，
 // 触发 js_api（在 WebView2 的 UI 线程执行）与注入争抢而卡死界面。
-const WIZARD_BUTTONS = ['prepare-start', 'key-save', 'env-save', 'login-refresh', 'done-open'];
+const WIZARD_BUTTONS = ['prepare-start', 'key-save', 'key-skip', 'env-save', 'login-refresh', 'done-open'];
 function setWizardInteractive(on) {
   WIZARD_BUTTONS.forEach((id) => { const el = $(id); if (el) el.disabled = !on; });
 }
@@ -404,10 +437,16 @@ async function checkAll() {
     const s = await apiCallT('check', 15000);
     hideErr(); checkTries = 0;
     if (s.prepare.ok) setStep('prepare', 'done');
-    if (s.key.ok) setStep('key', 'done');
+    if (s.key.ok) {
+    setStep('key', 'done');
+    if (s.key.skipped) {
+      const el = document.querySelector('.step[data-step="key"]');
+      if (el) el.innerHTML = '<b>② API Key</b>已跳过（待在看板配置）';
+    }
+  }
     if (s.env.ok) setStep('env', 'done');
     if (s.login.ok) { setStep('login', 'done'); }
-    if (s.all_ok) { showCard('done'); return; }
+    if (s.all_ok) { showDone(); return; }
     // 跳到第一个未完成步骤
     if (!s.prepare.ok) showCard('prepare');
     else if (!s.key.ok) showCard('key');

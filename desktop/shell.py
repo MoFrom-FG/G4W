@@ -248,6 +248,16 @@ def wizard_status() -> dict:
     accounts_dir = os.path.join(G4W_STATE_DIR, "accounts")
     prepare_ok = not force and os.path.isfile(venv_py)
     key_ok = not force and os.path.isfile(mykey)
+    # 向导允许“先跳过填 Key”：文件按模板建好（空密钥）+ 标记文件存在 → 步骤② 显示「已跳过」
+    key_skipped = False
+    if not force and key_ok:
+        marker = os.path.join(G4W_STATE_DIR, ".model-key-skipped")
+        if os.path.isfile(marker):
+            try:
+                with open(mykey, "r", encoding="utf-8", errors="replace") as fh:
+                    key_skipped = "apikey': ''" in fh.read()
+            except OSError:
+                key_skipped = False
     env_ok = False
     env_preset = {}
     if not force and os.path.isfile(env_file):
@@ -265,7 +275,7 @@ def wizard_status() -> dict:
         f.endswith(".json") for f in os.listdir(accounts_dir))
     return {
         "prepare": {"ok": prepare_ok},
-        "key": {"ok": key_ok},
+        "key": {"ok": key_ok, "skipped": bool(key_skipped)},
         "env": {"ok": env_ok, "preset": env_preset},
         "login": {"ok": login_ok},
         "all_ok": prepare_ok and key_ok and env_ok and login_ok,
@@ -378,6 +388,27 @@ class WizardApi:
         r = self._call_initializer("configure_ga_key",
                                    {"api_key": api_key, "replace_existing": True})
         _log(f"api save_key -> ok={r.get('ok')} err={str(r.get('error'))[:120] if not r.get('ok') else ''}")
+        return r
+
+    def skip_key(self) -> dict:
+        """向导里“先跳过填 API Key”：按包内模板建空密钥 mykey.py + 留标记。
+
+        之后在控制中心「环境配置 → 供应商配置 / 模型配置」里配置任意 OpenAI 兼容模型即可
+        （不强制 DeepSeek）。复用 G4W.cli.initializer.ensure_ga_key_template，避免两处实现分叉。
+        """
+        r = self._call_initializer("ensure_ga_key_template", {})
+        if not r.get("ok"):
+            _log(f"api skip_key -> 建模板失败 {str(r.get('error'))[:120]}")
+            return r
+        try:
+            os.makedirs(G4W_STATE_DIR, exist_ok=True)
+            with open(os.path.join(G4W_STATE_DIR, ".model-key-skipped"), "w", encoding="utf-8") as fh:
+                fh.write("skipped by wizard\n")
+        except OSError as exc:
+            _log(f"api skip_key -> 写标记失败 {exc}")
+        r["skipped"] = True
+        r["message"] = "已跳过 API Key；之后可在控制中心「环境配置 → 供应商配置 / 模型配置」里配置任意 OpenAI 兼容模型。"
+        _log(f"api skip_key -> created={r.get('created')}")
         return r
 
     # ---- ③ 环境配置 ----

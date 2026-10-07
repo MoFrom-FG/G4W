@@ -282,7 +282,7 @@ async function pollLogin() {
       msg($('login-msg'), '登录成功 ✓', 'ok');
       $('qr-box').innerHTML = '<div class="qr-tip">已登录</div>';
       setStep('login', 'done');
-      setTimeout(() => showCard('done'), 600);
+      setTimeout(() => showDone(), 600);
       return;
     }
     if (r.svg) {
@@ -299,6 +299,15 @@ async function pollLogin() {
 }
 
 // 完成
+// 完成：自动进入控制中心（v3.1.2 起，与桌面向导页一致），按钮保留作手动兜底
+function showDone() {
+  showCard('done');
+  const btn = $('done-open');
+  if (btn) btn.disabled = false;
+  setTimeout(() => {
+    try { Promise.resolve(apiCall('open_dashboard')).catch(() => {}); } catch (e) { /* 忽略 */ }
+  }, 1200);
+}
 $('done-open').addEventListener('click', async () => { try { await apiCall('open_dashboard'); } catch (e) {} });
 
 // ② API Key —— 先跳过：走同源 HTTP 接口（不依赖打包进 exe 的桥，免重打包）
@@ -359,7 +368,7 @@ async function checkAll() {
     if (s.key.ok) setStep('key', 'done');
     if (s.env.ok) setStep('env', 'done');
     if (s.login.ok) { setStep('login', 'done'); }
-    if (s.all_ok) { showCard('done'); return; }
+    if (s.all_ok) { showDone(); return; }
     // 跳到第一个未完成步骤
     if (!s.prepare.ok) showCard('prepare');
     else if (!s.key.ok) showCard('key');

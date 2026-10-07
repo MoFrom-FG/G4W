@@ -6,9 +6,9 @@ G4W（Generic Agent for WeChat）运行在 Windows 电脑上，通过微信提�
 
 当前发布底座：[GenericAgent Desktop Portable 1.8](https://github.com/lsdefine/GenericAgent/releases#release-desktop-portable-v0.1.8)。
 
-当前版本：**3.1.1**（2026-10）· [📦 下载 Windows 便携包](https://github.com/MoFrom-FG/G4W/releases/latest) · [各版本更新说明](https://github.com/MoFrom-FG/G4W/releases)
+当前版本：**3.1.2**（2026-10）· [📦 下载 Windows 便携包](https://github.com/MoFrom-FG/G4W/releases/latest) · [各版本更新说明](https://github.com/MoFrom-FG/G4W/releases)
 
-3.1.1 主要更新：**人设预设编辑页**、**供应商 / 模型可视化配置**（任意 OpenAI 兼容接口，不强制 DeepSeek）、**时间轴站点主题切换**，以及从首次向导到一键更新的整条链路加固。
+3.1.x 主要更新：**人设预设编辑页**、**供应商 / 模型可视化配置**（任意 OpenAI 兼容接口，不强制 DeepSeek）、**时间轴站点主题切换**、首次向导**完成后自动进入看板**且 API Key 步骤**可跳过**，以及从向导到一键更新的整条链路加固。
 
 WeChat功能逻辑参考：[Cyberboss](https://github.com/WenXiaoWendy/cyberboss/tree/main)。
 
@@ -214,7 +214,7 @@ G4W\
 3. **③ 环境配置** — 用户名、称呼、机器人名字、默认模型
 4. **④ 扫码登录** — 二维码直接在向导内显示，微信扫码即完成
 
-全部完成后自动进入控制中心看板。之后每次双击 `G4W.exe` 直接打开看板（托盘驻留、免重复登录）。
+全部完成后**自动进入控制中心看板**（首次启动后端约 5~20 秒，向导页会显示进度；若没自动切换也可以点卡片上的按钮）。之后每次双击 `G4W.exe` 直接打开看板（托盘驻留、免重复登录）。
 
 **手动方式（替代向导）**：也可以按 `tools\` 目录脚本编号依次运行初始化（`1_prepare_G4W_ga.bat` → `2_key_for_ga.bat` → `3_env_for_G4W.bat` → `4_login_G4W_ga.bat` → `start_G4W_ga.bat`）。
 
