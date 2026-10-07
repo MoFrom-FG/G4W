@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..core.storage import JsonStore, safe_segment
+from ..core.platform_adapt import no_window_kwargs
 
 
 INLINE_COMPLETION_RESULT_CHARS = 4000
@@ -410,8 +411,7 @@ class WorkerManager:
             "G4W_VECTOR_INDEX_DIR": str(vector_index_dir.resolve()),
         }
         kwargs = dict(cwd=str(main_dir), env=env)
-        if os.name == "nt":
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        kwargs.update(no_window_kwargs())
         process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
         with self.lock:
             self.processes[worker_id] = process

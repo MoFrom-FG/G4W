@@ -1,5 +1,6 @@
 import json
 import hashlib
+import os
 import re
 import threading
 import time
@@ -28,9 +29,22 @@ _embed_start_lock = threading.Lock()
 # to the same GA account before re-login). Ownership is judged by userid +
 # these aliases, never by exact path matching alone — the user's history spans
 # multiple sender ids and must stay retrievable after account migration.
-_LEGACY_SENDER_SEGMENTS = (
-    "o9cq80-zbqm_uexc5ituhqlyfi04_im.wechat",  # 旧微信账号（已迁移到 o9cq8050x...）
-)
+#
+# 注意：源码/发布物里**不写死任何账号**（公开仓库不能出现个人微信 ID）。
+# 需要兼容旧账号时，在本机 runtime\G4W-main\.env 里填（逗号分隔）：
+#   G4W_LEGACY_SENDER_SEGMENTS=<旧 sender 段>[,<更多>]
+def _legacy_sender_segments() -> tuple[str, ...]:
+    raw = str(os.environ.get("G4W_LEGACY_SENDER_SEGMENTS", "") or "")
+    if not raw:
+        env_file = Path(__file__).resolve().parents[2] / ".env"
+        try:
+            for line in env_file.read_text(encoding="utf-8-sig", errors="ignore").splitlines():
+                if line.strip().startswith("G4W_LEGACY_SENDER_SEGMENTS="):
+                    raw = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    break
+        except OSError:
+            raw = ""
+    return tuple(part.strip().lower() for part in raw.split(",") if part.strip())
 
 
 def _sender_segment(sender_id: str) -> str:
@@ -43,7 +57,7 @@ def _belongs_to_user(path_or_id: str, sender_id: str) -> bool:
     seg = _sender_segment(sender_id)
     if seg and seg in pl:
         return True
-    return any(alias in pl for alias in _LEGACY_SENDER_SEGMENTS)
+    return any(alias in pl for alias in _legacy_sender_segments())
 
 
 def _maybe_start_embed() -> bool:

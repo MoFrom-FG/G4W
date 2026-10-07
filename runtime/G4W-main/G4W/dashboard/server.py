@@ -26,8 +26,11 @@ from ..core.storage import JsonStore, safe_segment
 from ..knowledge.ingest import extract_text, validate_extracted_text
 from ..memory.checkin import CheckinService
 from ..memory.instructions import render_instruction_template, update_env_file
+from ..memory.persona_store import BACKUP_KEEP, MAX_CHARS, PERSONA_VARIABLES, PersonaError, PersonaStore
 from ..memory.vector.vector_config import load_config as load_vector_config
 from ..memory.vector.vector_config import set_vector_enabled
+from ..core.platform_adapt import detached_kwargs, kill_tree, pid_alive, pids_listening_on, portable_python, service_launch_kwargs, service_python, venv_python, venv_site_packages
+from . import setup_wizard
 
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -78,26 +81,7 @@ def _write_json(path: Path, value) -> None:
 
 
 def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    if os.name == "nt":
-        import ctypes
-        from ctypes import wintypes
-
-        handle = ctypes.WinDLL("kernel32", use_last_error=True).OpenProcess(0x1000, False, pid)
-        if not handle:
-            return False
-        try:
-            code = wintypes.DWORD()
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259
-        finally:
-            ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(handle)
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+    return pid_alive(pid)
 
 
 def _short_time(value) -> str:
@@ -437,8 +421,12 @@ class DashboardState:
         for conversation in config.conversations_dir.iterdir():
             if not conversation.is_dir():
                 continue
-            if conversation.name not in names:
-                continue
+            # v3.0.4: 不再要求该对象出现在 profiles.json 里。
+            # 旧逻辑是「profiles.json 命中 ∩ 有 history_insight 产物」，而 profiles.json
+            # 只在看板里手动命名、或在微信里发身份更新命令时才会写入 —— 于是用户跑完
+            # /l4compress（active_knowledge.json / memory_brief.md 都已生成），记忆页
+            # 依旧显示「暂无记忆账号」。现在只要「有 L4 产物」就列出；没有产物的非会话
+            # 目录（env-audit-local 之类）仍会被下面的判断滤掉。
             insight = conversation / "summaries" / "history_insight"
             active = insight / "active_knowledge.json"
             brief = insight / "memory_brief.md"
@@ -456,10 +444,14 @@ class DashboardState:
             backups = list(backups_root.glob("*/history_insight/active_knowledge.json")) if backups_root.is_dir() else []
             profile = names.get(conversation.name, {})
             brief_text = _read_text(brief).strip()
+            # 显示名兜底：profiles.json 没记录时用 .env 里的身份（单人使用语义正确），
+            # 再退到会话目录名，避免页面只显示一串 sender id。
+            display_name = str(profile.get("userName") or config.user_name or conversation.name)
+            display_identity = str(profile.get("userIdentity") or config.user_identity or "")
             items.append({
                 "id": conversation.name,
-                "name": str(profile.get("userName") or profile.get("userIdentity") or conversation.name),
-                "identity": str(profile.get("userIdentity") or ""),
+                "name": display_name,
+                "identity": display_identity,
                 "updatedAt": _short_date(max(_timestamp(active), _timestamp(brief))),
                 "updatedTimestamp": max(_timestamp(active), _timestamp(brief)),
                 "brief": re.sub(r"\s+", " ", brief_text)[:220],
@@ -469,6 +461,265 @@ class DashboardState:
             })
         items.sort(key=lambda item: item["updatedTimestamp"], reverse=True)
         return items
+
+    # ---------- G4W 程序更新（环境配置页 →「G4W 程序更新」卡片）----------
+    # 更新源与 ga-admin 同构：GitHub Releases（api.github.com/repos/<owner>/<repo>/releases/latest），
+    # 直连失败时回落到 gh-proxy 镜像；只做「检查 + 展示」，落盘/替换仍走经过验证的
+    # apply-update 流程（停服 → 备份 → 原子替换 → journal → 重启）。
+    UPDATE_REPO = "MoFrom-FG/G4W"
+
+    def update_status(self) -> dict:
+        config = self._fresh_config()
+        root = Path(config.workspace_root)
+        info = {
+            "current": "",
+            "appliedAt": "",
+            "sourceFile": "",
+            "root": str(root),
+            "channel": f"https://github.com/{self.UPDATE_REPO}/releases",
+            "latestReleasePage": f"https://github.com/{self.UPDATE_REPO}/releases/latest",
+        }
+        for candidate in (root / "runtime" / "G4W-version.json", root / "G4W_RELEASE_MANIFEST.json"):
+            data = _read_json(candidate, {})
+            if not isinstance(data, dict):
+                continue
+            version = str(data.get("version") or data.get("release") or "").strip()
+            if not version:
+                continue
+            info["current"] = version
+            info["appliedAt"] = str(data.get("applied_at") or data.get("built_at") or "")
+            try:
+                info["sourceFile"] = str(candidate.relative_to(root))
+            except ValueError:
+                info["sourceFile"] = str(candidate)
+            break
+        return info
+
+    # ---- 一键更新：下载补丁 → 校验 → 解压 → 交给经过验证的补丁脚本接管 ----
+    _UPDATE_STATE: dict = {}
+
+    @staticmethod
+    def _set_stage(stage: str, progress: int, message: str, **extra) -> None:
+        st = DashboardState._UPDATE_STATE
+        st.update({"stage": stage, "progress": int(progress), "message": message, **extra})
+        st["log"] = (list(st.get("log") or []) + [f"[{time.strftime('%H:%M:%S')}] {stage} {progress}% {message}"])[-40:]
+
+    @staticmethod
+    def _download_asset(url: str, dst: Path, mirror: bool, lo: int, hi: int) -> bool:
+        import urllib.request
+        st = DashboardState._UPDATE_STATE
+        urls = [("https://gh-proxy.com/" + url) if mirror else url]
+        if mirror:
+            urls.append(url)
+        for u in urls:
+            try:
+                req = urllib.request.Request(u, headers={"User-Agent": "G4W-dashboard"})
+                with urllib.request.urlopen(req, timeout=30) as resp, open(dst, "wb") as fh:
+                    total = int(resp.headers.get("Content-Length") or 0)
+                    got = 0
+                    while True:
+                        chunk = resp.read(1 << 18)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                        got += len(chunk)
+                        if total:
+                            pct = lo + int((hi - lo) * got / total)
+                            st.update({"progress": max(lo, min(hi, pct)),
+                                       "message": f"下载中 {got // 1024} KB / {total // 1024} KB"})
+                return True
+            except Exception as exc:  # noqa: BLE001
+                st["log"] = (list(st.get("log") or []) + [f"download failed {u}: {type(exc).__name__}: {exc}"])[-40:]
+        return False
+
+    def _update_worker(self, root: Path, asset: dict, sha_asset, mirror: bool, pid: int) -> None:
+        import hashlib
+        import os as _os
+        import shutil as _sh
+        import subprocess
+        import zipfile
+
+        try:
+            name = str(asset.get("name") or "patch.zip")
+            work = root / ".g4w-update"
+            dl = work / "downloads"
+            dl.mkdir(parents=True, exist_ok=True)
+            dst = dl / name
+            if not self._download_asset(str(asset.get("url") or ""), dst, mirror, 3, 55):
+                self._set_stage("failed", 0, "下载失败（检查网络或镜像设置）")
+                return
+            self._set_stage("verify", 60, "校验 sha256…")
+            if sha_asset and sha_asset.get("url"):
+                sha_path = dl / (name + ".sha256")
+                if self._download_asset(str(sha_asset["url"]), sha_path, mirror, 60, 63):
+                    want = sha_path.read_text(encoding="utf-8", errors="replace").split()[0].strip().upper()
+                    h = hashlib.sha256()
+                    with open(dst, "rb") as fh:
+                        for c in iter(lambda: fh.read(1 << 20), b""):
+                            h.update(c)
+                    got = h.hexdigest().upper()
+                    if got != want:
+                        self._set_stage("failed", 0, "sha256 校验不通过，已放弃更新")
+                        return
+                    DashboardState._UPDATE_STATE["sha256"] = got
+            self._set_stage("extract", 68, "解压补丁…")
+            staged = work / "staged" / str(DashboardState._UPDATE_STATE.get("version") or "new")
+            _sh.rmtree(staged, ignore_errors=True)
+            staged.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(dst) as zf:
+                zf.extractall(staged)
+            ps1 = None
+            for base, _dirs, names in _os.walk(staged):
+                if "apply-update.ps1" in names and "update-manifest.json" in names:
+                    ps1 = Path(base) / "apply-update.ps1"
+                    break
+            if ps1 is None:
+                self._set_stage("failed", 0, "补丁包结构异常（缺少 apply-update.ps1 / update-manifest.json）")
+                return
+            self._set_stage("handoff", 80, "停服并应用更新…")
+            cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps1),
+                   "-Root", str(root), "-AutoStart", "-ForceStop",
+                   "-WaitPid", str(pid), "-WaitSeconds", "60"]
+            # 注意：这里**不用** DETACHED_PROCESS。实测（本机 + 部分沙箱/安全软件）
+            # DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP 的子进程根本不会执行，
+            # 而 CREATE_NO_WINDOW 正常；后者同样没有控制台窗口，且不会被安全软件拦。
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            helper_log = work / "helper-console.log"
+            handle = open(helper_log, "w", encoding="utf-8", errors="replace")
+            proc = subprocess.Popen(cmd, cwd=str(staged), creationflags=flags,
+                                    stdout=handle, stderr=handle, stdin=subprocess.DEVNULL)
+            DashboardState._UPDATE_STATE["_helper_log_handle"] = handle   # 持有句柄，避免被 GC 关闭
+            DashboardState._UPDATE_STATE["log"] = (
+                list(DashboardState._UPDATE_STATE.get("log") or [])
+                + [f"helper: {ps1}", f"helper pid={proc.pid}", f"helper args: -AutoStart -ForceStop -WaitPid {pid}"]
+            )[-40:]
+            # 这里**故意不退出**：helper 会以 -ForceStop 结束本进程（以及主服务/监控）。
+            # 这样就不依赖“子进程在父进程退出后仍然存活”——某些环境（带 Job Object 的
+            # 沙箱/调度器）会在父进程退出时清掉整棵进程树，detached 也没用。
+            self._set_stage("handoff", 88, "已交给更新脚本，本窗口即将被重启…")
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._set_stage("failed", 0, f"{type(exc).__name__}: {exc}")
+
+    def update_progress(self) -> dict:
+        return dict(DashboardState._UPDATE_STATE)
+
+    def update_apply(self, mirror: bool = True) -> dict:
+        import os as _os
+        st = DashboardState._UPDATE_STATE
+        if st.get("stage") in ("download", "verify", "extract", "handoff"):
+            return {"ok": False, "error": "更新已在进行中", "state": dict(st)}
+        config = self._fresh_config()
+        root = Path(config.workspace_root)
+        info = self.update_check(mirror=mirror)
+        if not info.get("ok"):
+            return {"ok": False, "error": info.get("error") or "无法检查最新版本", "hint": info.get("hint")}
+        if not info.get("hasUpdate"):
+            return {"ok": False, "error": f"当前已是最新版本（{info.get('current') or info.get('latest')}）"}
+        current = str(info.get("current") or "").lstrip("vV") or "unknown"
+        latest = str(info.get("latest") or "").lstrip("vV")
+        want = f"g4w-patch-{current}-to-{latest}.zip".lower()
+        asset = None
+        sha_asset = None
+        for item in info.get("assets") or []:
+            nm = str(item.get("name") or "").lower()
+            if nm == want:
+                asset = item
+            elif nm == want + ".sha256":
+                sha_asset = item
+        if asset is None:
+            names = [str(i.get("name") or "") for i in (info.get("assets") or [])]
+            return {
+                "ok": False,
+                "error": f"最新版本没有提供 {want} 增量补丁，无法一键更新",
+                "hint": "可点「打开发布页」下载整包手动覆盖；发布页现有附件：" + ("、".join(names[:6]) or "（无）"),
+            }
+        st.clear()
+        st.update({
+            "stage": "download", "progress": 3, "message": "准备下载补丁…",
+            "version": str(info.get("latest") or ""), "current": str(info.get("current") or ""),
+            "asset": str(asset.get("name") or ""), "error": "",
+            "startedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "log": [f"root={root}", f"asset={asset.get('name')} ({asset.get('size')} bytes)"],
+        })
+        threading.Thread(target=self._update_worker,
+                         args=(root, asset, sha_asset, mirror, _os.getpid()), daemon=True).start()
+        return {"ok": True, "started": True, "version": info.get("latest"), "asset": asset.get("name")}
+
+    @staticmethod
+    def _version_key(value: str) -> tuple:
+        """把 'v3.0.10' 这类版本号转成可比较的元组（只取数字段）。"""
+        parts = []
+        for chunk in str(value or "").lstrip("vV").split("."):
+            digits = "".join(ch for ch in chunk if ch.isdigit())
+            parts.append(int(digits) if digits else 0)
+        return tuple(parts) if parts else (0,)
+
+    def update_check(self, mirror: bool = True) -> dict:
+        """查询 GitHub Releases 最新版本。
+
+        mirror=True（环境配置页「国内镜像加速」打开，默认）先走 gh-proxy 镜像再直连；
+        mirror=False 只直连（适合有代理或境外网络）。
+        """
+        import json as _json
+        import platform
+        import urllib.request
+
+        api = f"https://api.github.com/repos/{self.UPDATE_REPO}/releases/latest"
+        mirrored = "https://gh-proxy.com/" + api
+        urls = [mirrored, api] if mirror else [api]
+        payload = None
+        last_error = ""
+        used_url = ""
+        for url in urls:
+            try:
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": "G4W-dashboard",
+                    "Accept": "application/vnd.github+json",
+                })
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    payload = _json.loads(resp.read().decode("utf-8", "replace"))
+                used_url = url
+                last_error = ""
+                break
+            except Exception as exc:  # noqa: BLE001 - 网络错误种类多，统一回报
+                last_error = f"{type(exc).__name__}: {exc}"
+        if payload is None:
+            return {
+                "ok": False,
+                "error": last_error or "无法连接 GitHub Releases",
+                "tried": urls,
+                "mirror": mirror,
+                "hint": "国内网络请打开「国内镜像加速」，或为 G4W 进程设置 HTTPS_PROXY（例如 http://127.0.0.1:7897）。",
+                "current": self.update_status().get("current", ""),
+            }
+        tag = str(payload.get("tag_name") or payload.get("name") or "").strip()
+        assets = []
+        for item in payload.get("assets") or []:
+            if isinstance(item, dict):
+                assets.append({
+                    "name": str(item.get("name") or ""),
+                    "size": int(item.get("size") or 0),
+                    "url": str(item.get("browser_download_url") or ""),
+                })
+        current = str(self.update_status().get("current") or "")
+        latest_key = self._version_key(tag)
+        current_key = self._version_key(current)
+        return {
+            "ok": True,
+            "latest": tag,
+            "current": current,
+            "hasUpdate": bool(tag) and latest_key > current_key,
+            "ahead": bool(current) and current_key > latest_key,
+            "publishedAt": str(payload.get("published_at") or ""),
+            "notesUrl": str(payload.get("html_url") or f"https://github.com/{self.UPDATE_REPO}/releases"),
+            "body": str(payload.get("body") or "")[:1500],
+            "assets": assets,
+            "platform": f"{platform.system()} {platform.release()}",
+            "mirror": mirror,
+            "tried": urls,
+            "usedUrl": used_url,
+        }
 
     @staticmethod
     def _worker_summary(item: dict, config: Config) -> dict:
@@ -752,12 +1003,170 @@ class DashboardState:
             "dates": dates,
             "latestDate": dates[-1] if dates else "",
             "facts": facts,
+            "theme": str(getattr(config, "timeline_theme", "default") or "default").lower(),
             "metrics": {
                 "days": len(dates),
                 "events": event_count,
                 "updatedAt": _short_date(_timestamp(path)),
             },
         }
+
+    def timeline_theme_set(self, theme: str) -> dict:
+        """切换独立时间线站点的主题（default / neko）：写 .env 并立即重建站点。
+
+        站点是静态产物：主题决定用哪份资产包（timeline-dashboard-assets-<theme>.zip），
+        build() 时会按资产包哈希重新释放 assets/dashboard.{css,js}。看板/主服务都不需要重启
+        （publisher 在 build 时读 .env），已经跑着的时间线服务也会直接提供新文件。
+        """
+        value = str(theme or "").strip().lower()
+        if value not in ("default", "neko"):
+            return {"ok": False, "error": "主题只能是 default 或 neko"}
+        config = self._fresh_config()
+        update_env_file(config.env_file, {"G4W_TIMELINE_UI_THEME": value})
+        from ..core.records import TimelineStore
+        from ..features.timeline_publish import TimelinePublisher
+
+        timeline_dir = config.timeline_dir
+        store = TimelineStore(
+            timeline_dir / "timeline-facts.json",
+            config.state_dir / "legacy-import" / "timeline" / "timeline-facts.json",
+        )
+        publisher = TimelinePublisher(store, timeline_dir, locale=config.timeline_locale, theme=value)
+        info = publisher.build()
+        return {
+            "ok": True,
+            "theme": value,
+            "siteDir": info.get("siteDir"),
+            "indexFile": info.get("indexFile"),
+            "url": "http://127.0.0.1:18181/",
+            "assets": info.get("assets"),
+            "envFile": str(config.env_file),
+        }
+
+    # ---------- 人设预设（presets） ----------
+    def _persona_store(self, config: Config | None = None) -> PersonaStore:
+        store = PersonaStore(config or self._fresh_config())
+        store.seed_builtins()
+        return store
+
+    def persona(self) -> dict:
+        config = self._fresh_config()
+        store = self._persona_store(config)
+        presets = store.list_presets()
+        active_id = store.active_id()
+        return {
+            "presets": presets,
+            "activeId": active_id,
+            "activeRegistered": any(item["id"] == active_id for item in presets),
+            "variables": PERSONA_VARIABLES,
+            "runtimeFile": str(store.runtime_file),
+            "runtimeBytes": len(store.runtime_markdown().encode("utf-8")),
+            "presetsDir": str(store.presets_dir),
+            "backups": store.backups()[:20],
+            "maxChars": MAX_CHARS,
+            "backupKeep": BACKUP_KEEP,
+        }
+
+    def persona_save(self, payload: dict) -> dict:
+        store = self._persona_store()
+        preset_id = str(payload.get("id") or "").strip()
+        if not preset_id:
+            raise PersonaError("缺少预设 id")
+        sections = payload.get("sections")
+        if not isinstance(sections, list):
+            raise PersonaError("sections 必须是数组")
+        doc = store.save(preset_id, sections, name=str(payload.get("name") or ""))
+        return {
+            "ok": True,
+            "preset": {key: doc.get(key) for key in ("id", "name", "chars", "warnings", "runtimeUpdated")},
+            **self.persona(),
+        }
+
+    def persona_create(self, payload: dict) -> dict:
+        store = self._persona_store()
+        doc = store.create(str(payload.get("name") or "新人设"), source_id=str(payload.get("sourceId") or ""))
+        return {"ok": True, "createdId": doc.get("id"), **self.persona()}
+
+    def persona_rename(self, payload: dict) -> dict:
+        store = self._persona_store()
+        doc = store.rename(str(payload.get("id") or ""), str(payload.get("name") or ""))
+        return {"ok": True, "id": doc.get("id"), "name": doc.get("name"), **self.persona()}
+
+    def persona_delete(self, payload: dict) -> dict:
+        store = self._persona_store()
+        info = store.delete(str(payload.get("id") or ""))
+        return {"ok": True, **info, **self.persona()}
+
+    def persona_restore(self, payload: dict) -> dict:
+        store = self._persona_store()
+        doc = store.restore_builtin(str(payload.get("id") or ""))
+        return {"ok": True, "id": doc.get("id"), "name": doc.get("name"), **self.persona()}
+
+    def persona_import(self, payload: dict) -> dict:
+        store = self._persona_store()
+        doc = store.import_markdown(
+            str(payload.get("name") or "导入人设"),
+            str(payload.get("markdown") or ""),
+            preset_id=str(payload.get("id") or ""),
+        )
+        return {"ok": True, "id": doc.get("id"), "name": doc.get("name"),
+                "parseWarnings": doc.get("parseWarnings") or [], **self.persona()}
+
+    def persona_import_runtime(self, payload: dict) -> dict:
+        store = self._persona_store()
+        doc = store.import_runtime_as_preset(str(payload.get("name") or "当前人设"))
+        return {"ok": True, "id": doc.get("id"), "name": doc.get("name"), **self.persona()}
+
+    def persona_export(self, preset_id: str) -> dict:
+        return {"ok": True, **self._persona_store().export_markdown(preset_id)}
+
+    def _control_submit(self, action: str, payload: dict) -> str:
+        """只投递不等待（用于 reread 这类会跑模型轮次的慢动作）。"""
+        config = self._fresh_config()
+        pid = self._core_pid(config)
+        if not _pid_alive(pid):
+            raise RuntimeError("G4W 主进程未运行")
+        return DashboardControlMailbox(config.state_dir).submit(action, payload)
+
+    def persona_activate(self, preset_id: str) -> dict:
+        """注入（第一步）：激活预设（写运行时文件）并投递一次 reread，立刻返回。
+
+        第二步由前端轮询 /api/persona/inject-status —— reread 会跑一次真实模型轮次（可能几十秒），
+        不能让 HTTP 请求一直等（前端 fetchJson 有 10s 超时，等下去会变成
+        “signal is aborted without reason”）。
+        """
+        config = self._fresh_config()
+        store = self._persona_store(config)
+        info = store.activate(preset_id)
+        _, sender_id, _binding_entry = self._binding(config)
+        inject_id, note = "", ""
+        if not sender_id:
+            note = "已激活（当前没有微信会话，下一条消息生效）。"
+        else:
+            try:
+                inject_id = self._control_submit("reread", {"senderId": sender_id})
+                note = "已激活，正在让当前会话重读（其他会话下一条消息自动生效）…"
+            except Exception as error:  # 主服务没运行时降级：文件已写，下一条消息生效
+                note = f"已激活；注入未开始（{error}）。下一条消息即生效。"
+        return {"ok": True, **info, "injected": bool(inject_id), "injectId": inject_id,
+                "injectedDone": False, "senderId": sender_id, "reply": "", "note": note}
+
+    def persona_inject_status(self, inject_id: str) -> dict:
+        """注入（第二步）：轮询 reread 的结果。"""
+        request_id = str(inject_id or "").strip()
+        if not request_id:
+            raise PersonaError("缺少 injectId")
+        config = self._fresh_config()
+        result = DashboardControlMailbox(config.state_dir).wait(request_id, timeout=0.2)
+        if result is None:
+            return {"ok": True, "done": False, "injectId": request_id}
+        reply = str(result.get("reply") or "")
+        if result.get("ok"):
+            note = "已对当前会话注入；其他会话下一条消息自动生效。"
+        else:
+            note = f"注入未完成（{result.get('error') or '未知错误'}）。下一条消息仍会生效。"
+        return {"ok": True, "done": True, "injectId": request_id, "injectOk": bool(result.get("ok")),
+                "reply": reply, "note": note}
 
     def _diary_root(self, config: Config) -> tuple[Path, str]:
         _, sender_id, _ = self._binding(config)
@@ -1015,15 +1424,15 @@ class DashboardState:
         state = store["state"]
         services = state.setdefault("services", {})
         root = Path(config.workspace_root)
-        base_py = root / "runtime" / "python" / "python.exe"
-        venv_py = root / "runtime" / "app" / ".venv" / "Scripts" / "python.exe"
+        base_py = service_python(root)
+        venv_py = venv_python(root / "runtime" / "app" / ".venv")
         # 统一用 base python 直启：venv python 是 redirector（子进程新开控制台窗口），
         # CREATE_NO_WINDOW 加在 redirector 上不生效；依赖经 _env_for_service 的 PYTHONPATH 提供
         if not base_py.is_file():
             base_py = venv_py
         ga_home = root / "runtime" / "G4W-main"
         emb_root = root / "runtime" / "G4W-embedding"
-        emb_py = emb_root / ".venv" / "Scripts" / "python.exe"
+        emb_py = venv_python(emb_root / ".venv")
         builtin = {
             "main": {
                 "name": "G4W 主服务",
@@ -1057,9 +1466,13 @@ class DashboardState:
             },
             "timeline": {
                 "name": "时间线服务",
-                "desc": "独立时间线服务（18181 + 站点 18182）",
-                "command": [str(base_py), str(root / "runtime" / "G4W-data" / "timeline" / "start_timeline_serve.py")],
-                "cwd": str(root / "runtime" / "G4W-main"),
+                "desc": "独立时间线服务（127.0.0.1:18181，站点同端口）",
+                # 入口必须是随包发布的模块：以前指向 runtime\G4W-data\timeline\
+                # start_timeline_serve.py —— 那是某个安装里手工放的脚本（硬编码本机路径、
+                # 写死某个会话的 context、绑 0.0.0.0），而 G4W-data 不进发布包，用户点启动
+                # 必然失败。现在改为包内 G4W/features/timeline_serve.py（-m 方式启动）。
+                "command": [str(base_py), "-u", "-m", "G4W.features.timeline_serve"],
+                "cwd": str(ga_home),
                 "logs": [str(root / "runtime" / "G4W-data" / "timeline" / "serve-startup.log")],
                 "health": {"kind": "port", "value": "127.0.0.1:18181"},
                 "managed": True,
@@ -1180,9 +1593,7 @@ class DashboardState:
         env.setdefault("GA_APP_DIR", str(root / "runtime" / "app"))
         site_packages = []
         for venv in (root / "runtime" / "app" / ".venv", root / "runtime" / "G4W-embedding" / ".venv"):
-            sp = venv / "Lib" / "site-packages"
-            if sp.is_dir():
-                site_packages.append(str(sp))
+            site_packages.extend(str(path) for path in venv_site_packages(venv))
         # base python 直启时依赖来自各 venv 的 site-packages。
         # 注意：不能用 setdefault——bat 已设置 PYTHONPATH 时不会生效（实证 bug），
         # 必须把 venv site-packages 追加进现有值并去重。
@@ -1246,13 +1657,7 @@ class DashboardState:
             "stderr": subprocess.STDOUT,
             "shell": False,
         }
-        if os.name == "nt":
-            popen_kwargs["creationflags"] = (
-                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                | getattr(subprocess, "DETACHED_PROCESS", 0)
-                | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-            )
-            popen_kwargs["close_fds"] = False
+        popen_kwargs.update(service_launch_kwargs())
         try:
             proc = subprocess.Popen(cmd, **popen_kwargs)
         except Exception as exc:
@@ -1283,10 +1688,13 @@ class DashboardState:
                 try:
                     pid = int(pid_path.read_text(encoding="utf-8").strip())
                     if pid and self._pid_alive(pid):
-                        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                                       capture_output=True, timeout=15)
+                        kill_tree(pid)
                         stopped = True
-                        actions.append(f"taskkill pid {pid}（进程树）")
+                        actions.append(f"killed pid {pid}（进程树）")
+                        try:
+                            pid_path.unlink(missing_ok=True)
+                        except OSError:
+                            pass
                 except Exception:
                     pass
         # 2) port 监听者（校验命令行特征，防误杀）
@@ -1302,10 +1710,9 @@ class DashboardState:
                             blob = " ".join(proc.cmdline() or []).lower()
                             sid = service_id.lower()
                             if sid in blob or sid in str(proc.name() or "").lower():
-                                subprocess.run(["taskkill", "/PID", str(conn.pid), "/T", "/F"],
-                                               capture_output=True, timeout=15)
+                                kill_tree(conn.pid)
                                 stopped = True
-                                actions.append(f"taskkill pid {conn.pid}（端口 {port} 监听者）")
+                                actions.append(f"killed pid {conn.pid}（端口 {port} 监听者）")
                     except Exception:
                         continue
         # 3) cmdline 特征（monitor 等服务，无端口/pidfile）
@@ -1313,10 +1720,9 @@ class DashboardState:
             needle = str(health.get("value") or "").lower()
             for proc_id in self._cmdline_pids(needle):
                 try:
-                    subprocess.run(["taskkill", "/PID", str(proc_id), "/T", "/F"],
-                                   capture_output=True, timeout=15)
+                    kill_tree(proc_id)
                     stopped = True
-                    actions.append(f"taskkill pid {proc_id}（cmdline 特征 {needle}）")
+                    actions.append(f"killed pid {proc_id}（cmdline 特征 {needle}）")
                 except Exception:
                     continue
         return {"ok": True, "stopped": stopped, "id": service_id, "actions": actions}
@@ -1656,14 +2062,14 @@ class DashboardState:
         em = _embed_mirrors_module()
         g4w_root, emb_root, install_py = self._embedding_paths(config)
         log_path = g4w_root / "runtime" / "embedding-install.log"
-        python = g4w_root / "runtime" / "python" / "python.exe"
+        python = service_python(g4w_root)
         if not install_py.is_file() or not python.is_file():
             return {"ok": False, "error": "环境不完整：缺少 runtime\\python 或 install_embedding.py"}
         if self._cmdline_pids("install_embedding.py"):
             return {"ok": False, "error": "安装任务已在运行（服务与终端页可查看进度）"}
         env = self._env_for_service(config, {"command": [], "cwd": "", "logs": [], "health": {}})
         env.update(em.install_env(config.state_dir))
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
+        detach = detached_kwargs()
         try:
             out = open(log_path, "a", encoding="utf-8", errors="replace")
         except OSError:
@@ -1671,7 +2077,7 @@ class DashboardState:
         proc = subprocess.Popen(
             [str(python), "-u", str(install_py), "--yes", "--root", str(emb_root)],
             cwd=str(g4w_root / "runtime" / "G4W-main"),
-            env=env, creationflags=flags, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+            env=env, **detach, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
         )
         spec = {
             "name": "Embedding 安装任务",
@@ -2294,10 +2700,33 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "initialized": self.auth.is_initialized(),
                 })
                 return
+            if setup_wizard.handle_get(self, path):
+                return
+            skip_setup = "skip_setup" in query and self.client_address[0] in ("127.0.0.1", "::1")
+            if (not skip_setup) and setup_wizard.gate_active() and not path.startswith("/api/auth/"):
+                if path.startswith("/api/"):
+                    self._send_json({"ok": False, "error": "setup_required", "setup": setup_wizard.status_payload()}, 428)
+                else:
+                    self._send_bytes(setup_wizard.render_page(), "text/html; charset=utf-8")
+                return
             if path.startswith("/api/") and not self._require_auth():
                 return
             if path == "/api/dashboard":
                 self._send_json(self.dashboard.snapshot())
+                return
+            if path == "/api/update/status":
+                self._send_json(self.dashboard.update_status())
+                return
+            if path == "/api/update/check":
+                flag = str((query.get("mirror") or ["1"])[0]).strip().lower()
+                self._send_json(self.dashboard.update_check(mirror=flag not in ("0", "false", "off", "no")))
+                return
+            if path == "/api/update/apply":
+                flag = str((query.get("mirror") or ["1"])[0]).strip().lower()
+                self._send_json(self.dashboard.update_apply(mirror=flag not in ("0", "false", "off", "no")))
+                return
+            if path == "/api/update/progress":
+                self._send_json(self.dashboard.update_progress())
                 return
             if path == "/api/memory":
                 self._send_json(self.dashboard.memory_detail(str((query.get("id") or [""])[0])))
@@ -2400,6 +2829,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if path == "/api/prompt":
                 self._send_json(self.dashboard.prompt_detail())
                 return
+            if path == "/api/persona":
+                self._send_json(self.dashboard.persona())
+                return
+            if path == "/api/persona/export":
+                self._send_json(self.dashboard.persona_export(str((query.get("id") or [""])[0])))
+                return
+            if path == "/api/persona/inject-status":
+                self._send_json(self.dashboard.persona_inject_status(str((query.get("id") or [""])[0])))
+                return
             if path == "/api/settings":
                 self._send_json(self.dashboard.settings())
                 return
@@ -2428,6 +2866,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         try:
+            if setup_wizard.handle_post(self, path):
+                return
             if path == "/api/auth/setup":
                 payload = self._read_json_body()
                 token = self.auth.setup(
@@ -2498,13 +2938,36 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     pass
                 self._send_json({"ok": True})
                 return
-            if path not in {"/api/settings", "/api/model"}:
+            if path.startswith("/api/persona/"):
+                if not self._require_auth():
+                    return
+                payload = self._read_json_body()
+                action = path[len("/api/persona/"):]
+                handlers = {
+                    "save": lambda: self.dashboard.persona_save(payload),
+                    "create": lambda: self.dashboard.persona_create(payload),
+                    "rename": lambda: self.dashboard.persona_rename(payload),
+                    "delete": lambda: self.dashboard.persona_delete(payload),
+                    "restore": lambda: self.dashboard.persona_restore(payload),
+                    "import": lambda: self.dashboard.persona_import(payload),
+                    "import-runtime": lambda: self.dashboard.persona_import_runtime(payload),
+                    "activate": lambda: self.dashboard.persona_activate(str(payload.get("id") or "")),
+                }
+                handler = handlers.get(action)
+                if handler is None:
+                    self._send_json({"ok": False, "error": "Not found"}, 404)
+                    return
+                self._send_json(handler())
+                return
+            if path not in {"/api/settings", "/api/model", "/api/timeline/theme"}:
                 self._send_json({"ok": False, "error": "Not found"}, 404)
                 return
             if not self._require_auth():
                 return
             payload = self._read_json_body()
-            if path == "/api/model":
+            if path == "/api/timeline/theme":
+                self._send_json(self.dashboard.timeline_theme_set(payload.get("theme")))
+            elif path == "/api/model":
                 self._send_json(self.dashboard.switch_model(payload.get("target"), payload.get("value")))
             else:
                 self._send_json(self.dashboard.update_settings(payload))

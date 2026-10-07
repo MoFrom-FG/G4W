@@ -71,7 +71,7 @@ def _timeline(context: dict, action: str, arguments: dict) -> dict:
         timeline_dir / "timeline-facts.json",
         state_dir / "legacy-import" / "timeline" / "timeline-facts.json",
     )
-    publisher = TimelinePublisher(store, timeline_dir, locale=config.timeline_locale, theme=config.timeline_theme)
+    publisher = TimelinePublisher(store, timeline_dir, locale=config.timeline_locale)
     if action == "read":
         return store.read(arguments.get("date", ""))
     if action == "list":

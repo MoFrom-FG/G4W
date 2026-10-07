@@ -72,7 +72,7 @@ class G4WService:
         )
         self.timeline_publisher = TimelinePublisher(
             self.timeline, config.timeline_dir,
-            locale=config.timeline_locale, theme=config.timeline_theme,
+            locale=config.timeline_locale,   # theme 不固定：每次 build 读 .env，看板切换后即时生效
         )
         self.locations = LocationService(
             config.state_dir / "locations.json", self.events,
@@ -290,6 +290,24 @@ class G4WService:
                         "workerModel": self.workers.default_model,
                         "proModel": self.workers.pro_model,
                     }
+                elif action == "reread":
+                    # 看板「人设 → 注入」：对**当前在对话的那个会话**发一次等效的 /reread。
+                    # 其他会话不打扰 —— 人设是全局单文件，它们各自的下一条消息自然会用新内容。
+                    sender_id = str(payload.get("senderId") or "").strip()
+                    if not sender_id:
+                        raise ValueError("当前没有可用的微信会话")
+                    # reread 会真的跑一次模型请求（可能十几秒），放到后台线程里，
+                    # 避免阻塞主循环的 checkin / outbox / 事件处理。
+                    def _run_reread(target=sender_id, request=dict(request)):
+                        try:
+                            reply = self.controller.reread(target)
+                            outcome = {"ok": True, "senderId": target, "reply": str(reply or "")}
+                        except Exception as error:  # noqa: BLE001 - 结果要回传看板
+                            outcome = {"ok": False, "senderId": target, "error": str(error)}
+                        self.dashboard_control.complete(request, outcome)
+                    threading.Thread(target=_run_reread, daemon=True, name="G4W-dashboard-reread").start()
+                    processed += 1
+                    continue
                 else:
                     raise ValueError(f"未知看板控制操作：{action}")
             except Exception as error:

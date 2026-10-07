@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..core.storage import JsonStore
+from ..core.platform_adapt import no_window_kwargs, wrap_script_command
 
 
 INBOX_PROJECT_ID = "inbox1028650430"
@@ -25,10 +26,8 @@ class DidaCli:
         if not self.command:
             raise RuntimeError("DIDA CLI is not configured; set G4W_DIDA_COMMAND first")
         executable = shutil.which(self.command) or self.command
-        command = [executable, *args]
-        if os.name == "nt" and str(executable).lower().endswith((".cmd", ".bat")):
-            command = [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", executable, *args]
-        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=self.timeout_seconds, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        command = wrap_script_command(executable, args)
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=self.timeout_seconds, **no_window_kwargs())
         if result.returncode != 0:
             raise RuntimeError(f"dida command failed: {(result.stderr or result.stdout).strip()[:500]}")
         if not expect_json:

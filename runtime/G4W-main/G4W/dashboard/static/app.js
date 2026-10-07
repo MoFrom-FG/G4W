@@ -349,7 +349,7 @@ let currentDiaryDate = "";
 let diaryMonth = "";
 let sopData = null;
 let currentSopPath = "";
-let sopScope = localStorage.getItem("g4w-sop-scope") || "sop-user";
+let sopScope = localStorage.getItem("g4w-sop-scope") || "";
 let lastSopAttempt = 0;
 /** 展开中的目录路径集合（相对 scope 根，"" = 根） */
 let sopExpanded = new Set();
@@ -692,7 +692,7 @@ function showToast(message, isError = false) {
   showToast.timer = setTimeout(() => { toast.hidden = true; }, 3600);
 }
 
-const pageTitles = { overview: "Overview", workers: "Workers", memory: "Memory", sop: "SOP", timeline: "Timeline", diary: "Diary", todo: "待办", services: "服务与终端", knowledge: "Knowledge", events: "System Activity", environment: "Environment", prompt: "System Prompt" };
+const pageTitles = { overview: "Overview", workers: "Workers", memory: "Memory", sop: "SOP", persona: "人设", timeline: "Timeline", diary: "Diary", todo: "待办", services: "服务与终端", knowledge: "Knowledge", events: "System Activity", environment: "Environment", prompt: "System Prompt" };
 
 function setSidebarOpen(open) {
   $("sidebar").classList.toggle("open", open);
@@ -709,6 +709,7 @@ function routeTo(page) {
   setSidebarOpen(false);
   window.scrollTo(0, 0);
   if (target === "prompt" && !promptData) loadPrompt();
+  if (target === "persona") loadPersona();
   if (target === "timeline" && !timelineData) loadTimeline();
   if (target === "diary" && !diaryData) loadDiary();
   if (target === "sop" && !sopData) loadSopIndex();
@@ -1478,7 +1479,8 @@ function renderSopIndex() {
   const list = $("sop-file-list");
   if (!list) return;
   if (!files.length) {
-    list.innerHTML = '<div class="empty-state">没有符合条件的 SOP 文件</div>';
+    const scopeName = (sopData && sopData.scope === "sop-user") ? "个人 SOP（sop-user）" : "共享 SOP（sop）";
+    list.innerHTML = `<div class="empty-state">${scopeName} 目录里还没有可显示的 SOP 文件</div>`;
     return;
   }
   const query = ($("sop-search")?.value || "").trim().toLowerCase();
@@ -1503,17 +1505,24 @@ async function loadSopIndex(force = false) {
     if ([...scopeSelect.options].some((opt) => opt.value === sopScope)) scopeSelect.value = sopScope;
   }
   try {
-    sopData = await fetchJson(`/api/sop?scope=${encodeURIComponent(sopScope)}`);
+    sopData = await fetchJson(`/api/sop?scope=${encodeURIComponent(sopScope || "sop")}`);
     if (scopeSelect && Array.isArray(sopData.scopes) && sopData.scopes.length) {
-      scopeSelect.innerHTML = sopData.scopes.map((item) => {
-        const label = item.id === "sop-user" ? `用户 SOP（sop-user）` : `共享 SOP（sop）`;
+      // 下拉始终提供「个人 SOP + 共享 SOP」两项（后端缺项时补一个"不存在"的占位）
+      const stats = Object.fromEntries(sopData.scopes.map((item) => [String(item.id), item]));
+      const scopes = ["sop-user", "sop"].map((id) => stats[id] || { id: id, exists: false, count: 0 });
+      scopeSelect.innerHTML = scopes.map((item) => {
+        const label = item.id === "sop-user" ? `个人 SOP（sop-user）` : `共享 SOP（sop）`;
         const count = item.exists ? ` · ${item.count}` : " · 不存在";
         return `<option value="${esc(item.id)}">${esc(label + count)}</option>`;
       }).join("");
-      if ([...scopeSelect.options].some((opt) => opt.value === sopScope)) scopeSelect.value = sopScope;
-      else {
-        sopScope = scopeSelect.value || "sop-user";
-        localStorage.setItem("g4w-sop-scope", sopScope);
+      // v3.0.3：默认落「共享 SOP」；只有个人 SOP 确实存在且有文件时才默认个人 SOP
+      const usable = (id) => !!(stats[id] && stats[id].exists && Number(stats[id].count) > 0);
+      const preferred = usable("sop-user") ? "sop-user" : "sop";
+      if (!usable(sopScope) || !stats[sopScope]) sopScope = preferred;
+      localStorage.setItem("g4w-sop-scope", sopScope);
+      scopeSelect.value = sopScope;
+      if (String(sopData.scope) !== sopScope) {
+        sopData = await fetchJson(`/api/sop?scope=${encodeURIComponent(sopScope)}`);
       }
     }
     // 切换目录时收起展开状态；若有当前文件则只展开其祖先
@@ -1663,12 +1672,172 @@ function renderMemoryPage(items) {
   const select = $("memory-profile-select");
   const saved = localStorage.getItem("g4w-memory-profile");
   const current = items.some((item) => item.id === saved) ? saved : (items[0] ? items[0].id : "");
-  select.innerHTML = items.length ? items.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}${item.identity ? ` · ${esc(item.identity)}` : ""}</option>`).join("") : '<option value="">暂无记忆账号</option>';
+  select.innerHTML = items.length ? items.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}${item.identity ? ` · ${esc(item.identity)}` : ""}</option>`).join("") : '<option value="">暂无 L4 画像</option>';
   select.disabled = !items.length;
   select.value = current;
   if (current && current !== currentMemoryId) loadMemoryDetail(current);
-  else if (!current) $("memory-page-body").innerHTML = '<div class="empty-state glass-card">暂无记忆档案 — 与 G4W 完成对话后会自动生成。</div>';
+  else if (!current) $("memory-page-body").innerHTML = '<div class="empty-state glass-card">暂无 L4 画像 —— 与 G4W 正常对话后，在微信里发一次 <code>/l4compress</code> 深压，这里就会出现账号档案。</div>';
 }
+
+// ---------- G4W 程序更新（环境配置页卡片；独立挂载，不侵入原页面切换逻辑） ----------
+// 顶栏时钟：以前 app.js 里没有任何地方写 #refresh-stamp（只写了 #last-updated），
+// 顶栏永远停在 HTML 占位符 --:--:--。这里给它一个每秒走字的本地时间。
+function tickTopbarClock() {
+  const el = $("refresh-stamp");
+  if (el) el.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+}
+tickTopbarClock();
+setInterval(tickTopbarClock, 1000);
+
+let updateCardBound = false;
+
+async function loadUpdateStatus() {
+  const el = $("update-status");
+  if (!el) return;
+  try {
+    const data = await fetchJson("/api/update/status");
+    el.innerHTML = `<span class="status-running">当前版本 ${esc(String(data.current || "未知"))}</span>` +
+      (data.appliedAt ? `<span class="muted-tag">${esc(String(data.appliedAt))}</span>` : "") +
+      (data.sourceFile ? `<span class="muted-tag">来源 ${esc(String(data.sourceFile))}</span>` : "");
+  } catch (e) {
+    el.innerHTML = `<span class="status-stopped">版本读取失败：${esc(String((e && e.message) || e))}</span>`;
+  }
+}
+
+async function checkUpdate() {
+  const detail = $("update-detail");
+  const msgEl = $("update-message");
+  const btn = $("update-check");
+  if (btn) btn.disabled = true;
+  if (detail) detail.innerHTML = '<div class="muted-tag">正在查询 GitHub Releases…</div>';
+  if (msgEl) msgEl.textContent = "正在查询最新版本…";
+  try {
+    const mirrorEl = $("update-mirror");
+    const mirror = mirrorEl && !mirrorEl.checked ? "0" : "1";
+    try { localStorage.setItem("g4w-update-mirror", mirror); } catch (e) { /* 忽略存储失败 */ }
+    const data = await fetchJson(`/api/update/check?mirror=${mirror}`);
+    if (!data.ok) {
+      if (detail) detail.innerHTML = "";
+      if (msgEl) {
+        msgEl.textContent = `检查失败：${data.error || "未知错误"}${data.hint ? "；" + data.hint : ""}`;
+      }
+      return;
+    }
+    const assets = (data.assets || []).length
+      ? (data.assets || []).map((a) => `${esc(a.name)} · ${formatBytes(a.size)}`).join("<br>")
+      : "该 Release 没有附件";
+    if (detail) {
+      detail.innerHTML =
+        `<div class="embedding-speedtest-row"><span>最新版本</span><b>${esc(String(data.latest || "--"))}</b></div>` +
+        `<div class="embedding-speedtest-row"><span>发布时间</span><b>${esc(String(data.publishedAt || "--"))}</b></div>` +
+        `<div class="embedding-speedtest-row"><span>附件</span><b>${assets}</b></div>`;
+    }
+    if ($("update-release")) $("update-release").dataset.url = data.notesUrl || "";
+    const applyBtn = $("update-apply");
+    if (applyBtn) {
+      applyBtn.disabled = !data.hasUpdate;
+      applyBtn.title = data.hasUpdate ? `更新到 ${data.latest}` : "已是最新版本";
+    }
+    if (msgEl) {
+      msgEl.textContent = data.hasUpdate
+        ? `发现新版本 ${data.latest}：用「打开发布页」下载补丁/整包，关闭 G4W 后运行升级脚本（runtime\\G4W-data 不受影响）。`
+        : `已是最新版本（${data.current || data.latest || "--"}）。`;
+    }
+  } catch (e) {
+    if (msgEl) msgEl.textContent = "检查失败：" + String((e && e.message) || e);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+let updatePollTimer = null;
+
+function setUpdateMessage(text) {
+  const el = $("update-message");
+  if (el) el.textContent = text;
+}
+
+function showUpdateProgress(on) {
+  const w = $("update-progress-wrap");
+  if (w) w.hidden = !on;
+}
+
+async function applyUpdate() {
+  const btn = $("update-apply");
+  if (!confirm("确认现在更新？G4W 会短暂停止并自动重启；runtime\\G4W-data（账号/记忆/时间线）不会被改动。")) return;
+  if (btn) btn.disabled = true;
+  const mirrorEl = $("update-mirror");
+  const mirror = mirrorEl && !mirrorEl.checked ? "0" : "1";
+  showUpdateProgress(true);
+  setUpdateMessage("正在准备更新…");
+  try {
+    const r = await fetchJson(`/api/update/apply?mirror=${mirror}`);
+    if (!r.ok) {
+      setUpdateMessage((r.error || "无法开始更新") + (r.hint ? "；" + r.hint : ""));
+      if (btn) btn.disabled = false;
+      return;
+    }
+    setUpdateMessage(`正在更新到 ${r.version || "新版本"}…（完成后请按 Ctrl+F5 刷新本页）`);
+    pollUpdateProgress();
+  } catch (e) {
+    setUpdateMessage("更新失败：" + String((e && e.message) || e));
+    if (btn) btn.disabled = false;
+  }
+}
+
+function pollUpdateProgress() {
+  if (updatePollTimer) clearInterval(updatePollTimer);
+  updatePollTimer = setInterval(async () => {
+    const bar = $("update-progress-bar");
+    const txt = $("update-progress-text");
+    try {
+      const s = await fetchJson("/api/update/progress");
+      const pct = Math.max(0, Math.min(100, Number(s.progress) || 0));
+      if (bar) bar.style.width = `${pct}%`;
+      if (txt) txt.textContent = `${s.stage || "working"} · ${pct}% · ${s.message || ""}`;
+      if (s.stage === "failed") {
+        clearInterval(updatePollTimer);
+        updatePollTimer = null;
+        setUpdateMessage("更新失败：" + (s.message || "未知错误"));
+        const b = $("update-apply");
+        if (b) b.disabled = false;
+      } else if (s.stage === "handoff") {
+        setUpdateMessage("已交给更新脚本，窗口即将重启…重启完成后按 Ctrl+F5 刷新看板。");
+      }
+    } catch (e) {
+      // 看板正在被更新脚本重启 → 轮询断开属于预期
+      if (bar) bar.style.width = "100%";
+      if (txt) txt.textContent = "看板正在重启…稍后按 Ctrl+Shift+R 强刷本页";
+      clearInterval(updatePollTimer);
+      updatePollTimer = null;
+    }
+  }, 1200);
+}
+
+function initUpdateCard() {
+  if (!updateCardBound) {
+    updateCardBound = true;
+    // 「国内镜像加速」开关：与向量检索安装同一套语义（开=gh-proxy 镜像，关=直连）
+    let savedMirror = null;
+    try { savedMirror = localStorage.getItem("g4w-update-mirror"); } catch (e) { /* 忽略 */ }
+    if ($("update-mirror") && savedMirror !== null) $("update-mirror").checked = savedMirror === "1";
+    $("update-mirror")?.addEventListener("change", () => {
+      try { localStorage.setItem("g4w-update-mirror", $("update-mirror").checked ? "1" : "0"); } catch (e) { /* 忽略 */ }
+    });
+    $("update-check")?.addEventListener("click", checkUpdate);
+    $("update-apply")?.addEventListener("click", applyUpdate);
+    $("update-release")?.addEventListener("click", () => {
+      const url = $("update-release")?.dataset.url || "https://github.com/MoFrom-FG/G4W/releases/latest";
+      window.open(url, "_blank");
+    });
+  }
+  if (location.hash.replace("#", "") === "environment") loadUpdateStatus();
+}
+window.addEventListener("hashchange", () => {
+  if (location.hash.replace("#", "") === "environment") initUpdateCard();
+});
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initUpdateCard);
+else initUpdateCard();
 
 // ---------- Embedding 配置 / 测速 / 安装（环境配置页） ----------
 let embeddingLastLoadAt = 0;
@@ -2446,6 +2615,358 @@ $("memory-profile-select").addEventListener("change", (event) => {
   loadMemoryDetail(event.target.value);
 });
 $("timeline-date").addEventListener("change", (event) => { timelineDate = event.target.value; renderTimeline(); });
+
+// ---------- 人设（persona presets）：分节编辑 / 保存 / 注入 ----------
+let personaData = null;
+let personaDraft = null;      // {id, name, sections}
+let personaEditingId = "";
+
+function personaMessage(text, isError = false) {
+  const node = $("persona-message");
+  if (node) {
+    node.textContent = text || "";
+    node.style.color = isError ? "var(--danger, #e5484d)" : "";
+  }
+  if (text) showToast(text, isError);
+}
+
+function personaClone(value) { return JSON.parse(JSON.stringify(value || [])); }
+
+function personaRenderVars(data) {
+  const box = $("persona-vars");
+  if (!box) return;
+  const variables = (data && data.variables) || [];
+  box.innerHTML = variables.map((item) => `
+    <button type="button" class="persona-var" data-copy="${esc(item.token)}" title="点击复制带反引号的形式">
+      <code>${esc("`" + item.token + "`")}</code><small>${esc(item.label)} · ${esc(item.desc)}</small>
+    </button>`).join("") || '<span class="empty-state">没有可用的变量。</span>';
+  box.querySelectorAll("[data-copy]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const text = "`" + button.dataset.copy + "`";
+      try {
+        await navigator.clipboard.writeText(text);
+        personaMessage(`已复制 ${text}`);
+      } catch (error) {
+        personaMessage(`复制失败，请手动输入 ${text}`, true);
+      }
+    });
+  });
+}
+
+function personaRenderList() {
+  const box = $("persona-list");
+  if (!box || !personaData) return;
+  const rows = personaData.presets || [];
+  box.innerHTML = rows.map((item) => `
+    <button type="button" class="persona-item ${item.id === personaEditingId ? "active" : ""}" data-id="${esc(item.id)}">
+      <strong>${esc(item.name)}${item.id === personaData.activeId ? ' <span class="tag">当前激活</span>' : ""}</strong>
+      <small>${item.builtin ? "内置" : "自定义"} · ${item.chars} 字符${item.sections ? ` · ${item.sections.length} 大节` : ""}</small>
+    </button>`).join("") || '<div class="empty-state">还没有预设。</div>';
+  box.querySelectorAll("[data-id]").forEach((button) => {
+    button.addEventListener("click", () => personaSelect(button.dataset.id));
+  });
+  const meta = $("persona-meta");
+  if (meta) {
+    const backups = (personaData.backups || []).filter((item) => String(item.name).includes(personaEditingId));
+    meta.innerHTML = [
+      `运行时文件：<code>${esc(personaData.runtimeFile || "")}</code>（${personaData.runtimeBytes || 0} 字节）`,
+      `备份：每个预设保留最近 ${personaData.backupKeep || 3} 份，当前预设已有 ${backups.length} 份`,
+      personaData.activeRegistered === false && personaData.activeId ? "注意：记录的激活预设已不存在，请重新注入。" : "",
+    ].filter(Boolean).join("<br>");
+  }
+}
+
+function personaSelect(id) {
+  if (!personaData) return;
+  const item = (personaData.presets || []).find((row) => row.id === id);
+  if (!item) return;
+  personaEditingId = id;
+  personaDraft = { id: item.id, name: item.name, sections: personaClone(item.sections) };
+  personaRenderList();
+  personaRenderEditor();
+}
+
+function personaRenderEditor() {
+  const box = $("persona-sections");
+  const title = $("persona-editor-title");
+  if (!box || !personaDraft) return;
+  if (title) title.textContent = `编辑：${personaDraft.name}`;
+  const sections = personaDraft.sections || [];
+  box.innerHTML = sections.map((section, index) => `
+    <div class="persona-section" data-section="${index}">
+      <div class="persona-section-head">
+        <span class="persona-tag">大节 ${index + 1}</span>
+        <button type="button" class="ghost-button" data-act="up">↑</button>
+        <button type="button" class="ghost-button" data-act="down">↓</button>
+        <button type="button" class="ghost-button" data-act="del-section">删除</button>
+      </div>
+      <label>大节标题<input data-field="title" value="${esc(section.title || "")}" placeholder="必填" /></label>
+      <label>大节直属正文（可空）<textarea data-field="intro" rows="2" placeholder="小节内容写在小节里">${esc(section.intro || "")}</textarea></label>
+      ${(section.children || []).map((child, childIndex) => `
+        <div class="persona-child" data-child="${childIndex}">
+          <div class="persona-child-head">
+            <span class="persona-tag">小节 ${index + 1}.${childIndex + 1}</span>
+            <button type="button" class="ghost-button" data-act="child-up">↑</button>
+            <button type="button" class="ghost-button" data-act="child-down">↓</button>
+            <button type="button" class="ghost-button" data-act="del-child">删除</button>
+          </div>
+          <label>小节标题<input data-field="child-title" value="${esc(child.title || "")}" placeholder="必填" /></label>
+          <label>小节正文（markdown，支持表格/引用/列表）<textarea data-field="child-body" rows="5">${esc(child.body || "")}</textarea></label>
+        </div>`).join("")}
+      <div class="persona-add-row"><button type="button" class="ghost-button" data-act="add-child">+ 添加小节</button></div>
+    </div>`).join("") || '<div class="empty-state">还没有大节，点下面的“+ 添加大节”。</div>';
+  personaUpdatePreview();
+}
+
+function personaCollect() {
+  const box = $("persona-sections");
+  if (!box || !personaDraft) return;
+  const sections = [];
+  box.querySelectorAll("[data-section]").forEach((node) => {
+    const section = {
+      title: node.querySelector('[data-field="title"]').value.trim(),
+      intro: node.querySelector('[data-field="intro"]').value,
+      children: [],
+    };
+    node.querySelectorAll("[data-child]").forEach((childNode) => {
+      section.children.push({
+        title: childNode.querySelector('[data-field="child-title"]').value.trim(),
+        body: childNode.querySelector('[data-field="child-body"]').value,
+      });
+    });
+    sections.push(section);
+  });
+  personaDraft.sections = sections;
+}
+
+function personaMarkdown() {
+  if (!personaDraft) return "";
+  return (personaDraft.sections || []).map((section) => {
+    const parts = [`## ${section.title || "未命名大节"}`];
+    if (String(section.intro || "").trim()) parts.push(String(section.intro).trim());
+    (section.children || []).forEach((child) => {
+      parts.push(`### ${child.title || "未命名小节"}`);
+      if (String(child.body || "").trim()) parts.push(String(child.body).trim());
+    });
+    return parts.join("\n\n");
+  }).join("\n\n---\n\n") + "\n";
+}
+
+function personaUpdatePreview() {
+  const node = $("persona-preview");
+  if (node && personaDraft) node.textContent = personaMarkdown();
+}
+
+async function loadPersona() {
+  const badge = $("persona-badge");
+  if (badge) badge.textContent = "LOADING";
+  try {
+    personaData = await fetchJson("/api/persona");
+    personaRenderVars(personaData);
+    const rows = personaData.presets || [];
+    if (!personaEditingId || !rows.some((row) => row.id === personaEditingId)) {
+      const preferred = rows.find((row) => row.id === personaData.activeId) || rows[0];
+      personaEditingId = preferred ? preferred.id : "";
+    }
+    personaRenderList();
+    if (personaEditingId) personaSelect(personaEditingId);
+    else $("persona-sections").innerHTML = '<div class="empty-state">还没有预设。</div>';
+    if (badge) badge.textContent = `${rows.length} 个预设`;
+  } catch (error) {
+    if (badge) badge.textContent = "ERROR";
+    const box = $("persona-sections");
+    if (box) box.innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
+  }
+}
+
+async function personaSend(path, payload, okMessage) {
+  personaMessage("处理中…");
+  try {
+    const result = await fetchJson(`/api/persona/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
+    personaData = result;
+    personaRenderVars(personaData);
+    personaRenderList();
+    personaMessage(okMessage || "完成");
+    return result;
+  } catch (error) {
+    personaMessage(error.message, true);
+    return null;
+  }
+}
+
+async function personaSave() {
+  if (!personaDraft) return;
+  personaCollect();
+  const result = await personaSend("save", { id: personaDraft.id, name: personaDraft.name, sections: personaDraft.sections }, "已保存");
+  if (!result) return;
+  const item = (result.presets || []).find((row) => row.id === personaDraft.id);
+  if (item) personaDraft.sections = personaClone(item.sections);
+  personaRenderEditor();
+  const warnings = (result.preset && result.preset.warnings) || [];
+  if (warnings.length) personaMessage(warnings.join(" "), true);
+  else if (result.preset && result.preset.runtimeUpdated) personaMessage("已保存，并同步到运行时人设（下一条消息生效）");
+}
+
+async function personaInject() {
+  if (!personaDraft) return;
+  const button = $("persona-inject");
+  if (button) { button.disabled = true; button.textContent = "注入中…"; }
+  personaMessage("正在激活…");
+  try {
+    // 第一步：激活并投递 reread（立刻返回，避免前端 10s 超时）
+    const result = await fetchJson("/api/persona/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: personaDraft.id }),
+    });
+    personaData = result;
+    personaRenderList();
+    promptData = null;                     // 提示词页的「微信人格」节点是现读文件的 → 下次进入自动刷新
+    if (currentPage() === "prompt") loadPrompt();
+    personaMessage(result.note || "已激活");
+    if (!result.injectId) return;
+    // 第二步：轮询 reread 结果（会跑一次真实模型轮次，可能几十秒）
+    if (button) button.textContent = "重读中…";
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      let status = null;
+      try {
+        status = await fetchJson(`/api/persona/inject-status?id=${encodeURIComponent(result.injectId)}`);
+      } catch (error) {
+        personaMessage(`注入状态查询失败：${error.message}`, true);
+        return;
+      }
+      if (status && status.done) {
+        personaMessage([status.note, status.reply].filter(Boolean).join(" "), status.injectOk === false);
+        return;
+      }
+    }
+    personaMessage("注入仍在进行（当前会话重读较慢）。人设已生效，下一条消息会使用新内容。", true);
+  } catch (error) {
+    personaMessage(error.message, true);
+  } finally {
+    if (button) { button.disabled = false; button.textContent = "注入"; }
+  }
+}
+
+async function personaCreate() {
+  const name = window.prompt("新预设名称", "新人设");
+  if (!name) return;
+  const result = await personaSend("create", { name }, `已创建「${name}」`);
+  if (result && result.createdId) personaSelect(result.createdId);
+}
+
+async function personaCopy() {
+  if (!personaDraft) return;
+  const name = window.prompt("复制为（新预设名称）", `${personaDraft.name} 副本`);
+  if (!name) return;
+  const result = await personaSend("create", { name, sourceId: personaDraft.id }, `已复制为「${name}」`);
+  if (result && result.createdId) personaSelect(result.createdId);
+}
+
+async function personaRename() {
+  if (!personaDraft) return;
+  const name = window.prompt("新的显示名称", personaDraft.name);
+  if (!name) return;
+  const result = await personaSend("rename", { id: personaDraft.id, name }, "已改名");
+  if (result) personaSelect(personaDraft.id);
+}
+
+async function personaDelete() {
+  if (!personaDraft) return;
+  if (!window.confirm(`删除预设「${personaDraft.name}」？此操作不可撤销（内置预设不能删除）。`)) return;
+  const result = await personaSend("delete", { id: personaDraft.id }, "已删除");
+  if (result) {
+    personaEditingId = "";
+    personaDraft = null;
+    await loadPersona();
+  }
+}
+
+async function personaRestore() {
+  if (!personaDraft) return;
+  if (!window.confirm(`用包内默认模板覆盖「${personaDraft.name}」？当前内容会先备份。`)) return;
+  const result = await personaSend("restore", { id: personaDraft.id }, "已恢复包内模板");
+  if (result) personaSelect(personaDraft.id);
+}
+
+async function personaImport() {
+  const name = ($("persona-io-name").value || "").trim() || "导入人设";
+  const markdown = $("persona-io-text").value || "";
+  if (!markdown.trim()) { personaMessage("请先把 md 粘贴到下面的文本框。", true); return; }
+  const result = await personaSend("import", { name, markdown }, `已导入「${name}」`);
+  if (!result) return;
+  if (result.id) personaSelect(result.id);
+  const warnings = result.parseWarnings || [];
+  if (warnings.length) personaMessage(warnings.join(" "), true);
+}
+
+async function personaExport() {
+  if (!personaDraft) return;
+  try {
+    const result = await fetchJson(`/api/persona/export?id=${encodeURIComponent(personaDraft.id)}`);
+    $("persona-io-text").value = result.markdown || "";
+    personaMessage(`已把「${personaDraft.name}」导出到下方文本框（可全选复制）`);
+  } catch (error) {
+    personaMessage(error.message, true);
+  }
+}
+
+async function personaImportRuntime() {
+  const name = ($("persona-io-name").value || "").trim() || "当前人设";
+  const result = await personaSend("import-runtime", { name }, `已把当前运行时人设导入为「${name}」`);
+  if (result && result.id) personaSelect(result.id);
+}
+
+function personaBindEditor() {
+  const box = $("persona-sections");
+  if (!box) return;
+  box.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-act]");
+    if (!button || !personaDraft) return;
+    event.preventDefault();
+    const sectionNode = button.closest("[data-section]");
+    const childNode = button.closest("[data-child]");
+    const index = sectionNode ? Number(sectionNode.dataset.section) : -1;
+    const childIndex = childNode ? Number(childNode.dataset.child) : -1;
+    personaCollect();
+    const sections = personaDraft.sections || [];
+    const children = index >= 0 ? (sections[index].children = sections[index].children || []) : [];
+    const action = button.dataset.act;
+    if (action === "up" && index > 0) [sections[index - 1], sections[index]] = [sections[index], sections[index - 1]];
+    else if (action === "down" && index >= 0 && index < sections.length - 1) [sections[index + 1], sections[index]] = [sections[index], sections[index + 1]];
+    else if (action === "del-section" && index >= 0) sections.splice(index, 1);
+    else if (action === "add-child" && index >= 0) children.push({ title: "新小节", body: "" });
+    else if (action === "del-child" && childIndex >= 0) children.splice(childIndex, 1);
+    else if (action === "child-up" && childIndex > 0) [children[childIndex - 1], children[childIndex]] = [children[childIndex], children[childIndex - 1]];
+    else if (action === "child-down" && childIndex >= 0 && childIndex < children.length - 1) [children[childIndex + 1], children[childIndex]] = [children[childIndex], children[childIndex + 1]];
+    personaRenderEditor();
+  });
+  box.addEventListener("input", () => { personaCollect(); personaUpdatePreview(); });
+}
+
+$("persona-add-section")?.addEventListener("click", () => {
+  if (!personaDraft) return;
+  personaCollect();
+  personaDraft.sections = personaDraft.sections || [];
+  personaDraft.sections.push({ title: "新大节", intro: "", children: [] });
+  personaRenderEditor();
+});
+$("persona-save")?.addEventListener("click", personaSave);
+$("persona-inject")?.addEventListener("click", personaInject);
+$("persona-new")?.addEventListener("click", personaCreate);
+$("persona-copy")?.addEventListener("click", personaCopy);
+$("persona-rename")?.addEventListener("click", personaRename);
+$("persona-delete")?.addEventListener("click", personaDelete);
+$("persona-restore")?.addEventListener("click", personaRestore);
+$("persona-io-import")?.addEventListener("click", personaImport);
+$("persona-io-export")?.addEventListener("click", personaExport);
+$("persona-io-runtime")?.addEventListener("click", personaImportRuntime);
+personaBindEditor();
 $("timeline-board").addEventListener("wheel", (event) => {
   const scroll = event.target.closest(".timeline-scroll");
   if (!scroll) return;

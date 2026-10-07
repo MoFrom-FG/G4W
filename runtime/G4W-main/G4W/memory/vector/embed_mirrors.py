@@ -264,5 +264,7 @@ def installed_status(embedding_root: Path | str, *, force: bool = False) -> Dict
 if __name__ == "__main__":
     import sys
 
-    state = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(r"D:\Agent\G4W\runtime\G4W-data")
+    # 默认状态目录从包位置推导（不写死开发机路径）；G4W_STATE_DIR 可覆盖
+    default_state = Path(os.environ.get("G4W_STATE_DIR") or (Path(__file__).resolve().parents[4] / "G4W-data"))
+    state = Path(sys.argv[1]) if len(sys.argv) > 1 else default_state
     print(json.dumps(speedtest(state, force=True), ensure_ascii=False, indent=1))

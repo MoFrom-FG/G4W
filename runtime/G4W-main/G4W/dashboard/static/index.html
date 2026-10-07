@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#111714" />
   <title>G4W Control Center</title>
-  <link rel="stylesheet" href="/styles.css?v=20260816-refresh3" />
+  <link rel="stylesheet" href="/styles.css?v=20261007-persona" />
   <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
 </head>
 <body>
@@ -39,6 +39,7 @@
         <a class="nav-item" data-page="workers" href="#workers"><span>◈</span>Worker</a>
         <a class="nav-item" data-page="memory" href="#memory"><span>✦</span>长期记忆</a>
         <a class="nav-item" data-page="sop" href="#sop"><span>☰</span>SOP</a>
+        <a class="nav-item" data-page="persona" href="#persona"><span>☺</span>人设</a>
         <div class="nav-label">个人记录</div>
         <a class="nav-item" data-page="timeline" href="#timeline"><span>◷</span>时间轴</a>
         <a class="nav-item" data-page="diary" href="#diary"><span>✎</span>日记</a>
@@ -146,6 +147,50 @@
         </div>
       </section>
 
+      <section class="page-view" data-page-view="persona">
+        <div class="page-header"><div><div class="eyebrow">PERSONA PRESETS</div><h1>人设</h1><p>分节编辑人设并保存为预设；“注入”把当前预设写成运行时人设，并对当前会话等效发一次 /reread。</p></div><span class="page-badge" id="persona-badge">LOADING</span></div>
+        <div class="persona-vars glass-card" id="persona-vars"></div>
+        <div class="persona-layout">
+          <aside class="persona-index glass-card">
+            <div class="section-heading"><div><div class="eyebrow">PRESETS</div><h2>预设</h2></div></div>
+            <div class="persona-actions">
+              <button type="button" class="ghost-button" id="persona-new">新建</button>
+              <button type="button" class="ghost-button" id="persona-copy">复制</button>
+              <button type="button" class="ghost-button" id="persona-rename">改名</button>
+              <button type="button" class="ghost-button" id="persona-delete">删除</button>
+              <button type="button" class="ghost-button" id="persona-restore">恢复默认模板</button>
+            </div>
+            <div class="persona-list" id="persona-list"><div class="empty-state">正在读取…</div></div>
+            <div class="persona-meta" id="persona-meta"></div>
+          </aside>
+          <article class="persona-editor glass-card">
+            <div class="section-heading"><div><div class="eyebrow">SECTIONS</div><h2 id="persona-editor-title">编辑人设</h2></div>
+              <div class="persona-editor-actions">
+                <button type="button" class="primary-button" id="persona-save">保存</button>
+                <button type="button" class="primary-button" id="persona-inject">注入</button>
+              </div>
+            </div>
+            <div class="persona-hint">大节 ＝ <code>##</code>，小节 ＝ <code>###</code>；大节之间自动生成分隔线（正文里不要手写 <code>---</code>）。变量直接按页面上方的图例粘贴即可。保存只写这个预设；注入才会把它写成运行时人设并让当前会话立刻重读。</div>
+            <div class="settings-card">
+              <div id="persona-sections" class="persona-sections"></div>
+              <div class="persona-add-row"><button type="button" class="ghost-button" id="persona-add-section">+ 添加大节</button></div>
+              <details class="persona-preview"><summary>预览渲染结果（md）</summary><pre id="persona-preview">—</pre></details>
+              <details class="persona-io">
+                <summary>导入 / 导出（md）</summary>
+                <div class="persona-io-row">
+                  <label class="search-field">新预设名称（导入时用）<input id="persona-io-name" placeholder="导入人设" /></label>
+                  <button type="button" class="ghost-button" id="persona-io-import">从下方内容创建预设</button>
+                  <button type="button" class="ghost-button" id="persona-io-export">把当前预设导出到下方</button>
+                  <button type="button" class="ghost-button" id="persona-io-runtime">把当前运行时人设导入为新预设</button>
+                </div>
+                <label>md 内容（## 大节 / ### 小节）<textarea id="persona-io-text" rows="8" placeholder="粘贴 md；或点上面的导出按钮把当前预设填进来"></textarea></label>
+              </details>
+              <div class="persona-message" id="persona-message"></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
       <section class="page-view" data-page-view="timeline">
         <div class="page-header"><div><div class="eyebrow">PERSONAL ACTIVITY MAP</div><h1>时间轴</h1><p>沿用现有 Timeline 的日／周／月结构，在控制中心内查看生活与工作的时间分布。</p></div><span class="page-badge" id="timeline-page-badge">LOADING</span></div>
         <div class="timeline-toolbar glass-card"><div class="segmented" id="timeline-mode"><button class="active" data-timeline-mode="day">日</button><button data-timeline-mode="week">周</button><button data-timeline-mode="month">月</button></div><div class="timeline-zoom" aria-label="时间轴缩放"><button data-timeline-zoom="out" title="缩小">−</button><button data-timeline-zoom="reset" id="timeline-zoom-label" title="重置缩放">100%</button><button data-timeline-zoom="in" title="放大">＋</button></div><select id="timeline-date" aria-label="选择时间轴日期"></select></div>
@@ -210,6 +255,7 @@
           <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">EMBEDDING</div><h2>向量检索安装</h2></div><span class="scope" id="embedding-scope">安装态 · 约 4-8GB</span></div><div id="embedding-status" class="embedding-status"><span class="muted-tag">检测中…</span></div><label class="switch-row"><span><b>网络偏好：国内镜像加速</b><small>开=国内镜像（推荐） · 关=国外官方源</small></span><input type="checkbox" id="embedding-network" checked /></label><div class="embedding-actions"><button type="button" class="ghost-button" id="embedding-speedtest">测速选优</button><button type="button" class="primary-button" id="embedding-install">安装 / 重装</button><button type="button" class="ghost-button" id="embedding-log">安装日志</button></div><div id="embedding-speedtest-result" class="embedding-speedtest"></div><small class="model-hint" id="embedding-message">不安装也能用关键词检索；安装完成后在微信发 /vector on 开启向量检索。测速选优结果自动用于安装源。</small></article>
           <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">SECURITY</div><h2>登录安全</h2></div><span class="scope">dashboard 登录密码 · 立即生效</span></div><label>旧密码<input type="password" id="setting-old-password" autocomplete="current-password" placeholder="当前登录密码" /></label><label>新密码<input type="password" id="setting-new-password" autocomplete="new-password" placeholder="至少 8 位" /></label><label>确认新密码<input type="password" id="setting-new-password2" autocomplete="new-password" placeholder="再次输入" /></label><button type="button" class="primary-button" id="password-save">修改密码</button><small class="model-hint" id="password-message">修改后立即生效，下次登录使用新密码。</small></article>
           <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">THEME</div><h2>自定义主题</h2></div><span class="scope">存于 G4W-data · 升级不影响 · 选择“自定义”后生效</span></div><div class="theme-mode-tabs"><button type="button" class="active" data-theme-mode="dark">深色模式</button><button type="button" data-theme-mode="light">浅色模式</button></div><div id="theme-editor" class="theme-editor"></div><div class="settings-actions"><span class="model-hint" id="theme-message">修改后点击保存；可随时恢复默认。</span><button type="button" class="primary-button" id="theme-save">保存主题</button><button type="button" class="ghost-button" id="theme-reset">恢复默认</button></div></article>
+          <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">UPDATE</div><h2>G4W 程序更新</h2></div><span class="scope" id="update-scope">版本检查 · 需联网</span></div><div id="update-status" class="embedding-status"><span class="muted-tag">检测中…</span></div><label class="switch-row"><span><b>网络偏好：国内镜像加速</b><small>开=gh-proxy 镜像（推荐） · 关=直连 GitHub</small></span><input type="checkbox" id="update-mirror" checked /></label><div class="embedding-actions"><button type="button" class="primary-button" id="update-apply" disabled>一键更新</button><button type="button" class="ghost-button" id="update-check">检查更新</button><button type="button" class="ghost-button" id="update-release">打开发布页</button></div><div id="update-detail" class="embedding-speedtest"></div><div id="update-progress-wrap" hidden style="margin-top:10px"><div style="height:8px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden"><div id="update-progress-bar" style="height:100%;width:0;background:#3884ff;transition:width .3s ease"></div></div><div id="update-progress-text" class="model-hint" style="margin-top:6px"></div></div><small class="model-hint" id="update-message">更新走 GitHub Releases：下载补丁/整包后关闭 G4W 运行升级脚本，runtime\G4W-data 不会被改动。</small></article>
           <div class="settings-actions"><span id="settings-message">修改后点击保存</span><button type="submit" class="primary-button" id="settings-save">保存设置</button></div>
         </form>
       </section>

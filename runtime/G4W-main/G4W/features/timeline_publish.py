@@ -17,19 +17,155 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .timeline_analytics import build_timeline_views
+from ..core.platform_adapt import first_browser, no_window_kwargs
 
 
 INDEX_HTML = """<!doctype html>
-<html lang="{locale}">
+<html lang="__LOCALE__">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Timeline for Agent</title>
-  <link rel="stylesheet" href="./assets/dashboard.css" />
+  <script>
+    // 主题引导：?theme= 参数 > localStorage > 服务端默认（.env 的 G4W_TIMELINE_UI_THEME）
+    // 这里只决定主题并注入 CSS；主题的渲染脚本必须在 #root 之后加载（见 body 末尾），
+    // 否则脚本会先于容器执行，页面主体空白。
+    (function () {
+      var VERS = __ASSETVERS__;
+      window.__g4wTimelineAssetVers = VERS;
+      var themes = ["default", "neko"];
+      var fallback = "__THEME__";
+      var theme = "default";
+      try {
+        var q = new URLSearchParams(location.search).get("theme");
+        var s = localStorage.getItem("g4w-timeline-theme");
+        if (q && themes.indexOf(q) >= 0) theme = q;
+        else if (s && themes.indexOf(s) >= 0) theme = s;
+        else if (themes.indexOf(fallback) >= 0) theme = fallback;
+      } catch (e) {
+        if (themes.indexOf(fallback) >= 0) theme = fallback;
+      }
+      window.__g4wTimelineTheme = theme;
+      var v = VERS[theme] ? "?v=" + VERS[theme] : "";
+      document.write('<link rel="stylesheet" href="./assets/' + theme + '/dashboard.css' + v + '" />');
+    })();
+  </script>
 </head>
 <body>
   <div id="root"></div>
-  <script src="./assets/dashboard.js"></script>
+  <script>
+    (function () {
+      // 主题脚本：必须在 #root 之后加载，页面才能渲染
+      var VERS = window.__g4wTimelineAssetVers || {};
+      var theme = window.__g4wTimelineTheme || "default";
+      var v = VERS[theme] ? "?v=" + VERS[theme] : "";
+      document.write('<script src="./assets/' + theme + '/dashboard.js' + v + '"><\\/script>');
+    })();
+    (function () {
+      // 主题选择器：克隆站点自己的「日期控件」（.range-select）外壳与图标，插到它左侧，
+      // 菜单也用主题自己的 .range-select-menu / .range-select-option 样式 —— 保证与页面同款。
+      // 站点由各主题自己的脚本渲染，所以这里等它渲染出来再插（最多轮询 6 秒）。
+      var THEME = window.__g4wTimelineTheme || "default";
+      var LABELS = { default: "默认", neko: "neko" };
+      function labelText(value) { return "主题 · " + (LABELS[value] || value); }
+      function buildControl(anchor) {
+        var wrap = anchor.cloneNode(true);
+        wrap.id = "g4w-theme-select";
+        // 克隆体会带上主题自己的 data-range-trigger，必须摘掉，否则点它会触发主题的日期选择逻辑
+        [].slice.call(wrap.querySelectorAll("[data-range-trigger]")).forEach(function (el) {
+          el.removeAttribute("data-range-trigger");
+          el.removeAttribute("aria-controls");
+        });
+        var trigger = wrap.querySelector(".range-select-trigger") || wrap.querySelector("button");
+        var icon = trigger ? trigger.querySelector(".range-select-icon") : null;
+        if (trigger) {
+          trigger.setAttribute("aria-label", "时间轴主题");
+          trigger.setAttribute("title", "时间轴主题");
+          while (trigger.firstChild) trigger.removeChild(trigger.firstChild);
+          var label = document.createElement("span");
+          label.setAttribute("style", "pointer-events: none;");
+          label.textContent = labelText(THEME);
+          trigger.appendChild(label);
+          if (icon) trigger.appendChild(icon);
+        }
+        var menu = document.createElement("div");
+        menu.className = "range-select-menu";
+        menu.setAttribute("style", "position:absolute;top:calc(100% + 6px);left:0;right:0;display:none;");
+        var viewport = document.createElement("div");
+        viewport.className = "range-select-viewport";
+        ["default", "neko"].forEach(function (value) {
+          var opt = document.createElement("button");
+          opt.type = "button";
+          opt.className = "range-select-option";
+          opt.setAttribute("data-theme", value);
+          opt.textContent = LABELS[value] || value;
+          if (value === THEME) opt.setAttribute("data-state", "checked");
+          opt.addEventListener("click", function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            try { localStorage.setItem("g4w-timeline-theme", value); } catch (e) {}
+            location.replace(location.pathname + "?theme=" + value);
+          });
+          viewport.appendChild(opt);
+        });
+        menu.appendChild(viewport);
+        wrap.appendChild(menu);
+        if (trigger) {
+          trigger.addEventListener("click", function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            var open = menu.style.display === "none";
+            menu.style.display = open ? "grid" : "none";
+            trigger.setAttribute("data-state", open ? "open" : "closed");
+            trigger.setAttribute("aria-expanded", open ? "true" : "false");
+          });
+        }
+        document.addEventListener("click", function () {
+          menu.style.display = "none";
+          if (trigger) trigger.setAttribute("data-state", "closed");
+        });
+        return wrap;
+      }
+      // 关键：不能只把自己插成日期控件的兄弟节点 —— 各主题的工具条是
+      // justify-content: space-between 的多列布局，那样会被挤到行中间（default 主题就是这样）。
+      // 正确做法：把「主题控件 + 日期控件」包进一个 flex 小组，让它整体占据日期原来那一格。
+      function dateWrapper() {
+        var wraps = [].slice.call(document.querySelectorAll(".range-select"));
+        for (var i = 0; i < wraps.length; i++) {
+          if (wraps[i].id !== "g4w-theme-select" && wraps[i].querySelector(".range-select-trigger")) return wraps[i];
+        }
+        return null;
+      }
+      function ensurePicker() {
+        var anchor = dateWrapper();
+        if (!anchor || !anchor.parentNode) return false;
+        var group = anchor.parentNode.classList && anchor.parentNode.classList.contains("g4w-theme-group")
+          ? anchor.parentNode : null;
+        var existing = document.getElementById("g4w-theme-select");
+        if (!group) {
+          group = document.createElement("div");
+          group.className = "g4w-theme-group";
+          group.setAttribute("style", "display:flex;align-items:center;gap:12px;flex:none;");
+          anchor.parentNode.insertBefore(group, anchor);
+          group.appendChild(anchor);
+        }
+        if (existing && existing.parentNode === group && existing.nextElementSibling === anchor) return true;
+        // 每次重建：确保类名/图标与当前主题一致（主题切换会整页重载，这里主要是首次插入）
+        var control = buildControl(anchor);
+        if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+        group.insertBefore(control, anchor);
+        return true;
+      }
+      var tries = 0;
+      var timer = setInterval(function () {
+        tries += 1;
+        var done = ensurePicker();
+        // 主题重新渲染可能把我们挤掉/挪走：先密集重试 6 秒，之后低频守护
+        if (done && tries > 40) { clearInterval(timer); setInterval(ensurePicker, 2000); }
+        if (!done && tries > 40) { clearInterval(timer); }
+      }, 150);
+    })();
+  </script>
 </body>
 </html>"""
 
@@ -135,20 +271,50 @@ class _CdpWebSocket:
 
 
 class TimelinePublisher:
-    def __init__(self, timeline_store, root: Path, locale: str = "zh-CN", theme: str = "default"):
+    THEMES = ("default", "neko")
+
+    def __init__(self, timeline_store, root: Path, locale: str = "zh-CN", theme: str | None = None):
         self.timeline = timeline_store
         self.root = Path(root)
         self.site_dir = self.root / "site"
         self.screenshot_dir = self.root / "screenshots"
         self.locale = str(locale or "zh-CN")
-        self.theme = str(theme or "default").lower()
-        if self.theme not in ("default", "neko"):
-            self.theme = "default"
-        assets_dir = Path(__file__).resolve().parents[1] / "assets"
-        themed = assets_dir / f"timeline-dashboard-assets-{self.theme}.zip"
-        self.asset_archive = themed if themed.is_file() else assets_dir / "timeline-dashboard-assets.zip"
+        # theme 显式传入（default/neko）时固定使用；传 None/空时**每次 build 重新读 .env**
+        # （G4W_TIMELINE_UI_THEME）。这样看板里切换主题后，主服务/时间线服务无需重启就会用新主题，
+        # 也不会因为某个进程内存里还是旧值而把站点主题改回去。
+        forced = str(theme or "").strip().lower()
+        self._theme_override = forced if forced in self.THEMES else ""
         self.server = None
         self.thread = None
+
+    @property
+    def theme(self) -> str:
+        if self._theme_override:
+            return self._theme_override
+        try:
+            from ..core.config import Config
+
+            value = str(Config.load().timeline_theme or "default").strip().lower()
+        except Exception:
+            value = "default"
+        return value if value in self.THEMES else "default"
+
+    def asset_archive(self) -> Path:
+        """主题资产包：优先本主题 → 其次 default → 最后通用包。
+
+        （历史遗留：通用包 timeline-dashboard-assets.zip 与 neko 版内容相同，所以它只能当
+        最后兜底，否则“主题包缺失”会静默变成 neko，而默认语义应该是 default。）
+        """
+        assets_dir = Path(__file__).resolve().parents[1] / "assets"
+        candidates = [
+            assets_dir / f"timeline-dashboard-assets-{self.theme}.zip",
+            assets_dir / "timeline-dashboard-assets-default.zip",
+            assets_dir / "timeline-dashboard-assets.zip",
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+        return candidates[0]
 
     @staticmethod
     def _mtime(path: Path) -> str:
@@ -157,37 +323,85 @@ class TimelinePublisher:
         except OSError:
             return ""
 
+    def theme_archives(self) -> dict:
+        """{theme: archive} —— 每套主题各自的资产包（缺的那套用现有包兜底）。
+
+        历史遗留：通用包 timeline-dashboard-assets.zip 与 neko 版内容相同，所以它只作最后兜底；
+        default 优先用 timeline-dashboard-assets-default.zip，避免“缺包时静默变 neko”。
+        """
+        assets_dir = Path(__file__).resolve().parents[1] / "assets"
+        generic = assets_dir / "timeline-dashboard-assets.zip"
+        fallback = generic if generic.is_file() else None
+        found: dict = {}
+        for name in self.THEMES:
+            candidate = assets_dir / f"timeline-dashboard-assets-{name}.zip"
+            if candidate.is_file():
+                found[name] = candidate
+        if not found and fallback is not None:
+            found = {name: fallback for name in self.THEMES}
+        for name in self.THEMES:
+            if name not in found:
+                base = found.get("default") or found.get("neko") or fallback
+                if base is not None:
+                    found[name] = base
+        return found
+
     def _ensure_assets(self) -> dict:
-        assets = self.site_dir / "assets"
-        assets.mkdir(parents=True, exist_ok=True)
-        if not self.asset_archive.is_file():
+        """把**两套**主题的 dashboard.{css,js} 都释放到 site/assets/<theme>/。
+
+        站点页面自带主题下拉，切换只是换一个目录；只释放一套会导致切过去 404。
+        """
+        assets_root = self.site_dir / "assets"
+        assets_root.mkdir(parents=True, exist_ok=True)
+        archives = self.theme_archives()
+        if not archives:
             legacy = self.root.parent / "legacy-import" / "timeline" / "site" / "assets"
             if legacy.is_dir():
                 for name in ("dashboard.js", "dashboard.css"):
                     source = legacy / name
                     if source.is_file():
-                        shutil.copy2(source, assets / name)
-            if not all((assets / name).is_file() for name in ("dashboard.js", "dashboard.css")):
-                raise FileNotFoundError(f"timeline dashboard asset archive is missing: {self.asset_archive}")
-            return {"source": "legacy", "archive": ""}
-        archive_hash = hashlib.sha256(self.asset_archive.read_bytes()).hexdigest()
-        marker = assets / ".asset-version"
-        try:
-            current_hash = marker.read_text(encoding="utf-8", errors="ignore").strip()
-        except OSError:
-            current_hash = ""
-        if current_hash != archive_hash:
-            with zipfile.ZipFile(self.asset_archive) as package:
-                allowed = {"dashboard.js", "dashboard.css"}
-                for member in package.infolist():
-                    name = Path(member.filename).name
-                    if name not in allowed or member.is_dir():
-                        continue
-                    target = assets / name
-                    with package.open(member) as source, target.open("wb") as output:
-                        shutil.copyfileobj(source, output)
-            marker.write_text(archive_hash + "\n", encoding="utf-8")
-        return {"source": "archive", "archive": str(self.asset_archive), "sha256": archive_hash}
+                        for theme in self.THEMES:
+                            target_dir = assets_root / theme
+                            target_dir.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(source, target_dir / name)
+            if not all((assets_root / theme / "dashboard.css").is_file() for theme in self.THEMES):
+                raise FileNotFoundError("timeline dashboard asset archive is missing")
+            return {"source": "legacy", "archive": "", "theme": self.theme,
+                    "themes": list(self.THEMES), "versions": {}}
+        versions: dict = {}
+        for theme in sorted(archives):
+            archive_path = archives[theme]
+            digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+            versions[theme] = digest[:12]
+            target_dir = assets_root / theme
+            target_dir.mkdir(parents=True, exist_ok=True)
+            marker = target_dir / ".asset-version"
+            try:
+                current_hash = marker.read_text(encoding="utf-8", errors="ignore").strip()
+            except OSError:
+                current_hash = ""
+            if current_hash != digest:
+                with zipfile.ZipFile(archive_path) as package:
+                    allowed = {"dashboard.js", "dashboard.css"}
+                    for member in package.infolist():
+                        name = Path(member.filename).name
+                        if name not in allowed or member.is_dir():
+                            continue
+                        target = target_dir / name
+                        with package.open(member) as source, target.open("wb") as output:
+                            shutil.copyfileobj(source, output)
+                marker.write_text(digest + "\n", encoding="utf-8")
+        # 清理旧版“单主题布局”留下的文件（现在只从 assets/<theme>/ 读取）
+        for stale in ("dashboard.js", "dashboard.css", ".asset-version"):
+            try:
+                (assets_root / stale).unlink()
+            except OSError:
+                pass
+        return {
+            "source": "archive", "theme": self.theme, "themes": sorted(archives),
+            "archives": {theme: str(path) for theme, path in sorted(archives.items())},
+            "versions": versions,
+        }
 
     def build(self) -> dict:
         self.site_dir.mkdir(parents=True, exist_ok=True)
@@ -210,13 +424,19 @@ class TimelinePublisher:
         data_file = self.site_dir / "dashboard-data.json"
         data_file.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         page = self.site_dir / "index.html"
-        page.write_text(INDEX_HTML.format(locale=self.locale) + "\n", encoding="utf-8")
+        versions = dict((asset_info or {}).get("versions") or {})
+        page_html = (INDEX_HTML
+                     .replace("__LOCALE__", self.locale)
+                     .replace("__THEME__", self.theme)
+                     .replace("__ASSETVERS__", json.dumps(versions, ensure_ascii=False)))
+        page.write_text(page_html + "\n", encoding="utf-8")
         event_count = sum(len((day or {}).get("events") or []) for day in state.get("facts", {}).values())
         return {
             "ok": True, "siteDir": str(self.site_dir), "indexFile": str(page),
             "dataFile": str(data_file), "dayCount": len(state.get("facts") or {}),
             "eventCount": event_count, "assets": asset_info,
-            "theme": self.theme, "locale": self.locale,
+            "theme": self.theme, "themes": (asset_info or {}).get("themes") or list(self.THEMES),
+            "locale": self.locale,
         }
 
     def serve(self, host: str = "127.0.0.1", port: int = 0) -> dict:
@@ -288,7 +508,7 @@ class TimelinePublisher:
                 f"--remote-debugging-port={port}", f"--user-data-dir={profile}",
                 f"--window-size={max(320, int(width))},{max(240, int(height))}", url,
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                **no_window_kwargs())
             page_info = self._wait_for_debug_page(port, url, timeout=20)
             cdp = _CdpWebSocket(page_info["webSocketDebuggerUrl"])
             cdp.call("Page.enable")
@@ -459,9 +679,8 @@ class TimelinePublisher:
 
     @staticmethod
     def _browser() -> str:
-        candidates = [
-            shutil.which("msedge"), shutil.which("chrome"), shutil.which("chromium"),
-            str(Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe"),
-            str(Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application" / "chrome.exe"),
-        ]
+        located = first_browser()
+        if located:
+            return str(located)
+        candidates = [shutil.which("msedge"), shutil.which("chrome"), shutil.which("chromium")]
         return next((value for value in candidates if value and Path(value).is_file()), "")

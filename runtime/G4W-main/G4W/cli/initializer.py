@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from ..core.config import GA_APP_DIR, MAIN_DIR, RUNTIME_DIR, _read_env_file
+from ..core.platform_adapt import portable_python, venv_python
 
 
 PORTABLE_ROOT = RUNTIME_DIR.parent
@@ -55,8 +56,8 @@ def _atomic_write(path: Path, content: str) -> None:
 
 def prepare_portable() -> dict:
     required = {
-        "portablePython": RUNTIME_DIR / "python" / "python.exe",
-        "runtimePython": GA_APP_DIR / ".venv" / "Scripts" / "python.exe",
+        "portablePython": portable_python(PORTABLE_ROOT),
+        "runtimePython": venv_python(GA_APP_DIR / ".venv"),
         "gaAgent": GA_APP_DIR / "agentmain.py",
         "G4W": MAIN_DIR / "G4W" / "cli" / "main.py",
         "keyTemplate": KEY_TEMPLATE,

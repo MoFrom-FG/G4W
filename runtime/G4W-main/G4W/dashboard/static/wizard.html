@@ -14,8 +14,6 @@ body { margin:0; min-height:100vh; background:var(--bg); color:var(--text);
 .wrap { max-width:760px; margin:0 auto; padding:34px 22px 60px; }
 .errbar { background:rgba(242,93,93,.12); border:1px solid rgba(242,93,93,.4); color:var(--err);
   border-radius:9px; padding:8px 12px; font-size:12px; margin-bottom:14px; word-break:break-all; }
-/* 初始化等待态：蓝色信息条（不是错误），避免桥接注入期间误报"自检失败" */
-.errbar.info { background:rgba(56,132,255,.10); border-color:rgba(56,132,255,.38); color:#9ec1ff; }
 h1 { font-size:22px; margin:0 0 4px; }
 .sub { color:var(--muted); font-size:12px; margin-bottom:26px; }
 .steps { display:flex; gap:6px; margin-bottom:26px; }
@@ -128,7 +126,6 @@ button { padding:9px 20px; border:0; border-radius:9px; font-size:13px; cursor:p
     <h2>🎉 全部就绪</h2>
     <div class="desc">G4W 已配置完成，现在进入控制中心。</div>
     <div class="row"><button class="btn-primary" id="done-open">进入控制中心</button></div>
-    <div class="msg info" id="done-msg"></div>
   </div>
 </div>
 
@@ -157,16 +154,13 @@ let prepareTimer = null;
 let loginTimer = null;
 let prepareDone = false;   // 环境准备已完成（按钮此时点击 = 跳转下一步）
 
-// 页面顶部状态条：showErr=红色错误，showInfo=蓝色等待中（桥接注入期间不报错）
-function _bar(text, info) {
+// 页面顶部错误条（自检/桥接失败可见化，便于定位）
+function showErr(text) {
   const el = $('err-bar');
   el.textContent = text;
   el.classList.remove('hidden');
-  el.classList.toggle('info', !!info);
 }
-function showErr(text) { _bar(text, false); }
-function showInfo(text) { _bar(text, true); }
-function hideErr() { const el = $('err-bar'); el.classList.add('hidden'); el.classList.remove('info'); }
+function hideErr() { $('err-bar').classList.add('hidden'); }
 
 // 带超时的桥接调用：防止回调丢失导致 await 永久挂起
 function apiCallT(method, timeoutMs, ...args) {
@@ -303,26 +297,8 @@ async function pollLogin() {
   } catch (e) { /* 单次轮询失败忽略，下一轮继续 */ }
 }
 
-// 完成（v3.0.3：先停掉向导页所有定时器再请求看板；后端端口等待已挪到壳的后台线程，
-// 所以这里不会因为等后端而冻结界面）
-$('done-open').addEventListener('click', async () => {
-  const btn = $('done-open');
-  if (prepareTimer) { clearInterval(prepareTimer); prepareTimer = null; }
-  if (loginTimer) { clearInterval(loginTimer); loginTimer = null; }
-  if (waitingTimer) { clearTimeout(waitingTimer); waitingTimer = null; }
-  btn.disabled = true;
-  msg($('done-msg'), '正在启动看板后端…（首次启动约 5~20 秒，窗口会自动切换）', 'info');
-  try {
-    const r = await apiCallT('open_dashboard', 15000);
-    if (!r || !r.ok) {
-      msg($('done-msg'), (r && r.error) || '启动失败：请查看 runtime\\shell.log', 'err');
-      btn.disabled = false;
-    }
-  } catch (e) {
-    msg($('done-msg'), String(e), 'err');
-    btn.disabled = false;
-  }
-});
+// 完成
+$('done-open').addEventListener('click', async () => { try { await apiCall('open_dashboard'); } catch (e) {} });
 
 // 事件绑定
 $('prepare-start').addEventListener('click', prepareStart);
@@ -330,78 +306,37 @@ $('key-save').addEventListener('click', keySave);
 $('env-save').addEventListener('click', envSave);
 $('login-refresh').addEventListener('click', loginRefresh);
 
-// ===== 桥接等待 + 自检（v3.0.1 修复）=====
-// 背景：PyInstaller 打包后 pywebview 的 JS 桥接是**异步注入**的。旧版在脚本末尾
-// 立刻调 checkAll()，桥接还没注入就报「自检失败：桥接未就绪」，且重试上限 5×5s；
-// 首次冷启动慢的机器（onefile 解包 + 杀软扫描 + WebView2 冷启动）会永久卡在红色
-// 横幅上，看起来像"exe 坏了"。现在：桥接就绪前只显示蓝色「正在初始化」，
-// 就绪后才自检，失败无限次重试，超时才给出可操作的说明。
-const BRIDGE_HINT_MS = 3000;    // 3 秒后开始显示等待提示
-const BRIDGE_GIVEUP_MS = 120000; // 120 秒仍未就绪 → 给出可操作说明（含日志路径）
-const bridgeStart = Date.now();
+// 初始自检：等待 pywebview 桥接就绪（pywebviewready 事件在 _createApi 完成后触发）
 let initDone = false;
-let waitingTimer = null;
-let checkTries = 0;
-
-function bridgeReady() {
-  return !!(window.pywebview && window.pywebview.api &&
-            typeof window.pywebview.api.check === 'function');
-}
-// v3.0.3：桥接就绪前禁用所有操作按钮 —— 避免用户在 pywebview 仍在注入/加载时点击，
-// 触发 js_api（在 WebView2 的 UI 线程执行）与注入争抢而卡死界面。
-const WIZARD_BUTTONS = ['prepare-start', 'key-save', 'env-save', 'login-refresh', 'done-open'];
-function setWizardInteractive(on) {
-  WIZARD_BUTTONS.forEach((id) => { const el = $(id); if (el) el.disabled = !on; });
-}
-setWizardInteractive(false);
-// 把前端状态写进 runtime\shell.log，便于远程排障（桥接未就绪时静默丢弃）
-function logEvent(text) {
-  try {
-    if (bridgeReady() && typeof window.pywebview.api.log_event === 'function') {
-      window.pywebview.api.log_event(String(text));
-    }
-  } catch (e) { /* 遥测失败不影响向导 */ }
-}
-function waitHint() {
-  if (initDone) return;
-  const sec = Math.round((Date.now() - bridgeStart) / 1000);
-  if (Date.now() - bridgeStart >= BRIDGE_GIVEUP_MS) {
-    showErr('本地界面组件初始化超时（已等待 ' + sec + ' 秒）[' + bridgeState() +
-            ']。可先用 tools\\1_prepare_G4W_ga.bat → 2_key_for_ga.bat → 3_env_for_G4W.bat' +
-            ' → 4_login_G4W_ga.bat 手动完成同样配置；并把 runtime\\shell.log 与' +
-            ' runtime\\shell-pywebview.log 发给开发者。');
-    logEvent('bridge GIVEUP after ' + sec + 's ' + bridgeState());
-    return;
-  }
-  showInfo('正在初始化本地界面组件…（已等待 ' + sec + ' 秒）');
-  waitingTimer = setTimeout(waitHint, 1000);
-}
-
 function initWizard() {
   if (initDone) return;
   // 双保险：事件到达时方法可能还在创建中，确认方法存在才执行自检
-  if (!bridgeReady()) { setTimeout(initWizard, 300); return; }
+  if (!(window.pywebview && window.pywebview.api &&
+        typeof window.pywebview.api.check === 'function')) {
+    setTimeout(initWizard, 300);
+    return;
+  }
   initDone = true;
-  if (waitingTimer) { clearTimeout(waitingTimer); waitingTimer = null; }
-  setWizardInteractive(true);   // 桥接确认可用后才允许点击
-  hideErr();
-  logEvent('bridge ready after ' + Math.round((Date.now() - bridgeStart) / 1000) + 's');
   checkAll();
 }
 window.addEventListener('pywebviewready', initWizard);
-waitingTimer = setTimeout(waitHint, BRIDGE_HINT_MS);
-// 兜底：某些情况下 pywebviewready 事件可能早于监听注册，持续轮询检测
-// （桥接就绪前不触发 checkAll，避免"桥接未就绪"误报——PyInstaller 打包后桥接注入是异步的）
+// 桥接长时间未就绪的可见提示（正常情况 <1s；若卡住用户能看到原因）
+setTimeout(() => {
+  if (!initDone) showErr('等待本地桥接初始化… [' + bridgeState() + ']');
+}, 5000);
+// 兜底：某些情况下事件可能早于监听注册，持续轮询检测（桥接就绪前不触发 checkAll，
+// 避免"桥接未就绪"误报——PyInstaller 打包后桥接注入是异步的）
 // 注意：window.pywebview.api 初始就是空对象（truthy），必须检测具体方法存在
 (function pollReady() {
-  if (bridgeReady()) { initWizard(); return; }
-  setTimeout(pollReady, 250);
+  if (window.pywebview && window.pywebview.api &&
+      typeof window.pywebview.api.check === 'function') { initWizard(); return; }
+  setTimeout(pollReady, 300);
 })();
 
+let checkTries = 0;
 async function checkAll() {
-  if (!bridgeReady()) { initDone = false; initWizard(); return; }
   try {
-    const s = await apiCallT('check', 15000);
+    const s = await apiCallT('check', 10000);
     hideErr(); checkTries = 0;
     if (s.prepare.ok) setStep('prepare', 'done');
     if (s.key.ok) setStep('key', 'done');
@@ -424,24 +359,14 @@ async function checkAll() {
     }
     if (!s.login.ok && s.env.ok && s.key.ok && s.prepare.ok) loginRefresh();
   } catch (e) {
+    // 自检失败：显示错误并自动重试（桥接可能晚就绪），不再切回准备卡片
     checkTries++;
-    const reason = String(e && e.message ? e.message : e);
-    // 桥接类失败（尚未就绪 / 调用超时）不算"自检失败"：继续等待，不吓用户
-    if (!bridgeReady() || reason.indexOf('桥接未就绪') >= 0 || reason.indexOf('调用超时') >= 0) {
-      logEvent('check retry ' + checkTries + ' waiting bridge: ' + reason);
-      if (!bridgeReady()) { initDone = false; initWizard(); return; }
-      showInfo('正在初始化本地界面组件…（第 ' + checkTries + ' 次重试）');
-      setTimeout(checkAll, 2000);
-      return;
-    }
-    logEvent('check FAILED tries=' + checkTries + ' reason=' + reason);
-    showErr('自检失败：' + reason + '（第 ' + checkTries + ' 次，2 秒后自动重试）');
-    setTimeout(checkAll, 2000);   // 不设次数上限：临时故障恢复后自动继续
+    showErr('自检失败：' + String(e && e.message ? e.message : e) +
+            (checkTries < 5 ? '（第' + checkTries + '/5 次，5 秒后自动重试）' : ''));
+    if (checkTries < 5) setTimeout(checkAll, 5000);
   }
 }
-// 注意：这里禁止立刻调用 checkAll()——脚本解析时 pywebview 桥接尚未注入，
-// 会稳定产生一次"自检失败：桥接未就绪"的红色误报（旧版卡死根因）。
-// 自检统一由 initWizard()/pollReady() 在桥接就绪后触发。
+checkAll();
 </script>
 </body>
 </html>

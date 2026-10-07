@@ -525,3 +525,43 @@ footer { padding: 24px 3px 0; color: var(--faint); font: 9px Consolas, monospace
   .hero-side { margin-top: 22px; align-items: flex-start; flex-direction: column; }
   .brief-checkin { padding-left: 0; border-left: 0; margin-top: 10px; }
 }
+
+/* ---------- 人设编辑页（沿用日记页 / 设置页的设计语言） ---------- */
+.persona-vars { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; padding: 14px 16px; }
+.persona-var { display: grid; gap: 4px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--field); color: var(--soft); text-align: left; }
+.persona-var:hover { border-color: var(--line-strong); background: var(--wechat-soft); }
+.persona-var code { font-size: 10px; }
+.persona-var small { color: var(--muted); font-size: 10px; }
+.persona-layout { display: grid; grid-template-columns: 310px minmax(0,1fr); gap: 14px; margin-top: 14px; }
+.persona-index { align-self: start; max-height: calc(100vh - 130px); padding: 18px; overflow: auto; position: sticky; top: 96px; }
+.persona-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.persona-actions button, .persona-editor-actions button { padding: 6px 10px; font-size: 10px; }
+.persona-editor-actions { display: flex; gap: 6px; }
+.persona-list { margin-top: 12px; }
+.persona-item { display: block; width: 100%; padding: 12px 10px; border: 1px solid transparent; border-bottom-color: var(--line); background: transparent; color: var(--soft); text-align: left; }
+.persona-item.active, .persona-item:hover { border-color: var(--line-strong); border-radius: 9px; background: var(--wechat-soft); }
+.persona-item strong, .persona-item small { display: block; }
+.persona-item strong { font-size: 11px; }
+.persona-item small { margin-top: 5px; color: var(--muted); font-size: 9px; }
+.persona-meta { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; line-height: 1.8; word-break: break-all; }
+.persona-editor { padding: 18px; }
+.persona-hint { margin: 4px 0 14px; color: var(--muted); font-size: 10px; line-height: 1.9; }
+.persona-section { display: grid; gap: 10px; margin-bottom: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--field); }
+.persona-section-head, .persona-child-head { display: flex; align-items: center; gap: 8px; }
+.persona-section-head input, .persona-child-head input { flex: 1; min-width: 0; }
+.persona-tag { flex: none; color: var(--faint); font: 9px Consolas, monospace; }
+.persona-child { display: grid; gap: 10px; padding-left: 12px; border-left: 1px solid var(--line-strong); }
+.persona-add-row { margin-top: 2px; }
+.persona-preview, .persona-io { margin-top: 12px; color: var(--muted); font-size: 10px; }
+.persona-preview summary, .persona-io summary { cursor: pointer; }
+.persona-preview pre { max-height: 320px; overflow: auto; margin-top: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-strong); color: var(--soft); font-size: 11px; white-space: pre-wrap; }
+.persona-io-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 10px 0; }
+.persona-io-row .search-field { flex: 1; min-width: 180px; }
+.persona-message { min-height: 16px; margin-top: 10px; color: var(--soft); font-size: 10px; }
+.settings-card textarea { width: 100%; min-width: 0; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; outline: none; background: var(--field); color: var(--text); font-family: inherit; font-size: 12px; line-height: 1.75; resize: vertical; }
+.settings-card textarea:focus { border-color: var(--wechat); box-shadow: 0 0 0 3px rgba(var(--accent-rgb),.1); }
+
+@media (max-width: 1100px) {
+  .persona-layout { grid-template-columns: 1fr; }
+  .persona-index { position: static; max-height: none; }
+}

@@ -6,7 +6,7 @@
 
 - exe 必须放在 G4W 根目录（与 runtime 平级）：靠自身位置定位 python 和数据
 - 端口默认 18180；环境变量 G4W_DASHBOARD_PORT 可覆盖
-- 若 18180 已有看板在跑（手动启动的）→ 直接复用，退出时不杀
+- 若 18180 已有看板在跑（手动启动的）→ 启动时复用；托盘「退出」仍会按端口关掉服务
 """
 import ctypes
 import json
@@ -37,6 +37,10 @@ GA_APP_DIR = os.path.join(ROOT, "runtime", "app")
 G4W_STATE_DIR = os.path.join(ROOT, "runtime", "G4W-data")
 ICON = os.path.join(BUNDLE_DIR, "icon.ico")
 LOADING_FILE = os.path.join(BUNDLE_DIR, "loading.html")
+WIZARD_FILE = os.path.join(BUNDLE_DIR, "wizard.html")
+PYWEBVIEW_LOG = os.path.join(ROOT, "runtime", "shell-pywebview.log")
+# WebView2 Evergreen Bootstrapper 官方下载地址（缺运行时时的引导用）
+WEBVIEW2_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
 
 backend_proc = None      # 本次启动的后端（复用时为 None）
 quitting = False
@@ -90,19 +94,72 @@ def request_show_existing():
         return False
 
 
-def stop_backend():
-    global backend_proc
-    if backend_proc is None:
-        return
-    proc, backend_proc = backend_proc, None
+def _pids_listening_on(port: int) -> list[int]:
+    """返回本机监听 port 的进程 PID 列表（Windows netstat）。"""
+    pids: list[int] = []
     try:
-        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                       capture_output=True, timeout=15)
-    except Exception:
+        # -ano 输出里本地地址可能是 0.0.0.0:18180 / 127.0.0.1:18180 / [::]:18180
+        completed = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=8,
+        )
+        needle = f":{int(port)}"
+        for line in (completed.stdout or "").splitlines():
+            # 例:  TCP    127.0.0.1:18180    0.0.0.0:0    LISTENING    12345
+            if "LISTENING" not in line.upper():
+                continue
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            local = parts[1] if parts[0].upper() in {"TCP", "UDP"} else ""
+            if not local.endswith(needle):
+                continue
+            try:
+                pid = int(parts[-1])
+            except ValueError:
+                continue
+            if pid > 0 and pid not in pids:
+                pids.append(pid)
+    except Exception as exc:
+        _log(f"pids_listening_on({port}) failed: {type(exc).__name__}: {exc}")
+    return pids
+
+
+def stop_backend(force_port: bool = True):
+    """彻底关闭看板后端。
+
+    - 先杀本次壳拉起的 backend_proc
+    - 默认再按端口清掉仍占用 18180 的进程（含手动 bat 启动的），
+      避免托盘「退出」后服务还在跑、浏览器仍能打开
+    """
+    global backend_proc
+    killed: list[int] = []
+    if backend_proc is not None:
+        proc, backend_proc = backend_proc, None
         try:
-            proc.kill()
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                           capture_output=True, timeout=15)
+            killed.append(int(proc.pid))
         except Exception:
-            pass
+            try:
+                proc.kill()
+                killed.append(int(proc.pid))
+            except Exception:
+                pass
+    if force_port:
+        for pid in _pids_listening_on(PORT):
+            if pid in killed:
+                continue
+            try:
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                               capture_output=True, timeout=15)
+                killed.append(pid)
+                _log(f"stop_backend: killed listener pid={pid} on :{PORT}")
+            except Exception as exc:
+                _log(f"stop_backend: fail pid={pid}: {type(exc).__name__}: {exc}")
+    if killed:
+        _log(f"stop_backend: done pids={killed}")
 
 
 def _base_env() -> dict:
@@ -220,6 +277,7 @@ class WizardApi:
 
     def __init__(self):
         self.window = None
+        self.bridge_ready = False   # 前端确认 window.pywebview.api 可用后置 True
         self._prepare_proc = None
         self._login_proc = None
         self._prepare_log = os.path.join(ROOT, "runtime", "wizard-prepare.log")
@@ -260,6 +318,21 @@ class WizardApi:
             return {"prepare": {"ok": False}, "key": {"ok": False},
                     "env": {"ok": False, "preset": {}}, "login": {"ok": False},
                     "all_ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    def log_event(self, text: str) -> dict:
+        """前端向导页上报的状态/错误（桥接就绪、自检失败原因等）→ runtime\\shell.log。
+
+        用于远程排障：对方机器只要把 runtime\\shell.log 发回来，就能判定
+        JS 桥接是否就绪、自检究竟是哪一步失败。
+        """
+        try:
+            text = str(text)[:400]
+            _log(f"js: {text}")
+            if text.startswith("bridge ready"):
+                self.bridge_ready = True
+        except Exception:
+            pass
+        return {"ok": True}
 
     # ---- ① 准备环境 ----
     def prepare_start(self) -> dict:
@@ -350,17 +423,35 @@ class WizardApi:
         return {"done": done, "running": running, "svg": svg, "link": link}
 
     # ---- 完成 ----
-    def open_dashboard(self) -> dict:
+    def _open_dashboard_worker(self) -> None:
+        """后台线程：拉起/复用看板后端 → 等端口就绪 → 切页（v3.0.3）。
+
+        注意：open_dashboard 是 js_api，运行在 WebView2 的 **UI 线程** 上；
+        在这里 sleep 等端口会让整个窗口无响应（3.0.2「扫码后看板登录页卡死、
+        任务管理器强杀才行」的根因之一）。所以等待必须放在后台线程，
+        UI 线程立刻返回，由前端显示「正在启动看板…」。
+        """
         try:
-            # 向导模式从未启动看板后端：先拉起/复用，等待就绪后再跳转
             ensure_backend()
-            for _ in range(60):          # 最多等 30 秒
+            deadline = time.time() + 45.0
+            while time.time() < deadline:
                 if port_open(PORT):
                     break
                 time.sleep(0.5)
-            self.window.load_url(DASHBOARD_URL)
-            _log("api open_dashboard -> backend ready, load_url")
-            return {"ok": True}
+            if port_open(PORT):
+                _log("open_dashboard worker: backend ready -> load_url")
+                self.window.load_url(DASHBOARD_URL)   # 内部 Invoke 到 UI 线程
+            else:
+                _log("open_dashboard worker: backend NOT ready after 45s")
+        except Exception as exc:
+            _log(f"open_dashboard worker ERROR: {type(exc).__name__}: {exc}")
+
+    def open_dashboard(self) -> dict:
+        try:
+            # 立刻返回，等待放到后台线程：UI 线程绝不允许阻塞
+            threading.Thread(target=self._open_dashboard_worker, daemon=True).start()
+            _log("api open_dashboard -> scheduled async backend start")
+            return {"ok": True, "starting": True}
         except Exception as exc:
             _log(f"api open_dashboard ERROR: {type(exc).__name__}: {exc}")
             return {"ok": False, "error": str(exc)}
@@ -564,17 +655,127 @@ class WinTray:
             pass
 
 
+# ---------------------------------------------------------------- WebView2 预检
+# 背景：pywebview 在 **缺 WebView2 运行时**（或 .NET < 4.6.2）时会静默退回 mshtml
+# (IE11) 渲染器（webview/platforms/winforms.py），只写一条 logger.warning ——
+# windowed exe 里完全看不见。IE11 跑不了向导页的 ES6 语法，用户只会看到界面异常 /
+# 桥接永远不就绪（向导报"自检失败"）。所以启动前显式检测，缺了就给出可操作提示。
+WEBVIEW2_GUIDS = (
+    "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",  # WebView2 Runtime
+    "{2CD8A007-E189-409D-A2C8-9AF4EF3C72AA}",  # Beta
+    "{0D50BFEC-CD6A-4F9A-964C-C7416E3ACB10}",  # Developer
+    "{65C35B14-6C1D-4122-AC46-7148CC9D6497}",  # Canary
+)
+
+
+def webview2_status() -> tuple:
+    """检测 WebView2 运行时：返回 (是否存在, 版本号)。非 Windows 直接视为可用。"""
+    if os.name != "nt":
+        return True, "n/a"
+    try:
+        import winreg
+    except Exception:
+        return True, "unknown"
+    for hive_name in ("HKEY_CURRENT_USER", "HKEY_LOCAL_MACHINE"):
+        hive = getattr(winreg, hive_name, None)
+        if hive is None:
+            continue
+        for guid in WEBVIEW2_GUIDS:
+            for sub in (rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{guid}",
+                        rf"SOFTWARE\Microsoft\EdgeUpdate\Clients\{guid}"):
+                try:
+                    with winreg.OpenKey(hive, sub) as key:
+                        ver, _ = winreg.QueryValueEx(key, "pv")
+                    if ver and str(ver) not in ("", "0.0.0.0"):
+                        return True, str(ver)
+                except Exception:
+                    continue
+    return False, ""
+
+
+def dotnet_release() -> int:
+    """返回 .NET Framework 4.x 的 Release 号（0 = 读不到）。pywebview 要求 >= 394802。"""
+    if os.name != "nt":
+        return 999999
+    try:
+        import winreg
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"
+        ) as key:
+            value, _ = winreg.QueryValueEx(key, "Release")
+        return int(value)
+    except Exception:
+        return 0
+
+
+def confirm_renderer(webview2_ok: bool, build: str) -> bool:
+    """WebView2/.NET 不满足时弹原生提示；返回 True = 继续启动，False = 中止。"""
+    net_ok = dotnet_release() >= 394802
+    if webview2_ok and net_ok:
+        return True
+    missing = []
+    if not webview2_ok:
+        missing.append("Microsoft Edge WebView2 运行时（未在注册表中找到）")
+    if not net_ok:
+        missing.append(".NET Framework 4.6.2 或更高版本")
+    text = (
+        "G4W 的窗口依赖 WebView2 运行时，但本机缺少：\n\n  · "
+        + "\n  · ".join(missing)
+        + "\n\n缺少时界面会退化成 IE 内核，向导只会一直提示"
+          "「正在初始化本地界面组件」或「自检失败」。\n\n"
+          "点「确定」→ 打开官方下载页（装完重新双击 G4W.exe）。\n"
+          "点「取消」→ 仍要尝试启动（已手动装过固定版本运行时的话）。"
+    )
+    try:
+        r = ctypes.windll.user32.MessageBoxW(0, text, "G4W 需要 WebView2 运行时", 0x1 | 0x30)
+    except Exception:
+        return True
+    if r == 1:  # IDOK
+        try:
+            os.startfile(WEBVIEW2_URL)
+        except Exception as exc:
+            _log(f"open webview2 download page failed: {type(exc).__name__}: {exc}")
+        return False
+    return True
+
+
+def enable_pywebview_logging():
+    """把 pywebview 自己的日志落到 runtime\\shell-pywebview.log（渲染器降级/桥接报错可见）。"""
+    try:
+        import logging
+        handler = logging.FileHandler(PYWEBVIEW_LOG, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logger = logging.getLogger("pywebview")
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+    except Exception as exc:
+        _log(f"pywebview logging setup failed: {type(exc).__name__}: {exc}")
+
+
 def main():
+    _log(f"start frozen={getattr(sys, 'frozen', False)} root={ROOT} bundle={BUNDLE_DIR}")
     import webview
 
     lock = acquire_lock()
     if lock is None:
+        _log("second instance: lock busy, requesting show")
         # 已有实例：请求它唤起窗口（不依赖托盘图标是否可见）
         if request_show_existing():
             msgbox("G4W 控制中心", "看板已在运行，已为你恢复窗口。")
         else:
             msgbox("G4W 控制中心", "看板已在运行，但无法唤起窗口。\n请在任务管理器中结束 G4W 进程后重试。")
         return
+
+    wv2_ok, wv2_build = webview2_status()
+    _log(f"renderer preflight: webview2={wv2_ok} build={wv2_build or '-'} dotnet_release={dotnet_release()}")
+    if not confirm_renderer(wv2_ok, wv2_build):
+        _log("aborted by user: WebView2 / .NET missing")
+        try:
+            lock.close()
+        except Exception:
+            pass
+        return
+    enable_pywebview_logging()
 
     tray = None
 
@@ -588,6 +789,11 @@ def main():
     def quit_all():
         global quitting
         quitting = True
+        # 先停后端服务，再拆托盘/窗口，避免窗口已关而 18180 仍在监听
+        try:
+            stop_backend(force_port=True)
+        except Exception as exc:
+            _log(f"quit_all stop_backend: {type(exc).__name__}: {exc}")
         try:
             if tray is not None:
                 tray.stop()
@@ -634,11 +840,56 @@ def main():
              " login=" + str(status["login"]["ok"]))
         wizard = WizardApi()
         window = webview.create_window(
-            "G4W 首次使用向导", url="file:///" + os.path.join(BUNDLE_DIR, "wizard.html").replace("\\", "/"),
+            "G4W 首次使用向导", url="file:///" + WIZARD_FILE.replace("\\", "/"),
             width=860, height=760, min_size=(760, 640),
             background_color="#10141a", text_select=False, js_api=wizard,
         )
         wizard.window = window
+
+        # ---- 桥接自愈（v3.0.3 重写）----
+        # 故障（3.0.2 现场）：pywebview 的注入偶发丢失 → window.pywebview 在但 api 是空对象
+        # （前端报 `方法缺失:xxx [pw=object api=obj:0]`）。
+        # 3.0.2 用后台线程重放 inject_pywebview + window.expose 兜底，但 **WebView2 的 COM
+        # 只允许 UI 线程访问**：后台线程一碰就抛 E_NOINTERFACE /
+        # "CoreWebView2 can only be accessed from the UI thread"（见 runtime\shell-pywebview.log），
+        # 并与点击触发的 js_api 调用（在 WebMessageReceived=UI 线程里执行）争抢 →
+        # 界面概率性卡死（"刚启动就点配置环境会卡，等几秒就好"）。
+        # v3.0.3 改法：① 绝不做跨线程注入/暴露；② 桥接迟迟不来时只做一次"重新加载页面"——
+        # window.load_url 内部走 Invoke 到 UI 线程，pywebview 会在自己的 NavigationCompleted
+        # 里正常注入；③ 后台线程只 sleep 与读一个 bool，不碰任何 COM 对象。
+        _expose_state = {"started": False}
+
+        def _bridge_watchdog():
+            url = "file:///" + WIZARD_FILE.replace("\\", "/")
+            waited = 0.0
+            while waited < 24.0 and not wizard.bridge_ready:   # 最多等 24s
+                time.sleep(2.0)
+                waited += 2.0
+            if wizard.bridge_ready:
+                _log(f"bridge watchdog: ready after ~{waited:.0f}s")
+                return
+            _log("bridge watchdog: still not ready -> reload page once (Invoke -> UI thread)")
+            try:
+                window.load_url(url)
+            except Exception as exc:
+                _log(f"bridge watchdog reload failed: {type(exc).__name__}: {exc}")
+                return
+            waited = 0.0
+            while waited < 30.0 and not wizard.bridge_ready:
+                time.sleep(2.0)
+                waited += 2.0
+            _log("bridge watchdog: " + ("recovered after reload" if wizard.bridge_ready
+                                        else "GAVE UP (frontend never confirmed bridge)"))
+
+        def _on_window_loaded():
+            if _expose_state["started"]:
+                _log("window loaded event fired again -> ignored")
+                return
+            _expose_state["started"] = True
+            _log("window loaded event fired -> start bridge watchdog")
+            threading.Thread(target=_bridge_watchdog, daemon=True).start()
+
+        window.events.loaded += _on_window_loaded
     window.events.closing += on_closing
 
     # 托盘：纯 Win32 Shell_NotifyIcon（零 .NET/pystray 依赖）
@@ -672,26 +923,23 @@ def main():
 
     # 登录态持久化：默认 private_mode=True 时 WebView2 用随机临时目录，
     # 每次启动 cookie 全丢 → 每次都要重新登录；关掉并固定存储路径即可免登
+    # 登录态持久化 + 强制 EdgeChromium 渲染器：默认 private_mode=True 时 WebView2 用
+    # 随机临时目录，每次启动 cookie 全丢 → 每次都要重新登录；关掉并固定存储路径即可免登。
+    # gui="edgechromium" 显式锁渲染器（缺 WebView2 的情况已在启动预检里拦下/确认）。
+    storage_path = os.path.join(
+        os.environ.get("APPDATA") or os.path.expanduser("~"), "G4W", "pywebview"
+    )
+    _log(f"webview.start renderer=edgechromium storage_path={storage_path}")
     if wizard is not None:
         # 向导模式：不拉起看板后端（向导完成后 open_dashboard 才需要）；
         # 但看板可能已由外部启动（复用），等待期间不阻塞向导
-        webview.start(None, window,
-                      private_mode=False,
-                      storage_path=os.path.join(
-                          os.environ.get("APPDATA") or os.path.expanduser("~"),
-                          "G4W", "pywebview",
-                      ))
+        webview.start(None, window, gui="edgechromium", private_mode=False,
+                      storage_path=storage_path)
     else:
-        webview.start(
-            bootstrap, window,
-            private_mode=False,
-            storage_path=os.path.join(
-                os.environ.get("APPDATA") or os.path.expanduser("~"),
-                "G4W", "pywebview",
-            ),
-        )
-    # 主循环退出 = 彻底退出
-    stop_backend()
+        webview.start(bootstrap, window, gui="edgechromium", private_mode=False,
+                      storage_path=storage_path)
+    # 主循环退出 = 彻底退出（再兜底一次，含端口占用进程）
+    stop_backend(force_port=True)
     # 清理向导子进程（login/prepare 残留：壳退出后子进程会继续跑并锁文件）
     if wizard is not None:
         for proc in (wizard._prepare_proc, wizard._login_proc):
