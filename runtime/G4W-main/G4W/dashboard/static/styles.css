@@ -565,3 +565,20 @@ footer { padding: 24px 3px 0; color: var(--faint); font: 9px Consolas, monospace
   .persona-layout { grid-template-columns: 1fr; }
   .persona-index { position: static; max-height: none; }
 }
+
+/* ---------- 模型配置：供应商 / 可用模型 / 角色 ---------- */
+.model-list { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 12px; }
+.model-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); }
+.model-row-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.model-row-main strong { color: var(--text); font-size: 12px; }
+.model-row-main span { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.model-row-actions { display: flex; flex-shrink: 0; gap: 6px; }
+.model-row-actions .ghost-button { padding: 5px 10px; font-size: 11px; }
+.ghost-button.danger { border-color: rgba(255, 107, 114, .34); color: var(--danger); }
+.model-fetch { margin: 6px 0 4px; }
+.model-fetch-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; }
+.model-fetch-head strong { color: var(--soft); font-size: 12px; }
+.model-fetch-head .primary-button, .model-fetch-head .ghost-button { padding: 6px 12px; font-size: 11px; }
+.model-fetch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px; max-height: 220px; overflow: auto; padding: 9px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); }
+.model-fetch-item { display: flex; align-items: center; gap: 6px; color: var(--soft); font-size: 11px; }
+.model-fetch-item input { width: auto; min-width: 0; }

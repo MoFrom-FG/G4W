@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#111714" />
   <title>G4W Control Center</title>
-  <link rel="stylesheet" href="/styles.css?v=20261007-persona" />
+  <link rel="stylesheet" href="/styles.css?v=20261007-model" />
   <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
 </head>
 <body>
@@ -250,7 +250,23 @@
         <form id="settings-form" class="settings-grid">
           <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">IDENTITY</div><h2>个人与助手</h2></div><span class="scope">全局 · 重启生效</span></div><label>用户名字<input name="userName" id="setting-user-name" /></label><label>日常称呼<input name="userIdentity" id="setting-user-identity" /></label><label>用户性别<select name="userGender" id="setting-user-gender"><option value="male">male</option><option value="female">female</option><option value="neutral">neutral</option></select></label><label>助手名字<input name="botName" id="setting-bot-name" /></label></article>
           <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">INTERACTION</div><h2>微信交互</h2></div><span class="scope">当前微信用户 · 实时</span></div><label class="switch-row"><span><b>中间 Turn 回复</b><small>/turn on|off</small></span><input type="checkbox" name="turnEnabled" id="setting-turn" /></label><label class="switch-row"><span><b>Worker 进度汇报</b><small>/worker_turn on|off</small></span><input type="checkbox" name="workerTurnEnabled" id="setting-worker-turn" /></label><label class="switch-row"><span><b>完整 Input 快照</b><small>/input on|off</small></span><input type="checkbox" name="inputCaptureEnabled" id="setting-input" /></label><label>微信分片阈值<input type="number" min="1" max="3800" name="chunkChars" id="setting-chunk" /></label></article>
-          <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">MODEL ROUTING</div><h2>模型与工作区</h2></div><span class="scope" id="model-control-status">连接主进程</span></div><label>当前对话模型<select id="setting-conductor-model" data-model-target="conductor" disabled><option>正在读取真实模型列表…</option></select><small class="model-hint">与微信 /model 完全相同，选择后立即切换当前会话。</small></label><label>Worker 默认模型<select id="setting-worker-model" data-model-target="worker" disabled><option>正在读取真实模型列表…</option></select><small class="model-hint">选择后立即保存，新建 Worker 生效。</small></label><label>Pro 默认模型<select id="setting-pro-model" data-model-target="pro" disabled><option>正在读取真实模型列表…</option></select><small class="model-hint">选择后立即保存，新建升级任务生效。</small></label><label>当前工作区<input name="workspaceRoot" id="setting-workspace" /></label></article>
+          <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">MODEL ROUTING</div><h2>模型与工作区</h2></div><span class="scope" id="model-control-status">连接主进程</span></div><label>conductor 模型<select id="setting-conductor-model" data-model-target="conductor" disabled><option>正在读取真实模型列表…</option></select><small class="model-hint">与微信 /model 完全相同，选择后立即切换当前会话。</small></label><label>worker 模型<select id="setting-worker-model" data-model-target="worker" disabled><option>正在读取真实模型列表…</option></select><small class="model-hint">选择后立即保存，新建 Worker 生效。</small></label><label>pro 模型<select id="setting-pro-model" data-model-target="pro" disabled><option>正在读取真实模型列表…</option></select><small class="model-hint">选择后立即保存，新建升级任务生效。</small></label><label>当前工作区<input name="workspaceRoot" id="setting-workspace" /></label></article>
+          <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">PROVIDERS</div><h2>供应商配置</h2></div><span class="scope" id="provider-config-scope">读取中…</span></div>
+            <div id="provider-config-list" class="model-list"><span class="muted-tag">检测中…</span></div>
+            <div class="field-pair"><label>名称<input id="model-provider-name" placeholder="例如：DeepSeek 官方 / 我的中转" /></label><label>接口地址<input id="model-provider-base" placeholder="https://api.deepseek.com" /></label></div>
+            <label>API Key<input type="password" id="model-provider-key" autocomplete="off" placeholder="该供应商的 Key（只存本机，界面只显示掩码）" /></label>
+            <div class="embedding-actions"><button type="button" class="primary-button" id="model-provider-save">添加 / 更新供应商</button></div>
+            <small class="model-hint" id="provider-config-message">供应商只存本机 G4W-data\model-providers.json；每行的「测试」会用它的地址与 Key 拉一次模型列表（等于连通性检查）。</small>
+          </article>
+          <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">MODELS</div><h2>模型配置</h2></div><span class="scope" id="model-config-scope">读取中…</span></div>
+            <label>从供应商拉取<select id="model-fetch-provider"></select></label>
+            <div class="embedding-actions"><button type="button" class="primary-button" id="model-fetch-run">拉取模型列表</button><button type="button" class="ghost-button" id="model-test-all">测试全部可用模型</button></div>
+            <div id="model-config-fetched" class="model-fetch"></div>
+            <div class="section-heading">可用模型</div>
+            <div id="model-config-models" class="model-list"><span class="muted-tag">检测中…</span></div>
+            <small class="model-hint" id="model-config-message">拉取后勾选添加 → 写入 runtime\app\mykey.py，GA 按文件时间自动重载；「测试」会真的发一次最小请求（显示耗时与回复片段）；删除只移除该模型配置，原文件自动备份。</small>
+            <small class="model-hint" id="model-config-anthropic"></small>
+          </article>
           <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">AUTOMATION</div><h2>主动联系与检索</h2></div><span class="scope">配置存储 · 实时</span></div><label class="switch-row"><span><b>随机 Check-in</b><small>/checkin</small></span><input type="checkbox" name="checkinEnabled" id="setting-checkin" /></label><div class="field-pair"><label>最短分钟<input type="number" min="1" name="checkinMin" id="setting-checkin-min" /></label><label>最长分钟<input type="number" min="1" name="checkinMax" id="setting-checkin-max" /></label></div><label class="switch-row"><span><b>向量检索</b><small>/vector on|off</small></span><input type="checkbox" name="vectorEnabled" id="setting-vector" /></label><label class="switch-row"><span><b>Web Search</b><small>G4W_WEB_SEARCH_ENABLED</small></span><input type="checkbox" name="webSearchEnabled" id="setting-web-search" /></label></article>
           <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">EMBEDDING</div><h2>向量检索安装</h2></div><span class="scope" id="embedding-scope">安装态 · 约 4-8GB</span></div><div id="embedding-status" class="embedding-status"><span class="muted-tag">检测中…</span></div><label class="switch-row"><span><b>网络偏好：国内镜像加速</b><small>开=国内镜像（推荐） · 关=国外官方源</small></span><input type="checkbox" id="embedding-network" checked /></label><div class="embedding-actions"><button type="button" class="ghost-button" id="embedding-speedtest">测速选优</button><button type="button" class="primary-button" id="embedding-install">安装 / 重装</button><button type="button" class="ghost-button" id="embedding-log">安装日志</button></div><div id="embedding-speedtest-result" class="embedding-speedtest"></div><small class="model-hint" id="embedding-message">不安装也能用关键词检索；安装完成后在微信发 /vector on 开启向量检索。测速选优结果自动用于安装源。</small></article>
           <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">SECURITY</div><h2>登录安全</h2></div><span class="scope">dashboard 登录密码 · 立即生效</span></div><label>旧密码<input type="password" id="setting-old-password" autocomplete="current-password" placeholder="当前登录密码" /></label><label>新密码<input type="password" id="setting-new-password" autocomplete="new-password" placeholder="至少 8 位" /></label><label>确认新密码<input type="password" id="setting-new-password2" autocomplete="new-password" placeholder="再次输入" /></label><button type="button" class="primary-button" id="password-save">修改密码</button><small class="model-hint" id="password-message">修改后立即生效，下次登录使用新密码。</small></article>
@@ -280,6 +296,6 @@
   <div class="timeline-tooltip" id="timeline-tooltip" role="tooltip" hidden></div>
   <script src="/vendor/markdown-it.min.js"></script>
   <script src="/vendor/katex/katex.min.js"></script>
-  <script src="/app.js?v=20260816-refresh3"></script>
+  <script src="/app.js?v=20261007-model3"></script>
 </body>
 </html>

@@ -698,6 +698,17 @@ class G4WController:
         ]))
 
     def reread(self, sender_id: str) -> str:
+        """重载人格 / 操作 SOP / 能力注册表（**不发起模型轮次**）。
+
+        旧实现用 ``session.run(user_message=False)`` 往会话里注入一次“合成轮次”，
+        让模型回一句“已刷新”。在内部事件（非用户消息）路径上，这一轮会被挂住：
+        表现为无限 ``LLM Running (Turn 1)``、上下文每轮 +2 条消息、只有 /stop 或
+        /new 才能中断（用户发 /reread、看板点「人设 → 注入」都会触发）。
+
+        而人格 / 操作 SOP / 能力注册表本来就在**每条消息构造系统提示词时重建**
+        （_system_prompt → instructions.load，缓存键含 mtime/size），所以重载只需
+        清缓存 + 重建索引，不需要模型参与：下一条消息自然使用新内容。
+        """
         self.instructions.ensure_runtime_files()
         self.instructions.clear()
         sop_catalog = getattr(self, "sop_catalog", None)
@@ -707,18 +718,9 @@ class G4WController:
         reload_registry = getattr(getattr(self, "capabilities", None), "try_reload", None)
         registry = reload_registry() if callable(reload_registry) else {"ok": True, "reloaded": False}
         registry_note = "能力注册表已重新读取。" if registry.get("ok") else f"能力注册表修改无效，继续使用上一份有效配置：{registry.get('error')}"
-        session = self.sessions.get(sender_id)
-        if session is None:
-            return f"🔄 人格、操作SOP与能力注册表已重新读取。{registry_note} 当前还没有活跃Conductor会话，请发送一条普通消息开始。"
-        return session.run(
-            "重新读取当前data目录中的微信人格、操作SOP与能力注册表。不要总结规则细节，只用一句简短中文确认刷新完成。",
-            event_context=(
-                "微信指令刷新\n"
-                f"人格和操作SOP缓存已清除。{registry_note}"
-            ),
-            user_message=False,
-            delivery_kind="plain_reply",
-        )
+        # 不再调用 session.run()：避免内部事件把轮次挂住（死循环根因）
+        note = "当前会话会在下一条消息使用新内容。" if self.sessions.get(sender_id) is not None else "当前还没有活跃会话，发送一条普通消息即可开始。"
+        return f"🔄 人格、操作SOP与能力注册表已重新读取。{registry_note}{note}"
 
     def identity_profile(self, sender_id: str) -> dict:
         profile = {

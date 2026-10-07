@@ -112,6 +112,18 @@ def configure_ga_key(api_key: str, *, replace_existing: bool = False) -> dict:
     }
 
 
+def ensure_ga_key_template() -> dict:
+    """按包内模板创建**空密钥**的 mykey.py（首次向导“先跳过填 Key”用）。已存在则不动。"""
+    if MYKEY_FILE.is_file():
+        return {"ok": True, "created": False, "mykeyFile": str(MYKEY_FILE), "message": "Existing mykey.py kept"}
+    if not KEY_TEMPLATE.is_file():
+        raise FileNotFoundError(f"G4W GA key template is missing: {KEY_TEMPLATE}")
+    content = KEY_TEMPLATE.read_text(encoding="utf-8")
+    compile(content, str(MYKEY_FILE), "exec")
+    _atomic_write(MYKEY_FILE, content)
+    return {"ok": True, "created": True, "mykeyFile": str(MYKEY_FILE), "emptyKeys": True}
+
+
 def interactive_ga_key() -> dict:
     replace = not MYKEY_FILE.is_file()
     if MYKEY_FILE.is_file():

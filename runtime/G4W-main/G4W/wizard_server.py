@@ -214,6 +214,11 @@ class WizardHandler(BaseHTTPRequestHandler):
 
                 self._send_json_message(save_key(self._read_body().get("api_key", "")))
                 return
+            if path == "/api/setup/key/skip":
+                from .dashboard.setup_wizard import skip_key
+
+                self._send_json_message(skip_key())
+                return
             if path == "/api/setup/env":
                 from .dashboard.setup_wizard import save_env
 

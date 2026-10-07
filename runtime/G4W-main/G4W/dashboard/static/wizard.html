@@ -77,12 +77,13 @@ button { padding:9px 20px; border:0; border-radius:9px; font-size:13px; cursor:p
 
   <!-- ② API Key -->
   <div class="card hidden" data-card="key">
-    <h2>配置 DeepSeek API Key</h2>
-    <div class="desc">密钥只保存在本机 <code>runtime\app\mykey.py</code>，不会上传。</div>
-    <label>API Key（platform.deepseek.com 获取）</label>
+    <h2>配置模型 API Key</h2>
+    <div class="desc">密钥只保存在本机 <code>runtime\app\mykey.py</code>，不会上传。<b>不强制 DeepSeek</b>——任何 OpenAI 兼容的服务都能用（通义 / Kimi / 火山 / 中转站…），也可以<b>先跳过</b>，装好之后在控制中心「环境配置 → 模型配置」里再配置其他模型。</div>
+    <label>API Key（DeepSeek 在 platform.deepseek.com 获取；其他服务商填其提供的 Key）</label>
     <input id="key-input" type="password" placeholder="sk-..." autocomplete="off">
     <div class="row">
-      <div class="msg info grow" id="key-msg">填写后保存</div>
+      <div class="msg info grow" id="key-msg">填写后保存，或点右侧“先跳过”</div>
+      <button class="btn-ghost" id="key-skip">先跳过，稍后在看板配置</button>
       <button class="btn-primary" id="key-save">保存</button>
     </div>
   </div>
@@ -300,9 +301,25 @@ async function pollLogin() {
 // 完成
 $('done-open').addEventListener('click', async () => { try { await apiCall('open_dashboard'); } catch (e) {} });
 
+// ② API Key —— 先跳过：走同源 HTTP 接口（不依赖打包进 exe 的桥，免重打包）
+async function keySkip() {
+  const btn = $('key-skip'); btn.disabled = true;
+  msg($('key-msg'), '正在跳过…', 'info');
+  try {
+    const response = await fetch('/api/setup/key/skip', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const r = await response.json();
+    if (r.ok) {
+      msg($('key-msg'), '已跳过：之后在控制中心「环境配置 → 模型配置」里配置即可 ✓', 'ok');
+      setTimeout(() => showCard('env'), 600);
+    } else { msg($('key-msg'), r.error || '跳过失败', 'err'); }
+  } catch (e) { msg($('key-msg'), String(e), 'err'); }
+  btn.disabled = false;
+}
+
 // 事件绑定
 $('prepare-start').addEventListener('click', prepareStart);
 $('key-save').addEventListener('click', keySave);
+$('key-skip').addEventListener('click', keySkip);
 $('env-save').addEventListener('click', envSave);
 $('login-refresh').addEventListener('click', loginRefresh);
 

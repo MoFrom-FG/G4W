@@ -713,7 +713,7 @@ function routeTo(page) {
   if (target === "timeline" && !timelineData) loadTimeline();
   if (target === "diary" && !diaryData) loadDiary();
   if (target === "sop" && !sopData) loadSopIndex();
-  if (target === "environment") loadModels();
+  if (target === "environment") { loadModels(); loadModelConfig(); }
   if (target === "services") { renderServicesPage(true); if (terminalId) startTerminalPoll(); }
   else if (terminalTimer) stopTerminalPoll();
   if (target === "workers") startWorkerMonitorPoll();
@@ -2967,6 +2967,284 @@ $("persona-io-import")?.addEventListener("click", personaImport);
 $("persona-io-export")?.addEventListener("click", personaExport);
 $("persona-io-runtime")?.addEventListener("click", personaImportRuntime);
 personaBindEditor();
+
+// ---------- 供应商配置 + 模型配置（拉取 / 测试 / 添加 / 删除） ----------
+let modelConfigData = null;
+let modelFetchState = { providerId: "", providerName: "", models: [] };
+let modelTestResults = {};
+
+function providerMessage(text, isError = false) {
+  const node = $("provider-config-message");
+  if (node) {
+    node.textContent = text || "";
+    node.style.color = isError ? "var(--danger, #e5484d)" : "";
+  }
+  if (text) showToast(text, isError);
+}
+
+function modelMessage(text, isError = false) {
+  const node = $("model-config-message");
+  if (node) {
+    node.textContent = text || "";
+    node.style.color = isError ? "var(--danger, #e5484d)" : "";
+  }
+  if (text) showToast(text, isError);
+}
+
+async function loadModelConfig() {
+  try {
+    modelConfigRender(await fetchJson("/api/model-config"));
+  } catch (error) {
+    modelMessage(`读取失败：${error.message}`, true);
+  }
+}
+
+async function modelConfigPost(action, payload, announce) {
+  try {
+    return await fetchJson(`/api/model-config/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
+  } catch (error) {
+    (announce || modelMessage)(error.message, true);
+    return null;
+  }
+}
+
+function testKey(providerId, model) {
+  return `${providerId}::${model}`;
+}
+
+function testLine(providerId, model) {
+  const info = modelTestResults[testKey(providerId, model)];
+  if (!info) return "";
+  if (info.ok) {
+    const reply = info.reply ? ` · 回复 “${esc(info.reply)}”` : "";
+    return `<span class="model-test ok">✓ ${esc(String(info.latencyMs ?? "?"))} ms${reply}</span>`;
+  }
+  return `<span class="model-test err">✗ ${esc(info.error || "失败")}</span>`;
+}
+
+function providerIdForBase(apibase) {
+  const provider = ((modelConfigData || {}).providers || []).find((row) => row.apibase === apibase);
+  return provider ? provider.id : "";
+}
+
+function modelConfigRender(data) {
+  modelConfigData = data;
+  const providerScope = $("provider-config-scope");
+  if (providerScope) providerScope.textContent = `${(data.providers || []).length} 个供应商`;
+  const list = $("provider-config-list");
+  if (list) {
+    list.innerHTML = (data.providers || []).map((item) => `
+      <div class="model-row">
+        <div class="model-row-main"><strong>${esc(item.name || item.apibase)}</strong>
+          <span>${esc(item.apibase)}</span>
+          <span class="tag">${item.hasKey ? "Key " + esc(item.keyMask) : "缺 Key"}</span></div>
+        <div class="model-row-actions">
+          <button type="button" class="ghost-button" data-test-provider="${esc(item.id)}">测试</button>
+          <button type="button" class="ghost-button danger" data-delete-provider="${esc(item.id)}">删除</button>
+        </div>
+      </div>`).join("") || '<span class="muted-tag">还没有供应商：下面填接口地址 + Key，再点「添加 / 更新供应商」</span>';
+  }
+  const scope = $("model-config-scope");
+  if (scope) scope.textContent = `${(data.models || []).length} 个可用模型`;
+  const models = $("model-config-models");
+  if (models) {
+    models.innerHTML = (data.models || []).map((item) => `
+      <div class="model-row">
+        <div class="model-row-main"><strong>${esc(item.name || item.model || item.var)}</strong>
+          <span>${esc(item.apibase || "—")}</span></div>
+        <div class="model-row-actions">
+          <button type="button" class="ghost-button" data-test-model="${esc(item.model || item.name)}" data-test-base="${esc(item.apibase || "")}">测试</button>
+          <button type="button" class="ghost-button danger" data-delete-model="${esc(item.var)}">删除</button>
+        </div>
+        ${testLine(providerIdForBase(item.apibase || ""), item.model || item.name)}
+      </div>`).join("") || '<span class="muted-tag">还没有可用模型：先选供应商「拉取模型列表」，再勾选添加</span>';
+  }
+  const select = $("model-fetch-provider");
+  if (select) {
+    const providers = data.providers || [];
+    select.innerHTML = providers.map((item) => `<option value="${esc(item.id)}">${esc(item.name || item.apibase)}</option>`).join("")
+      || '<option value="">（先添加供应商）</option>';
+    if (modelFetchState.providerId && providers.some((item) => item.id === modelFetchState.providerId)) {
+      select.value = modelFetchState.providerId;
+    }
+  }
+  const anthropic = $("model-config-anthropic");
+  if (anthropic) anthropic.textContent = data.anthropicHint || "";
+  if (data.parseError) modelMessage(data.parseError, true);
+  else if (data.skipped) modelMessage("首次向导里跳过了填 Key —— 在「供应商配置」里加一家就能用了。");
+  modelConfigRenderFetch();
+}
+
+function modelConfigRenderFetch() {
+  const box = $("model-config-fetched");
+  if (!box) return;
+  const state = modelFetchState;
+  if (!state.providerId) { box.innerHTML = ""; return; }
+  const known = new Set(((modelConfigData || {}).models || []).map((item) => item.model));
+  const rows = state.models.map((name) => {
+    const added = known.has(name);
+    return `
+      <div class="model-fetch-item">
+        <label><input type="checkbox" value="${esc(name)}" ${added ? "checked disabled" : ""}>
+          <span>${esc(name)}${added ? "（已添加）" : ""}</span></label>
+        <span class="model-fetch-actions">
+          <button type="button" class="ghost-button" data-test-fetched="${esc(name)}">测试</button>
+          ${added ? "" : `<button type="button" class="ghost-button" data-add-one="${esc(name)}">添加</button>`}
+        </span>
+        ${testLine(state.providerId, name)}
+      </div>`;
+  }).join("");
+  box.innerHTML = `
+    <div class="model-fetch-head"><strong>${esc(state.providerName || state.providerId)}：${state.models.length} 个模型</strong>
+      <button type="button" class="primary-button" id="model-fetch-add">把勾选的添加为可用模型</button>
+      <button type="button" class="ghost-button" id="model-fetch-close">收起</button></div>
+    <div class="model-fetch-grid">${rows || '<span class="muted-tag">该供应商没有返回模型列表</span>'}</div>`;
+  $("model-fetch-add")?.addEventListener("click", modelConfigAddChecked);
+  $("model-fetch-close")?.addEventListener("click", () => {
+    modelFetchState = { providerId: "", providerName: "", models: [] };
+    modelConfigRenderFetch();
+  });
+}
+
+async function modelConfigProviderSave() {
+  const name = $("model-provider-name").value.trim();
+  const apibase = $("model-provider-base").value.trim();
+  const apikey = $("model-provider-key").value.trim();
+  if (!apibase) { providerMessage("请先填接口地址", true); return; }
+  const result = await modelConfigPost("provider/add", { name, apibase, apikey }, providerMessage);
+  if (!result) return;
+  $("model-provider-key").value = "";
+  modelConfigRender(result);
+  providerMessage("供应商已保存（只写本机）。点它的「测试」可拉一次模型列表。");
+}
+
+async function modelConfigProviderDelete(id) {
+  if (!confirm(`删除供应商 ${id}？（已添加的可用模型不受影响）`)) return;
+  const result = await modelConfigPost("provider/delete", { id }, providerMessage);
+  if (result) { modelConfigRender(result); providerMessage("供应商已删除。"); }
+}
+
+async function modelConfigProviderTest(providerId) {
+  providerMessage("正在测试该供应商…");
+  const result = await modelConfigPost("models/fetch", { providerId }, providerMessage);
+  if (!result) return;
+  if (!result.ok) { providerMessage(`测试失败：${result.error || "未知错误"}`, true); return; }
+  providerMessage(`连通正常：返回 ${(result.models || []).length} 个模型。`);
+}
+
+async function modelConfigFetchRun() {
+  const select = $("model-fetch-provider");
+  const providerId = select ? select.value : "";
+  if (!providerId) { modelMessage("请先添加并选择一个供应商", true); return; }
+  const providerName = select.options[select.selectedIndex]?.text || "";
+  modelMessage("正在拉取模型列表…");
+  const result = await modelConfigPost("models/fetch", { providerId });
+  if (!result) return;
+  if (!result.ok) { modelMessage(`拉取失败：${result.error || "未知错误"}`, true); return; }
+  modelFetchState = { providerId: result.providerId || providerId, providerName, models: result.models || [] };
+  modelConfigRenderFetch();
+  modelMessage(`拉取到 ${(result.models || []).length} 个模型：可以逐个「测试」，或勾选后添加。`);
+}
+
+async function modelTestRaw(providerId, model) {
+  try {
+    return await fetchJson("/api/model-config/model/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId, model }),
+    });
+  } catch (error) {
+    return { ok: false, error: error.message || String(error) };
+  }
+}
+
+async function modelConfigTestModel(providerId, model) {
+  if (!providerId || !model) { modelMessage("缺少供应商或模型", true); return; }
+  modelMessage(`正在测试 ${model}…`);
+  const result = await modelTestRaw(providerId, model);
+  modelTestResults[testKey(providerId, model)] = result;
+  modelMessage(result.ok
+    ? `${model} 可用（${result.latencyMs} ms${result.reply ? "，回复：" + result.reply : ""}）`
+    : `${model} 测试失败：${result.error || "未知错误"}`, !result.ok);
+  modelConfigRender(modelConfigData);
+}
+
+async function modelConfigTestAll() {
+  const models = (modelConfigData || {}).models || [];
+  if (!models.length) { modelMessage("还没有可用模型", true); return; }
+  modelMessage(`正在依次测试 ${models.length} 个可用模型…`);
+  let okCount = 0;
+  for (const item of models) {
+    const provider = ((modelConfigData || {}).providers || []).find((row) => row.apibase === item.apibase);
+    const providerId = provider ? provider.id : "";
+    if (!providerId) continue;
+    const name = item.model || item.name;
+    const result = await modelTestRaw(providerId, name);
+    modelTestResults[testKey(providerId, name)] = result;
+    if (result.ok) okCount += 1;
+  }
+  modelConfigRender(modelConfigData);
+  modelMessage(`测试完成：${okCount}/${models.length} 可用（每行下方显示耗时或错误）`, okCount !== models.length);
+}
+
+async function modelConfigAddOne(model) {
+  const providerId = modelFetchState.providerId;
+  const state = await modelConfigPost("model/add", { providerId, model });
+  if (!state) return;
+  modelConfigRender(state);
+  modelMessage(`已添加 ${model}；GA 按文件时间自动重载，无需重启。`, false);
+  if (typeof loadModels === "function") { try { loadModels(); } catch (_) {} }
+}
+
+async function modelConfigAddChecked() {
+  const box = $("model-config-fetched");
+  const picked = Array.from(box.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map((node) => node.value);
+  if (!picked.length) { modelMessage("请先勾选至少一个模型", true); return; }
+  let state = null;
+  for (const model of picked) {
+    state = await modelConfigPost("model/add", { providerId: modelFetchState.providerId, model });
+    if (!state) return;
+  }
+  modelConfigRender(state);
+  modelMessage(`已添加 ${picked.length} 个模型；GA 按文件时间自动重载，无需重启。`);
+  if (typeof loadModels === "function") { try { loadModels(); } catch (_) {} }
+}
+
+async function modelConfigModelDelete(variable) {
+  if (!confirm(`删除可用模型 ${variable}？（会从 mykey.py 移除该配置，原文件自动备份）`)) return;
+  const result = await modelConfigPost("model/delete", { var: variable });
+  if (result) { modelConfigRender(result); modelMessage("已删除该模型配置。"); }
+}
+
+$("provider-config-list")?.addEventListener("click", (event) => {
+  const testButton = event.target.closest("[data-test-provider]");
+  if (testButton) { modelConfigProviderTest(testButton.dataset.testProvider); return; }
+  const deleteButton = event.target.closest("[data-delete-provider]");
+  if (deleteButton) modelConfigProviderDelete(deleteButton.dataset.deleteProvider);
+});
+$("model-config-models")?.addEventListener("click", (event) => {
+  const testButton = event.target.closest("[data-test-model]");
+  if (testButton) {
+    const provider = ((modelConfigData || {}).providers || []).find((row) => row.apibase === testButton.dataset.testBase);
+    modelConfigTestModel(provider ? provider.id : "", testButton.dataset.testModel);
+    return;
+  }
+  const deleteButton = event.target.closest("[data-delete-model]");
+  if (deleteButton) modelConfigModelDelete(deleteButton.dataset.deleteModel);
+});
+$("model-config-fetched")?.addEventListener("click", (event) => {
+  const testButton = event.target.closest("[data-test-fetched]");
+  if (testButton) { modelConfigTestModel(modelFetchState.providerId, testButton.dataset.testFetched); return; }
+  const addButton = event.target.closest("[data-add-one]");
+  if (addButton) modelConfigAddOne(addButton.dataset.addOne);
+});
+$("model-provider-save")?.addEventListener("click", modelConfigProviderSave);
+$("model-fetch-run")?.addEventListener("click", modelConfigFetchRun);
+$("model-test-all")?.addEventListener("click", modelConfigTestAll);
 $("timeline-board").addEventListener("wheel", (event) => {
   const scroll = event.target.closest(".timeline-scroll");
   if (!scroll) return;

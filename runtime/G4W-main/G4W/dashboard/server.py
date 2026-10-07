@@ -27,6 +27,12 @@ from ..knowledge.ingest import extract_text, validate_extracted_text
 from ..memory.checkin import CheckinService
 from ..memory.instructions import render_instruction_template, update_env_file
 from ..memory.persona_store import BACKUP_KEEP, MAX_CHARS, PERSONA_VARIABLES, PersonaError, PersonaStore
+from ..core.model_config import (ANTHROPIC_HINT, LITE_VAR, MAIN_VAR, PROVIDER_PRESETS, ModelConfigError,
+                                 add_model, add_provider, delete_model, delete_provider,
+                                 ensure_template as ensure_mykey_template, fetch_models,
+                                 load_providers, mask_key, probe as probe_model_config,
+                                 raw_key as mykey_raw_key, read_config as read_mykey_config,
+                                 save_config as save_mykey_config, test_model)
 from ..memory.vector.vector_config import load_config as load_vector_config
 from ..memory.vector.vector_config import set_vector_enabled
 from ..core.platform_adapt import detached_kwargs, kill_tree, pid_alive, pids_listening_on, portable_python, service_launch_kwargs, service_python, venv_python, venv_site_packages
@@ -1150,6 +1156,134 @@ class DashboardState:
                 note = f"已激活；注入未开始（{error}）。下一条消息即生效。"
         return {"ok": True, **info, "injected": bool(inject_id), "injectId": inject_id,
                 "injectedDone": False, "senderId": sender_id, "reply": "", "note": note}
+
+    # ---------- 模型配置（供应商 / 可用模型 / 角色） ----------
+    def _masked_providers(self, config) -> list:
+        rows = []
+        for row in load_providers(config):
+            rows.append({
+                "id": row["id"],
+                "name": row["name"],
+                "apibase": row["apibase"],
+                "hasKey": bool(str(row.get("apikey") or "").strip()),
+                "keyMask": mask_key(row.get("apikey")),
+                "addedAt": row.get("addedAt") or "",
+            })
+        return rows
+
+    def model_config(self) -> dict:
+        """供应商列表 + 可用模型 + conductor/worker 当前选择（密钥只给掩码）。"""
+        config = self._fresh_config()
+        state = read_mykey_config(config)
+        models = []
+        for entry in state.get("entries") or []:
+            name = entry["name"] or entry["model"]
+            models.append({
+                "var": entry["var"], "name": name, "model": entry["model"], "apibase": entry["apibase"],
+                "hasKey": entry["hasKey"], "keyMask": entry["keyMask"],
+                "managed": entry["var"] in {MAIN_VAR, LITE_VAR},
+                "inUse": name in {str(config.conductor_model or ""), str(config.worker_model or "")},
+            })
+        return {
+            "ok": True,
+            "file": state["file"],
+            "exists": state["exists"],
+            "updatedAt": state["updatedAt"],
+            "parseError": state["parseError"],
+            "providers": self._masked_providers(config),
+            "models": models,
+            "presets": PROVIDER_PRESETS,
+            "anthropicHint": ANTHROPIC_HINT,
+            "skipped": (Path(config.state_dir) / ".model-key-skipped").is_file(),
+        }
+
+    def model_config_save(self, payload: dict) -> dict:
+        """兼容旧接口：保存 main / lite 两个变量（密钥留空 = 沿用已保存的）。"""
+        config = self._fresh_config()
+        current = read_mykey_config(config)
+
+        def merge(variable: str, incoming) -> dict:
+            row = dict(incoming) if isinstance(incoming, dict) else {}
+            existing = dict((current.get("managed") or {}).get(variable) or {})
+            model = str(row.get("model") or "").strip()
+            row["model"] = model
+            row["name"] = str(row.get("name") or model or existing.get("name") or variable)
+            if not str(row.get("apikey") or "").strip():
+                row["apikey"] = mykey_raw_key(config, variable)
+            row.setdefault("api_mode", existing.get("apiMode") or "chat_completions")
+            row.setdefault("reasoning_effort", existing.get("reasoningEffort") or "xhigh")
+            row.setdefault("stream", True)
+            return row
+
+        result = save_mykey_config(config, merge(MAIN_VAR, payload.get("main")), merge(LITE_VAR, payload.get("lite")))
+        state = self.model_config()
+        state["saved"] = {"file": str(result.get("file") or ""), "backup": str(result.get("backup") or "")}
+        return state
+
+    def model_config_probe(self, payload: dict) -> dict:
+        """探测接口连通性（key 留空则用已保存的密钥，明文只在进程内使用）。"""
+        config = self._fresh_config()
+        apibase = str(payload.get("apibase") or "").strip()
+        apikey = str(payload.get("apikey") or "").strip() or mykey_raw_key(config)
+        model = str(payload.get("model") or "").strip()
+        return dict(probe_model_config(apibase, apikey, model))
+
+    def model_config_template(self, payload: dict) -> dict:
+        """按包内模板创建 mykey.py（已存在则不动，绝不覆盖）。"""
+        config = self._fresh_config()
+        info = ensure_mykey_template(config)
+        state = self.model_config()
+        state["created"] = bool(info.get("created"))
+        return state
+
+    def model_config_provider_add(self, payload: dict) -> dict:
+        config = self._fresh_config()
+        result = add_provider(config, payload.get("name"), payload.get("apibase"), payload.get("apikey"))
+        state = self.model_config()
+        state["saved"] = {"updated": str(result.get("updated") or ""), "added": str(result.get("added") or "")}
+        return state
+
+    def model_config_provider_delete(self, payload: dict) -> dict:
+        config = self._fresh_config()
+        delete_provider(config, payload.get("id"))
+        return self.model_config()
+
+    def model_config_models_fetch(self, payload: dict) -> dict:
+        """用某个已添加供应商的 base + key 拉取模型列表。"""
+        config = self._fresh_config()
+        provider_id = str(payload.get("providerId") or payload.get("id") or "").strip()
+        if not provider_id:
+            raise ModelConfigError("请先选择一个供应商")
+        result = fetch_models(config, provider_id)
+        result["existing"] = [entry["model"] for entry in read_mykey_config(config).get("entries") or []]
+        return result
+
+    def model_config_model_add(self, payload: dict) -> dict:
+        """把模型加入可用模型（写进 mykey.py）。"""
+        config = self._fresh_config()
+        provider_id = str(payload.get("providerId") or "").strip()
+        model = str(payload.get("model") or "").strip()
+        if not provider_id:
+            raise ModelConfigError("请先选择一个供应商")
+        result = add_model(config, provider_id, model)
+        state = self.model_config()
+        state["added"] = str(result.get("added") or result.get("already") or "")
+        return state
+
+    def model_config_model_delete(self, payload: dict) -> dict:
+        config = self._fresh_config()
+        variable = str(payload.get("var") or "").strip()
+        delete_model(config, variable)
+        return self.model_config()
+
+    def model_config_model_test(self, payload: dict) -> dict:
+        """测试某个模型连通性：真发一次最小 chat，返回耗时与回复片段。"""
+        config = self._fresh_config()
+        provider_id = str(payload.get("providerId") or "").strip()
+        model = str(payload.get("model") or "").strip()
+        if not provider_id:
+            raise ModelConfigError("请先选择该模型所属的供应商")
+        return test_model(config, provider_id, model)
 
     def persona_inject_status(self, inject_id: str) -> dict:
         """注入（第二步）：轮询 reread 的结果。"""
@@ -2838,6 +2972,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if path == "/api/persona/inject-status":
                 self._send_json(self.dashboard.persona_inject_status(str((query.get("id") or [""])[0])))
                 return
+            if path == "/api/model-config":
+                self._send_json(self.dashboard.model_config())
+                return
             if path == "/api/settings":
                 self._send_json(self.dashboard.settings())
                 return
@@ -2937,6 +3074,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
                 self._send_json({"ok": True})
+                return
+            if path.startswith("/api/model-config/"):
+                if not self._require_auth():
+                    return
+                payload = self._read_json_body()
+                action = path[len("/api/model-config/"):]
+                handlers = {
+                    "save": lambda: self.dashboard.model_config_save(payload),
+                    "probe": lambda: self.dashboard.model_config_probe(payload),
+                    "template": lambda: self.dashboard.model_config_template(payload),
+                    "provider/add": lambda: self.dashboard.model_config_provider_add(payload),
+                    "provider/delete": lambda: self.dashboard.model_config_provider_delete(payload),
+                    "models/fetch": lambda: self.dashboard.model_config_models_fetch(payload),
+                    "model/add": lambda: self.dashboard.model_config_model_add(payload),
+                    "model/delete": lambda: self.dashboard.model_config_model_delete(payload),
+                    "model/test": lambda: self.dashboard.model_config_model_test(payload),
+                }
+                handler = handlers.get(action)
+                if handler is None:
+                    self._send_json({"ok": False, "error": "Not found"}, 404)
+                    return
+                self._send_json(handler())
                 return
             if path.startswith("/api/persona/"):
                 if not self._require_auth():

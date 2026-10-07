@@ -133,6 +133,29 @@ def save_key(api_key: str) -> dict:
     return {"ok": True}
 
 
+def skip_key() -> dict:
+    """向导里“先跳过填 API Key”：按模板建一个**空密钥**的 mykey.py，并留一个标记。
+
+    之后在控制中心「环境配置 → 模型配置」里填任意 OpenAI 兼容模型即可（不强制 DeepSeek）。
+    """
+    from ..cli.initializer import ensure_ga_key_template
+
+    try:
+        result = ensure_ga_key_template()
+    except Exception as error:  # noqa: BLE001
+        return {"ok": False, "error": str(error)}
+    try:
+        marker = state_dir() / ".model-key-skipped"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("skipped at " + time.strftime("%Y-%m-%dT%H:%M:%S") + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    result.setdefault("ok", True)
+    result["skipped"] = True
+    result["message"] = "已跳过 API Key；之后可在控制中心「环境配置 → 模型配置」里填任意 OpenAI 兼容模型。"
+    return result
+
+
 def save_env(values: dict) -> dict:
     from ..cli.initializer import configure_env
 
@@ -209,10 +232,14 @@ def _render_inline_page() -> bytes:
         "<p class='sub'>创建运行环境并安装依赖（已就绪时可跳过）。</p>"
         "<button id='btn-prepare'>一键准备环境</button><div class='msg' id='msg-prepare'></div>"
         "<pre id='log-prepare' style='display:none'></pre></div>"
-        "<div class='card'><h2>② 配置 DeepSeek API Key</h2>"
-        "<label>API Key（platform.deepseek.com 获取）</label>"
+        "<div class='card'><h2>② 配置模型 API Key</h2>"
+        "<p class='sub'>不强制 DeepSeek：任何 OpenAI 兼容的服务都能用（通义 / Kimi / 火山 / 中转站…）。"
+        "也可以先跳过，装好后在控制中心「环境配置 → 模型配置」里再配置。</p>"
+        "<label>API Key（DeepSeek 在 platform.deepseek.com 获取；其他服务商填其提供的 Key）</label>"
         "<input id='key' type='password' autocomplete='off' placeholder='sk-...'>"
-        "<button id='btn-key'>保存并继续</button><div class='msg' id='msg-key'></div></div>"
+        "<button id='btn-key'>保存并继续</button>"
+        "<button id='btn-key-skip' style='margin-left:8px'>先跳过，稍后在看板配置</button>"
+        "<div class='msg' id='msg-key'></div></div>"
         "<div class='card'><h2>③ 环境配置</h2>"
         "<label>你的名字</label><input id='env-name' placeholder='必填'>"
         "<label>日常称呼</label><input id='env-identity'>"
@@ -239,6 +266,7 @@ SCRIPT = (
     "var t=el('txt-'+step);if(t){t.textContent=ok?'已完成':'待完成';}}"
     "function refresh(){return fetch('/api/setup/status').then(function(r){return r.json();}).then(function(s){"
     "mark('prepare',s.prepare.ok);mark('key',s.key.ok);mark('env',s.env.ok);mark('login',s.login.ok);"
+    "if(s.key&&s.key.skipped){var kt=el('txt-key');if(kt){kt.textContent='已跳过（待在看板配置）';}}"
     "if(s.env&&s.env.preset){var p=s.env.preset;if(!el('env-name').value){el('env-name').value=p.G4W_USER_NAME||'';}"
     "if(!el('env-identity').value){el('env-identity').value=p.G4W_USER_IDENTITY||'';}"
     "if(!el('env-bot').value){el('env-bot').value=p.G4W_BOT_NAME||'';}"
@@ -251,6 +279,9 @@ SCRIPT = (
     "el('btn-key').onclick=function(){var v=el('key').value.trim();if(!v){setMsg('msg-key','请填写 API Key','err');return;}"
     "setMsg('msg-key','保存中…','');post('/api/setup/key',{api_key:v}).then(function(r){"
     "if(r.ok){el('key').value='';setMsg('msg-key','已保存','ok');refresh();}else{setMsg('msg-key',r.error||'保存失败','err');}});};"
+    "el('btn-key-skip').onclick=function(){setMsg('msg-key','正在跳过…','');post('/api/setup/key/skip',{}).then(function(r){"
+    "if(r.ok){setMsg('msg-key','已跳过：稍后在看板「环境配置 → 模型配置」里配置 ✓','ok');refresh();}"
+    "else{setMsg('msg-key',r.error||'跳过失败','err');}});};"
     "el('btn-env').onclick=function(){var values={G4W_USER_NAME:el('env-name').value.trim(),G4W_USER_IDENTITY:el('env-identity').value.trim(),"
     "G4W_USER_GENDER:el('env-gender').value,G4W_BOT_NAME:el('env-bot').value.trim(),"
     "G4W_CONDUCTOR_MODEL:el('env-model').value,G4W_WORKER_MODEL:el('env-model').value};"

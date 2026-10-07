@@ -50,13 +50,22 @@ def setup_status() -> dict:
     except OSError:
         login_ok = False
     prepare_ok = venv_python_path().is_file()
-    key_ok = (GA_APP_DIR / "mykey.py").is_file()
+    mykey_path = GA_APP_DIR / "mykey.py"
+    key_ok = mykey_path.is_file()
+    # 向导允许“先跳过填 Key”：此时文件已按模板建好（空密钥）并留了标记，
+    # 之后在控制中心「环境配置 → 模型配置」里填任意 OpenAI 兼容模型即可。
+    key_skipped = (state_dir() / ".model-key-skipped").is_file()
+    if key_skipped and key_ok:
+        try:
+            key_skipped = "apikey': ''" in mykey_path.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            key_skipped = False
     env_ok = "G4W_USER_NAME" in env_values and "G4W_BOT_NAME" in env_values
     if force:
         prepare_ok = key_ok = env_ok = login_ok = False
     return {
         "prepare": {"ok": prepare_ok, "detail": str(venv_python_path())},
-        "key": {"ok": key_ok, "detail": str(GA_APP_DIR / "mykey.py")},
+        "key": {"ok": key_ok, "detail": str(mykey_path), "skipped": bool(key_skipped)},
         "env": {"ok": env_ok, "preset": env_values},
         "login": {"ok": login_ok, "detail": str(accounts)},
         "all_ok": prepare_ok and key_ok and env_ok and login_ok,
