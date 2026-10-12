@@ -6,9 +6,9 @@ G4W（Generic Agent for WeChat）运行在 Windows 电脑上，通过微信提�
 
 当前发布底座：[GenericAgent Desktop Portable 1.8](https://github.com/lsdefine/GenericAgent/releases#release-desktop-portable-v0.1.8)。
 
-当前版本：**3.1.3**（2026-10）· [📦 下载 Windows 便携包](https://github.com/MoFrom-FG/G4W/releases/latest) · [各版本更新说明](https://github.com/MoFrom-FG/G4W/releases)
+当前版本：**3.1.4**（2026-10）· [📦 下载 Windows 便携包](https://github.com/MoFrom-FG/G4W/releases/latest) · [各版本更新说明](https://github.com/MoFrom-FG/G4W/releases)
 
-3.1.x 主要更新：**人设预设编辑页**、**供应商 / 模型可视化配置**（任意 OpenAI 兼容接口，不强制 DeepSeek）、**时间轴站点主题切换**、**提示词页三个视图独立显示**、首次向导**完成后自动进入看板**且 API Key 步骤**可跳过**，以及从向导到一键更新的整条链路加固。
+3.1.x 主要更新：**人设预设编辑页**、**供应商 / 模型可视化配置**（任意 OpenAI 兼容接口，不强制 DeepSeek）、**时间轴站点主题切换**、**提示词页三个视图独立显示**、首次向导**完成后自动进入看板**且 API Key 步骤**可跳过**、**全新安装向导卡死（pywebview 无限递归）根治**，以及 iLink 登录状态机补齐（验证码 / 二维码过期 / IDC 重定向 / 已绑定）。
 
 WeChat功能逻辑参考：[Cyberboss](https://github.com/WenXiaoWendy/cyberboss/tree/main)。
 

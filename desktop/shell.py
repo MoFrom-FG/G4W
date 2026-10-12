@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 import urllib.request
+import webbrowser
 from ctypes import wintypes
 
 if getattr(sys, "frozen", False):
@@ -286,13 +287,22 @@ class WizardApi:
     """向导页 js_api：自检 / 准备环境 / 保存配置 / 扫码登录。"""
 
     def __init__(self):
-        self.window = None
+        # 必须是下划线属性：pywebview 的 util.get_functions() 会 dir() 遍历 js_api 的
+        # **公开**属性并对非可调用对象递归，下划线开头的会被跳过。若把它挂成 self.window，
+        # pywebview 会顺着 pywebview Window → WinForms Form 一路递归，而
+        # DefaultFont.FontFamily.GenericSansSerif 每次返回的都是**新对象**（id 不重复，
+        # 去重失效）→ 无限递归 → 日志每秒几条 "Error while processing window.native.DefaultFont..."
+        # → UI 线程被占满、内存涨到几十 GB、桥接永远就绪不了（向导卡在第一步）。
+        self._window = None
         self.bridge_ready = False   # 前端确认 window.pywebview.api 可用后置 True
         self._prepare_proc = None
         self._login_proc = None
         self._prepare_log = os.path.join(ROOT, "runtime", "wizard-prepare.log")
         self._login_log = os.path.join(ROOT, "runtime", "login.log")
         self._qr_page = os.path.join(G4W_STATE_DIR, "login-qrcode.html")
+        self._qr_mtime = 0.0          # 二维码文件 mtime：变了说明 login 刷新过二维码
+        self._qr_svg = ""             # 缓存已解析的二维码 SVG / 链接
+        self._qr_link = ""
 
     def _call_initializer(self, func: str, payload: dict) -> dict:
         """子进程调用 G4W.cli.initializer 函数（stdin JSON 传参，避免命令行泄露密钥）。"""
@@ -439,19 +449,29 @@ class WizardApi:
         svg, link = "", ""
         try:
             if os.path.isfile(self._qr_page):
-                text = open(self._qr_page, "r", encoding="utf-8", errors="replace").read()
-                start = text.find("<svg")
-                end = text.find("</svg>")
-                if start != -1 and end != -1:
-                    svg = text[start:end + 6]
-                href = text.find("<a href=\"")
-                if href != -1:
-                    rest = text[href + 9:]
-                    link = rest[:rest.find("\"")]
+                # 二维码可能被 login 子进程刷新（expired → 重新获取）。按 mtime 判断，
+                # 变了才重新解析，并把 qrVersion 交给前端，让界面重渲染新码。
+                mtime = os.path.getmtime(self._qr_page)
+                if mtime != self._qr_mtime:
+                    self._qr_mtime = mtime
+                    with open(self._qr_page, "r", encoding="utf-8", errors="replace") as handle:
+                        text = handle.read()
+                    start = text.find("<svg")
+                    end = text.find("</svg>")
+                    if start != -1 and end != -1:
+                        svg = text[start:end + 6]
+                    href = text.find("<a href=\"")
+                    if href != -1:
+                        rest = text[href + 9:]
+                        link = rest[:rest.find("\"")]
+                    self._qr_svg, self._qr_link = svg, link
+                else:
+                    svg, link = self._qr_svg, self._qr_link
         except Exception:
             pass
         running = self._login_proc is not None and self._login_proc.poll() is None
-        return {"done": done, "running": running, "svg": svg, "link": link}
+        return {"done": done, "running": running, "svg": svg, "link": link,
+                "qrVersion": int(self._qr_mtime or 0)}
 
     # ---- 完成 ----
     def _open_dashboard_worker(self) -> None:
@@ -471,7 +491,7 @@ class WizardApi:
                 time.sleep(0.5)
             if port_open(PORT):
                 _log("open_dashboard worker: backend ready -> load_url")
-                self.window.load_url(DASHBOARD_URL)   # 内部 Invoke 到 UI 线程
+                self._window.load_url(DASHBOARD_URL)   # 内部 Invoke 到 UI 线程
             else:
                 _log("open_dashboard worker: backend NOT ready after 45s")
         except Exception as exc:
@@ -875,7 +895,7 @@ def main():
             width=860, height=760, min_size=(760, 640),
             background_color="#10141a", text_select=False, js_api=wizard,
         )
-        wizard.window = window
+        wizard._window = window   # 下划线属性：见 WizardApi.__init__ 里的说明（公开属性会触发 pywebview 无限递归）
 
         # ---- 桥接自愈（v3.0.3 重写）----
         # 故障（3.0.2 现场）：pywebview 的注入偶发丢失 → window.pywebview 在但 api 是空对象
@@ -889,6 +909,29 @@ def main():
         # window.load_url 内部走 Invoke 到 UI 线程，pywebview 会在自己的 NavigationCompleted
         # 里正常注入；③ 后台线程只 sleep 与读一个 bool，不碰任何 COM 对象。
         _expose_state = {"started": False}
+
+        def _browser_wizard_fallback():
+            """桥接彻底起不来时的兜底：把看板后端拉起来，用**系统浏览器**打开向导。
+
+            这条路径完全不经过 pywebview，因此在 WebView2/桥接异常的机器上依然可用
+            （issue #2 那类：`pw=object api=obj:0`）。后端起好后，浏览器里是同一套
+            首次使用向导（看板在未初始化时会自动显示向导页）。
+            """
+            try:
+                ensure_backend()
+                deadline = time.time() + 45.0
+                while time.time() < deadline and not port_open(PORT):
+                    time.sleep(0.5)
+                if not port_open(PORT):
+                    _log("browser fallback: backend NOT ready after 45s")
+                    return
+                _log(f"browser fallback: opening {DASHBOARD_URL} in system browser")
+                try:
+                    webbrowser.open(DASHBOARD_URL)
+                except Exception as exc:
+                    _log(f"browser fallback: webbrowser.open failed: {type(exc).__name__}: {exc}")
+            except Exception as exc:
+                _log(f"browser fallback ERROR: {type(exc).__name__}: {exc}")
 
         def _bridge_watchdog():
             url = "file:///" + WIZARD_FILE.replace("\\", "/")
@@ -909,8 +952,11 @@ def main():
             while waited < 30.0 and not wizard.bridge_ready:
                 time.sleep(2.0)
                 waited += 2.0
-            _log("bridge watchdog: " + ("recovered after reload" if wizard.bridge_ready
-                                        else "GAVE UP (frontend never confirmed bridge)"))
+            if wizard.bridge_ready:
+                _log("bridge watchdog: recovered after reload")
+                return
+            _log("bridge watchdog: GAVE UP (frontend never confirmed bridge) -> 改用系统浏览器打开向导")
+            threading.Thread(target=_browser_wizard_fallback, daemon=True).start()
 
         def _on_window_loaded():
             if _expose_state["started"]:

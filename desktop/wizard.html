@@ -270,9 +270,12 @@ async function envSave() {
 }
 
 // ④ 扫码登录
+// shell 用二维码文件的 mtime 作为版本号：变了说明 login 子进程刷新过二维码（过期重取）
+let loginQrVersion = 0;
 async function loginRefresh() {
   msg($('login-msg'), '正在获取二维码…', 'info');
   $('qr-box').innerHTML = '<div class="qr-tip">正在获取二维码…</div>';
+  loginQrVersion = 0;
   try {
     const r = await apiCall('login_start');
     if (!r.ok) { msg($('login-msg'), r.error || '获取失败', 'err'); return; }
@@ -292,9 +295,15 @@ async function pollLogin() {
       return;
     }
     if (r.svg) {
-      $('qr-box').innerHTML = '<div style="background:#fff;border-radius:12px;padding:14px">' + r.svg + '</div>' +
-        (r.link ? '<a class="qr-link" href="' + r.link + '" target="_blank">' + r.link + '</a>' : '');
-      msg($('login-msg'), '请使用微信扫码，二维码有效约 8 分钟', 'info');
+      const version = Number(r.qrVersion || 0);
+      if (version !== loginQrVersion) {
+        // 只在二维码新增/刷新时重建 DOM（否则每 2 秒重刷会把提示语和输入焦点冲掉）
+        const refreshed = loginQrVersion !== 0;
+        loginQrVersion = version;
+        $('qr-box').innerHTML = '<div style="background:#fff;border-radius:12px;padding:14px">' + r.svg + '</div>' +
+          (r.link ? '<a class="qr-link" href="' + r.link + '" target="_blank">' + r.link + '</a>' : '');
+        msg($('login-msg'), refreshed ? '二维码已刷新，请重新扫码（有效约 8 分钟）' : '请使用微信扫码，二维码有效约 8 分钟', 'info');
+      }
     } else if (!r.running) {
       // 子进程已退出且无二维码：明确提示，避免停留在"正在获取二维码…"
       clearInterval(loginTimer); loginTimer = null;

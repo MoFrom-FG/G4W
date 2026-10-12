@@ -3,6 +3,7 @@ import json
 import os
 import random
 import socket
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -25,6 +26,47 @@ class WeixinError(RuntimeError):
     pass
 
 
+# ---------------------------------------------------------------------------
+# iLink 协议声明：与腾讯官方 @tencent-weixin/openclaw-weixin 对齐
+#   · iLink-App-Id          取自官方 package.json 的 ilink_appid
+#   · iLink-App-ClientVersion 官方编码 = (major<<16)|(minor<<8)|patch，即 0x00MMNNPP
+#   · base_info.channel_version 官方用包版本 semver；bot_agent 是产品身份（官方默认 "OpenClaw"）
+# 之所以要带：服务端可能按声明做能力门禁（社区实测过旧声明会导致手机端缺附件入口等）。
+# 说明（2026-10-12 实测）：getconfig 端点当前**不**校验该声明（新旧返回一致），
+# 因此这部分属于兼容性对齐，不是某个已知故障的修复。
+# ---------------------------------------------------------------------------
+ILINK_APP_ID = "bot"
+ILINK_CHANNEL_VERSION = "2.4.10"
+ILINK_APP_CLIENT_VERSION = (2 << 16) | (4 << 8) | 10      # 2.4.10 -> 0x02040A = 132106
+G4W_BOT_AGENT = "G4W"
+
+
+def _base_info() -> dict:
+    return {"channel_version": ILINK_CHANNEL_VERSION, "bot_agent": G4W_BOT_AGENT}
+
+
+def _stdin_is_interactive() -> bool:
+    """看板向导 / 桌面壳用管道后台跑 `G4W login`，此时 input() 拿不到用户输入。"""
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except Exception:
+        return False
+
+
+def _ilink_headers(token: str = "") -> dict:
+    """iLink 请求头（POST 与二维码轮询都用同一套声明）。"""
+    headers = {
+        "Content-Type": "application/json",
+        "AuthorizationType": "ilink_bot_token",
+        "X-WECHAT-UIN": base64.b64encode(str(random.getrandbits(32)).encode()).decode(),
+        "iLink-App-Id": ILINK_APP_ID,
+        "iLink-App-ClientVersion": str(ILINK_APP_CLIENT_VERSION),
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 def _is_timeout(error: Exception) -> bool:
     if isinstance(error, (TimeoutError, socket.timeout)):
         return True
@@ -35,12 +77,11 @@ def _is_timeout(error: Exception) -> bool:
 
 def _post(base_url: str, endpoint: str, token: str, payload: dict, timeout: int = 15, timeout_is_empty: bool = False) -> dict:
     url = urllib.parse.urljoin(base_url.rstrip("/") + "/", endpoint)
+    # 所有请求统一带上 base_info（调用方自带的优先，不再各处手写版本串）
+    if "base_info" not in payload:
+        payload = dict(payload, base_info=_base_info())
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    uin = base64.b64encode(str(random.getrandbits(32)).encode()).decode()
-    headers = {"Content-Type": "application/json", "AuthorizationType": "ilink_bot_token", "X-WECHAT-UIN": uin}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    request = urllib.request.Request(url, data=body, headers=_ilink_headers(token), method="POST")
     try:
         with urllib.request.urlopen(request, timeout=timeout + 5) as response:
             result = json.loads(response.read().decode("utf-8"))
@@ -69,11 +110,15 @@ class WeixinChannel:
         account = self.resolve_account()
         return _post(account["baseUrl"], endpoint, account["token"], payload, timeout=timeout)
 
-    def login(self) -> dict:
-        query = urllib.parse.urlencode({"bot_type": self.config.bot_type})
-        with urllib.request.urlopen(f"{self.config.weixin_base_url.rstrip('/')}/ilink/bot/get_bot_qrcode?{query}", timeout=15) as response:
-            qr = json.loads(response.read().decode("utf-8"))
-        content = qr["qrcode_img_content"]
+    # ---- 扫码登录：状态机照腾讯官方 login-qr.js 对齐（2026-10-12）----
+    # 官方处理这 7 个状态：wait / scaned / need_verifycode / expired /
+    # verify_code_blocked / scaned_but_redirect / binded_redirect / confirmed。
+    # 此前 G4W 只认 confirmed，其余一律"继续等"——于是需要验证码、二维码过期、
+    # IDC 重定向、账号已绑定的用户都会表现为"手机上扫了、电脑上不动"，无法自查。
+    LOGIN_QR_REFRESH_LIMIT = 3
+    LOGIN_TOTAL_TIMEOUT = 480
+
+    def _write_login_page(self, content: str) -> Path:
         page = self.config.state_dir / "login-qrcode.html"
         escaped = content.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
         svg = make_svg(content)
@@ -81,29 +126,159 @@ class WeixinChannel:
             "<!doctype html><html lang='zh-CN'><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>G4W 微信登录</title><style>body{font-family:Segoe UI,Microsoft YaHei,sans-serif;background:#f5f6f8;"
             "display:grid;place-items:center;min-height:100vh;margin:0}main{text-align:center}.qr{display:inline-block;padding:18px;background:white;"
-            "border:1px solid #d1d5db}p{color:#4b5563}a{word-break:break-all}</style><main><h2>G4W 微信测试账号登录</h2>"
-            f"<div class='qr'>{svg}</div><p>请使用微信扫描二维码，保持登录命令运行。</p><p><a href=\"{escaped}\">{escaped}</a></p></main></html>",
+            "border:1px solid #d1d5db}p{color:#4b5563;max-width:520px}a{word-break:break-all}"
+            ".warn{color:#b45309}</style><main><h2>G4W 微信测试账号登录</h2>"
+            f"<div class='qr'>{svg}</div><p>请使用<b>微信</b>扫描二维码，保持登录命令运行。</p>"
+            "<p class='warn'>若手机上是国际版 WeChat 且扫码后一直没反应，请改用中国大陆版微信再试；"
+            "若微信提示输入数字，请在运行登录命令的窗口里输入。</p>"
+            f"<p><a href=\"{escaped}\">{escaped}</a></p></main></html>",
             encoding="utf-8",
         )
+        return page
+
+    def _local_token_list(self) -> list:
+        """本机已保存的 bot token 列表。
+
+        官方取二维码时会把已有 token 一起报给服务端（`local_token_list`）：
+        服务端据此把“这台机器已经连过”识别成可重连，而不是判定成“账号已绑定”。
+        issue #2 那位用户先在官方插件里扫过码，带上这个列表可能就是它的解法。
+        """
+        try:
+            accounts = self.accounts.read().get("accounts", {}) or {}
+            return [str(item.get("token")) for item in accounts.values() if str(item.get("token") or "").strip()]
+        except Exception:
+            return []
+
+    def _fetch_login_qr(self) -> dict:
+        query = urllib.parse.urlencode({"bot_type": self.config.bot_type})
+        tokens = self._local_token_list()
+        # 官方是 POST + body {local_token_list: [...]}；服务端若不接受，回退到原来的裸 GET
+        try:
+            return _post(self.config.weixin_base_url, f"ilink/bot/get_bot_qrcode?{query}", "",
+                         {"local_token_list": tokens}, timeout=15)
+        except Exception as error:
+            print(f"[G4W] get_bot_qrcode POST 失败（{type(error).__name__}），回退为 GET")
+            url = f"{self.config.weixin_base_url.rstrip('/')}/ilink/bot/get_bot_qrcode?{query}"
+            request = urllib.request.Request(url, headers=_ilink_headers())
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return json.loads(response.read().decode("utf-8"))
+
+    def _poll_login_status(self, base_url: str, qrcode: str, verify_code: str = "") -> dict:
+        query = {"qrcode": qrcode}
+        if verify_code:
+            query["verify_code"] = verify_code
+        url = f"{base_url.rstrip('/')}/ilink/bot/get_qrcode_status?{urllib.parse.urlencode(query)}"
+        request = urllib.request.Request(url, headers=_ilink_headers())
+        try:
+            with urllib.request.urlopen(request, timeout=40) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except Exception as error:
+            if os.environ.get("G4W_LOGIN_DEBUG") == "1":
+                print(f"[G4W] login poll error: {type(error).__name__}: {error}")
+            return {"status": "wait"}
+
+    def _ask_verify_code(self, prompt: str) -> str:
+        """默认从终端读；GUI（看板向导/桌面壳）可通过 verify_code_provider 覆盖。"""
+        provider = getattr(self, "verify_code_provider", None)
+        if callable(provider):
+            try:
+                return str(provider(prompt) or "").strip()
+            except Exception as error:
+                print(f"[G4W] verify code provider failed: {error}")
+                return ""
+        try:
+            return input(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            return ""
+
+    def login(self, *, interactive: bool = True) -> dict:
+        qr = self._fetch_login_qr()
+        qrcode = str(qr.get("qrcode") or "")
+        page = self._write_login_page(str(qr.get("qrcode_img_content") or ""))
         if os.environ.get("G4W_NO_BROWSER") != "1":
             # 桌面向导模式（G4W_NO_BROWSER=1）由壳层读取本 HTML 自渲染二维码，不弹浏览器
             try: webbrowser.open(page.as_uri())
             except Exception: pass
         print(f"[G4W] login page: {page}")
-        deadline = time.time() + 480
+        print("[G4W] 请使用微信扫码；若手机是国际版 WeChat 且扫码无反应，请改用中国大陆版微信。")
+        if not qrcode:
+            raise WeixinError("login failed: server did not return qrcode")
+
+        current_base = self.config.weixin_base_url
+        pending_verify_code = ""
+        refresh_count = 0
+        last_status = ""
+        scanned_printed = False
+        deadline = time.time() + self.LOGIN_TOTAL_TIMEOUT
+
         while time.time() < deadline:
-            url = f"{self.config.weixin_base_url.rstrip('/')}/ilink/bot/get_qrcode_status?{urllib.parse.urlencode({'qrcode': qr['qrcode']})}"
-            request = urllib.request.Request(url, headers={"iLink-App-ClientVersion": "1"})
-            try:
-                with urllib.request.urlopen(request, timeout=40) as response:
-                    status = json.loads(response.read().decode("utf-8"))
-            except Exception:
-                status = {"status": "wait"}
-            if status.get("status") == "confirmed":
+            status = self._poll_login_status(current_base, qrcode, pending_verify_code)
+            name = str(status.get("status") or "")
+            if name != last_status:
+                if name and (name != "wait" or os.environ.get("G4W_LOGIN_DEBUG") == "1"):
+                    extra = ""
+                    if name == "scaned_but_redirect":
+                        extra = f" redirect_host={status.get('redirect_host')}"
+                    print(f"[G4W] login status: {name}{extra}")
+                last_status = name
+
+            if name in ("wait", ""):
+                pass
+            elif name == "scaned":
+                if pending_verify_code:
+                    print("[G4W] 验证码已接受，继续等待确认…")
+                    pending_verify_code = ""
+                if not scanned_printed:
+                    print("[G4W] 已扫描，正在验证（请在手机上确认）…")
+                    scanned_printed = True
+            elif name == "need_verifycode":
+                if not interactive:
+                    raise WeixinError("login needs a verify code from the phone (non-interactive mode)")
+                prompt = "❌ 数字不匹配，请重新输入：" if pending_verify_code else "请输入手机微信上显示的数字："
+                if not _stdin_is_interactive() and not callable(getattr(self, "verify_code_provider", None)):
+                    # 看板向导/桌面壳是后台管道运行 login 的，用户看不到也回不了这里的提示
+                    print("[G4W] 微信要求输入手机上的数字，但当前是后台运行、无法接收输入。\n"
+                          "[G4W] 请在控制台手动完成登录：托盘退出 G4W → 双击 tools\\4_login_G4W_ga.bat → 按提示输入数字。")
+                    raise WeixinError("login needs a verify code; run tools\\4_login_G4W_ga.bat in a console")
+                pending_verify_code = self._ask_verify_code(prompt)
+                continue
+            elif name == "verify_code_blocked":
+                print("[G4W] ⛔ 验证码多次错误，正在刷新二维码…")
+                pending_verify_code = ""
+                refresh_count += 1
+                if refresh_count > self.LOGIN_QR_REFRESH_LIMIT:
+                    raise WeixinError("login failed: verify code blocked too many times")
+                qr = self._fetch_login_qr()
+                qrcode = str(qr.get("qrcode") or "")
+                self._write_login_page(str(qr.get("qrcode_img_content") or ""))
+                scanned_printed = False
+            elif name == "expired":
+                refresh_count += 1
+                if refresh_count > self.LOGIN_QR_REFRESH_LIMIT:
+                    raise WeixinError("login failed: QR code expired too many times")
+                print(f"[G4W] ⏳ 二维码已过期，正在刷新…({refresh_count}/{self.LOGIN_QR_REFRESH_LIMIT})")
+                qr = self._fetch_login_qr()
+                qrcode = str(qr.get("qrcode") or "")
+                self._write_login_page(str(qr.get("qrcode_img_content") or ""))
+                scanned_printed = False
+                last_status = ""
+            elif name == "scaned_but_redirect":
+                host = str(status.get("redirect_host") or "").strip()
+                if host:
+                    # 官方实现是 `https://${redirect_host}`；这里额外兼容服务端带上 scheme 的情况
+                    current_base = host if host.startswith(("http://", "https://")) else f"https://{host}"
+                    print(f"[G4W] 服务端要求切换到 {current_base}，已切换轮询主机")
+                last_status = ""
+            elif name == "binded_redirect":
+                raise WeixinError(
+                    "该微信账号已绑定过其他 OpenClaw 实例（服务端返回 binded_redirect）。"
+                    "请先在微信「ClawBot / 龙虾插件」里解绑旧实例，或换一个微信账号后重试。"
+                )
+            elif name == "confirmed":
                 account = {
                     "accountId": status["ilink_bot_id"],
                     "token": status["bot_token"],
-                    "baseUrl": status.get("baseurl") or self.config.weixin_base_url,
+                    "baseUrl": status.get("baseurl") or current_base,
                     "userId": status.get("ilink_user_id", ""),
                     "savedAt": time.time(),
                 }
@@ -117,7 +292,12 @@ class WeixinChannel:
                     update_env_file(self.config.env_file, {"G4W_ACCOUNT_ID": account["accountId"]})
                 except Exception as error:
                     print(f"[G4W] warning: failed to write G4W_ACCOUNT_ID to ENV: {error}")
+                print(f"[G4W] ✅ 登录成功，账号 {account['accountId']}")
                 return account
+            else:
+                if name:
+                    raw = json.dumps(status, ensure_ascii=False)[:200]
+                    print(f"[G4W] 未识别的登录状态 {name!r}（原始响应：{raw}）")
             time.sleep(1)
         raise WeixinError("login timed out")
 
@@ -147,7 +327,7 @@ class WeixinChannel:
             account["baseUrl"],
             "ilink/bot/getupdates",
             account["token"],
-            {"get_updates_buf": sync, "base_info": {"channel_version": "python-G4W-0.1"}},
+            {"get_updates_buf": sync},
             max(35, self.config.poll_timeout_seconds),
             timeout_is_empty=True,
         )
@@ -266,6 +446,16 @@ class WeixinChannel:
         return completed
 
     def normalize(self, raw: dict, account_id: str) -> dict | None:
+        items = raw.get("item_list") or []
+        if os.environ.get("G4W_DEBUG_INBOUND_ITEMS") == "1":
+            # 只读诊断（默认关闭）：打印收到的 item 类型与字段名，**不打印内容**。
+            # 用途：确认服务端是否会下发“链接/卡片”这类 item（当前 normalize 只认 1/3，
+            # 附件只认 2/4/5，其余会被静默丢弃 → 先确认有没有，再决定要不要支持）。
+            try:
+                seen = [(int(item.get("type", 0) or 0), sorted(k for k in item.keys())) for item in items]
+                print(f"[G4W] inbound items: {seen}")
+            except Exception:
+                pass
         sender_id = str(raw.get("from_user_id") or "").strip()
         if not sender_id:
             return None
@@ -341,7 +531,7 @@ class WeixinChannel:
                 f"pycb-{uuid.uuid5(uuid.NAMESPACE_URL, f'{delivery_id}:{index}')}"
                 if delivery_id else f"pycb-{uuid.uuid4()}"
             )
-            _post(account["baseUrl"], "ilink/bot/sendmessage", account["token"], {"msg": {"from_user_id": "", "to_user_id": sender_id, "client_id": client_id, "message_type": 2, "message_state": 2, "item_list": [{"type": 1, "text_item": {"text": compact_chunk}}], "context_token": token}, "base_info": {"channel_version": "python-G4W-0.1"}}, timeout=5)
+            _post(account["baseUrl"], "ilink/bot/sendmessage", account["token"], {"msg": {"from_user_id": "", "to_user_id": sender_id, "client_id": client_id, "message_type": 2, "message_state": 2, "item_list": [{"type": 1, "text_item": {"text": compact_chunk}}], "context_token": token}}, timeout=5)
             delivered.append(compact_chunk)
             delivered_chunks.append({
                 "bubble": sent_count + index + 1,
@@ -407,7 +597,7 @@ class WeixinChannel:
             account["baseUrl"],
             "ilink/bot/getconfig",
             account["token"],
-            {"ilink_user_id": sender_id, "context_token": token, "base_info": {"channel_version": "python-G4W-0.2"}},
+            {"ilink_user_id": sender_id, "context_token": token},
             timeout=10,
         )
         typing_ticket = str(config_response.get("typing_ticket") or "").strip()
@@ -417,7 +607,7 @@ class WeixinChannel:
             account["baseUrl"],
             "ilink/bot/sendtyping",
             account["token"],
-            {"ilink_user_id": sender_id, "typing_ticket": typing_ticket, "status": int(status), "base_info": {"channel_version": "python-G4W-0.2"}},
+            {"ilink_user_id": sender_id, "typing_ticket": typing_ticket, "status": int(status)},
             timeout=10,
         )
 

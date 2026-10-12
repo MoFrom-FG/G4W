@@ -168,7 +168,6 @@ def send_weixin_file(channel, sender_id: str, path: Path, context_token: str = "
         "filesize": len(ciphertext),
         "no_need_thumb": True,
         "aeskey": key.hex(),
-        "base_info": {"channel_version": "python-G4W-0.3"},
     })
     upload_full_url = str(upload.get("upload_full_url") or "").strip()
     upload_param = str(upload.get("upload_param") or "").strip()
@@ -192,7 +191,7 @@ def send_weixin_file(channel, sender_id: str, path: Path, context_token: str = "
         item = {"type": 4, "file_item": {"media": media, "file_name": path.name, "len": str(len(plaintext))}}
     client_uuid = uuid.uuid5(uuid.NAMESPACE_URL, f"G4W-file:{delivery_id}") if delivery_id else uuid.uuid4()
     client_id = f"pycb-file-{client_uuid}"
-    channel._post_json("ilink/bot/sendmessage", {"msg": {"from_user_id": "", "to_user_id": sender_id, "client_id": client_id, "message_type": 2, "message_state": 2, "item_list": [item], "context_token": token}, "base_info": {"channel_version": "python-G4W-0.3"}}, timeout=10)
+    channel._post_json("ilink/bot/sendmessage", {"msg": {"from_user_id": "", "to_user_id": sender_id, "client_id": client_id, "message_type": 2, "message_state": 2, "item_list": [item], "context_token": token}}, timeout=10)
     return {"ok": True, "kind": kind, "fileName": path.name, "sizeBytes": len(plaintext), "clientId": client_id}
 
 
