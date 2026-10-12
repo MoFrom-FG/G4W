@@ -1,0 +1,16 @@
+[Unit]
+Description=G4W Dashboard (WSL/Linux)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONUTF8=1
+Environment=PYTHONIOENCODING=utf-8
+WorkingDirectory=__G4W_ROOT__/runtime/G4W-main
+ExecStart=/bin/bash -lc 'cd __G4W_ROOT__ && exec bash tools/linux/dashboard.sh'
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

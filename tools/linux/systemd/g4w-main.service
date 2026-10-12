@@ -1,0 +1,16 @@
+[Unit]
+Description=G4W Main Service (Conductor + Workers)
+After=network-online.target g4w-dashboard.service
+Wants=g4w-dashboard.service
+
+[Service]
+Type=simple
+Environment=PYTHONUTF8=1
+Environment=PYTHONIOENCODING=utf-8
+WorkingDirectory=__G4W_ROOT__/runtime/G4W-main
+ExecStart=/bin/bash -lc 'cd __G4W_ROOT__ && exec bash tools/linux/start.sh'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

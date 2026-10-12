@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# G4W 启动器
+#   环境未就绪 → 自动进入浏览器初始化向导（向导里一键装环境）
+#   环境就绪   → 直接启动看板
+# 用法：./G4W   （Ctrl+C 退出）
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_PY="$HERE/runtime/python/bin/python3"
+VENV_PY="$HERE/runtime/app/.venv/bin/python"
+[ -x "$BASE_PY" ] || BASE_PY="$(command -v python3)"
+
+PORT="${G4W_DASHBOARD_PORT:-}"
+if [ -z "$PORT" ]; then
+  PORT="$(cat "$HERE/runtime/dashboard-port" 2>/dev/null | tr -d '[:space:]')"
+  PORT="${PORT:-18180}"
+fi
+
+export G4W_ROOT="$HERE"
+export G4W_HOME="$HERE/runtime/G4W-main"
+export G4W_APP_DIR="$HERE/runtime/app"
+export G4W_STATE_DIR="$HERE/runtime/G4W-data"
+export G4W_WORKSPACE_ROOT="$HERE"
+export PYTHONPATH="$G4W_HOME:$G4W_APP_DIR"
+export PYTHONUTF8=1 PYTHONIOENCODING=utf-8 PYTHONDONTWRITEBYTECODE=1
+mkdir -p "$G4W_STATE_DIR" "$HERE/runtime"
+
+URL="http://127.0.0.1:$PORT"
+open_browser() {
+  if command -v explorer.exe >/dev/null 2>&1; then (explorer.exe "$URL" >/dev/null 2>&1 &)
+  elif command -v wslview >/dev/null 2>&1; then (wslview "$URL" >/dev/null 2>&1 &)
+  elif command -v xdg-open >/dev/null 2>&1; then (xdg-open "$URL" >/dev/null 2>&1 &) ; fi
+}
+
+cd "$G4W_HOME"
+if [ -x "$VENV_PY" ] && "$VENV_PY" -c "import requests, aiohttp, psutil" >/dev/null 2>&1; then
+  echo "[G4W] 环境已就绪 → 看板 $URL"
+  open_browser
+  exec "$VENV_PY" -B -u -m G4W.dashboard.server --host 127.0.0.1 --port "$PORT"
+fi
+
+echo "[G4W] 首次运行：进入初始化向导（在浏览器里完成四步，完成后自动切换到看板）"
+echo "[G4W] 向导地址：$URL"
+echo "[G4W] 依赖会装进独立环境：$HERE/runtime/app/.venv"
+open_browser
+exec "$BASE_PY" -B -u -m G4W.wizard_server --host 127.0.0.1 --port "$PORT"
