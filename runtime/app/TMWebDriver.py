@@ -52,6 +52,8 @@ class TMWebDriver:
 
     def start_http_server(self):
         self.app = app = bottle.Bottle()
+        @app.hook('before_request')
+        def reject_web_origin(): request.headers.get('Origin') is not None and bottle.abort(403)
 
         @app.route('/api/longpoll', method=['GET', 'POST'])
         def long_poll():
@@ -184,7 +186,7 @@ class TMWebDriver:
             if session.ws_client == client: session.mark_disconnected()
     
     def execute_js(self, code, timeout=15, session_id=None) -> Any:  
-        if session_id is None: session_id = self.default_session_id  
+        if session_id is None: session_id = str(self.default_session_id)
         if self.is_remote:
             safe_print('remote_execute_js')
             response = self._remote_cmd({"cmd": "execute_js", "sessionId": session_id, 

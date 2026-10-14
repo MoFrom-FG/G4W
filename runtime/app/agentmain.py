@@ -31,12 +31,6 @@ mem_insight = os.path.join(mem_dir, 'global_mem_insight.txt')
 if not os.path.exists(mem_insight):
     t = os.path.join(script_dir, f'assets/global_mem_insight_template{lang_suffix}.txt')
     open(mem_insight, 'w', encoding='utf-8').write(open(t, encoding='utf-8').read() if os.path.exists(t) else '')
-cdp_cfg = os.path.join(script_dir, 'assets/tmwd_cdp_bridge/config.js')
-if not os.path.exists(cdp_cfg):
-    try:
-        os.makedirs(os.path.dirname(cdp_cfg), exist_ok=True)
-        open(cdp_cfg, 'w', encoding='utf-8').write(f"const TID = '__ljq_{hex(random.randint(0, 99999999))[2:8]}';")
-    except Exception as e: print(f'[WARN] CDP config init failed: {e} — advanced web features (tmwebdriver) will be unavailable.')
 
 def get_system_prompt():
     with open(os.path.join(script_dir, f'assets/sys_prompt{lang_suffix}.txt'), 'r', encoding='utf-8') as f: prompt = f.read()
@@ -53,14 +47,18 @@ class GenericAgent:
         os.makedirs(os.path.join(script_dir, 'temp'), exist_ok=True)
         self.lock = threading.Lock()
         self.task_dir = None
-        self.history = []; self.handler = None; 
+        self.history = []; self.handler = None; self.all_outputs = []
         self.task_queue = queue.Queue() 
-        self.is_running = False; self.stop_sig = False; self.llm_no = 0;  
+        self.is_running = False; self.stop_sig = False; self.llm_no = 0;
+        # Output queue of the task currently executing (None when idle). Lets a UI that
+        # lost its own handle (page refresh, second client) re-attach to the live task.
+        self._current_queue = None  
         self.inc_out = False; self.verbose = True
         self.peer_hint = True
         self.force_non_stream = False
         logid = f'{(time.time_ns() + random.randrange(1_000_000)) % 1_000_000:06d}'
         self.log_path = os.path.join(script_dir, f'temp/model_responses/model_responses_{logid}.txt')
+        self.llmclient = None
         self.load_llm_sessions()
         self.extra_sys_prompts = []
         self.intervene = self.extrakeyinfo = None
@@ -68,8 +66,8 @@ class GenericAgent:
     def load_llm_sessions(self):
         mykeys, changed = reload_mykeys()
         if not changed and hasattr(self, 'llmclients'): return
-        try: oldhistory = self.llmclient.backend.history
-        except: oldhistory = None
+        try: oldhistory, oldname = self.llmclient.backend.history, self.llmclient.backend.name
+        except: oldhistory = oldname = None
         llm_sessions = []
         for k, cfg in mykeys.items():
             if not any(x in k for x in ['api', 'config', 'cookie']): continue
@@ -85,20 +83,22 @@ class GenericAgent:
                     else: llm_sessions[i] = ToolClient(mixin)
                 except Exception as e: print(f'\n\n\n[ERROR] Failed to init MixinSession with cfg {s["mixin_cfg"]}: {e}!!!\n\n')
         self.llmclients = llm_sessions
+        if not self.llmclients: return
+        names = [c.backend.name if not isinstance(c, dict) else f'BADMIXIN_{i}' for i, c in enumerate(self.llmclients)]
+        if oldname in names: self.llm_no = names.index(oldname)
         self.llmclient = self.llmclients[self.llm_no%len(self.llmclients)]
         if oldhistory: self.llmclient.backend.history = oldhistory
     
     def next_llm(self, n=-1):
         self.load_llm_sessions()
+        if not self.llmclients: return
         self.llm_no = ((self.llm_no + 1) if n < 0 else n) % len(self.llmclients)
         lastc = self.llmclient
         self.llmclient = self.llmclients[self.llm_no]
         try: self.llmclient.backend.history = lastc.backend.history
         except: raise Exception('[ERROR] BAD Mixin config: Check your mykey.py')
         self.llmclient.last_tools = ''
-        name = self.get_llm_name(model=True)
-        if 'glm' in name or 'minimax' in name or 'kimi' in name: load_tool_schema('_cn')
-        else: load_tool_schema()
+        load_tool_schema()
     def list_llms(self): 
         self.load_llm_sessions()
         return [(i, self.get_llm_name(b), i == self.llm_no) for i, b in enumerate(self.llmclients)]
@@ -106,7 +106,7 @@ class GenericAgent:
         b = self.llmclient if b is None else b
         if isinstance(b, dict): return 'BADCONFIG_MIXIN'
         if model: return b.backend.model.lower()
-        return f"{type(b.backend).__name__}/{b.backend.name}"
+        return f"{type(b.backend).__name__.replace('Session', '')}/{b.backend.name}"
     def get_ctx_multiplier(self): return getattr(self.llmclient.backend, 'maxlen_multiplier', 1.0)
 
     def abort(self):
@@ -114,6 +114,19 @@ class GenericAgent:
         print('Abort current task...')
         self.stop_sig = True
         if self.handler is not None: self.handler.code_stop_signal.append(1)
+        for sess in getattr(self.llmclient.backend, '_sessions', [self.llmclient.backend]):
+            sess.should_stop = lambda: self.stop_sig  # live read; cleared by run()'s finally
+            try:  # wake a recv() blocked in another thread (waiting headers OR reading stream). Verified on Windows:
+                  # shutdown()/close() do NOT wake it (makefile refcount defers closesocket); _real_close() does
+                import socket as _socket
+                sock = sys.modules['llmcore']._INFLIGHT[sess._tid]  # socket registered at urllib3 request() time, before headers
+                try: sock.shutdown(_socket.SHUT_RDWR)  # for non-Windows semantics
+                except OSError: pass
+                try: sock._real_close()  # CPython internal; bypasses refcount -> actual closesocket
+                except AttributeError: sock.close()
+            except Exception: pass
+            try: sess.active_response.close()
+            except Exception: pass
             
     def put_task(self, query, source="user", images=None):
         display_queue = queue.Queue()
@@ -144,11 +157,13 @@ class GenericAgent:
             raw_query = self._handle_slash_cmd(raw_query, display_queue)
             if raw_query is None:
                 self.task_queue.task_done(); continue
-            self.is_running = True
+            self.is_running = True; self._current_queue = display_queue
             if len(raw_query) > 2000:
-                task_file = os.path.join(script_dir, 'temp', f'user_prompt_{int(time.time())}.md')
+                task_file = os.path.join(script_dir, 'temp', f'user_prompt_{os.getpid()}_{time.time_ns()}.md')
                 with open(task_file, 'w', encoding='utf-8') as f: f.write(raw_query)
                 raw_query = f'Long user prompt saved to {task_file}. Read and execute.'
+            self.all_outputs.append({"input": raw_query, "outputs": []})
+            if len(self.all_outputs) > 10000: self.all_outputs = self.all_outputs[-5000:]
             rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
             self.history.append(f"[USER]: {rquery}")
             sys_prompt = get_system_prompt() + '\n'.join(self.extra_sys_prompts) + getattr(self.llmclient.backend, 'extra_sys_prompt', '')
@@ -168,7 +183,7 @@ class GenericAgent:
             gen = agent_runner_loop(self.llmclient, sys_prompt, raw_query, handler, TOOLS_SCHEMA, 
                                     max_turns=180, verbose=self.verbose, yield_info=True)
             try:
-                full_resp = ""; last_pos = 0; curr_turn = 0; turn_resps = []
+                full_resp = ""; last_pos = 0; curr_turn = 0; turn_resps = self.all_outputs[-1]["outputs"]
                 for chunk in gen:
                     if consume_file(self.task_dir, '_stop'): self.abort() 
                     if self.stop_sig: break
@@ -189,7 +204,7 @@ class GenericAgent:
                 display_queue.put({'done': full_resp + f'\n```\n{format_error(e)}\n```', 'source': source, 'turn': curr_turn, 'outputs': turn_resps.copy()})
             finally:
                 if self.stop_sig: print('User aborted the task.')
-                self.is_running = self.stop_sig = False
+                self.is_running = self.stop_sig = False  # keep _current_queue: its final 'done' may still be unclaimed (refreshed UI salvages it); next task overwrites it
                 self.task_queue.task_done()
                 if self.handler is not None: self.handler.code_stop_signal.append(1)
 
@@ -270,6 +285,13 @@ if __name__ == '__main__':
         if hasattr(mod, 'init'): mod.init(_extra_args)
         _mt = os.path.getmtime(args.reflect)
         print(f'[Reflect] loaded {args.reflect}' + (f' args={_extra_args}' if _extra_args else ''))
+        try:
+            import frontends.hub as hub
+            def _hub_put(t):
+                if agent.is_running: return {'error': 'busy', 'code': 'busy'}
+                agent.put_task(t, source='hub')
+            hub.connect(agent, f'reflect/{os.path.splitext(os.path.basename(args.reflect))[0]}', put_task=_hub_put)
+        except Exception: pass
         while True:
             if os.path.getmtime(args.reflect) != _mt:
                 try:
@@ -283,6 +305,7 @@ if __name__ == '__main__':
             if task and task == '/exit': break
             if task:
                 print(f'[Reflect] triggered: {task[:80]}')
+                if (_ln := getattr(mod, 'LLM', None)): agent.next_llm(next((i for i, b in enumerate(agent.llmclients) if not isinstance(b, dict) and b.backend.name == _ln), agent.llm_no))
                 dq = agent.put_task(task, source='reflect')
                 try:
                     while 'done' not in (item := dq.get(timeout=2200)): pass

@@ -289,6 +289,7 @@ let bridgeUiOffline = false;
     getGaSource: () => tauriInvoke('get_ga_source'),
     setGaSource: (dir) => tauriInvoke('set_ga_source', { dir }),
     clearGaSource: () => tauriInvoke('clear_ga_source'),
+    moveGaRuntime: (dir) => tauriInvoke('move_ga_runtime', { dir }),
     getConductorModel: () => rpc('services/conductor/model/get', {}),
     saveConductorModel: (llmNo) => rpc('services/conductor/model/save', { llmNo }),
     tauriInvoke,
@@ -716,6 +717,29 @@ bindClick('import-memory-btn', async (e) => {
     showChanToast(t('err.memoryImport'), err.message || String(err), 'err');
   }
 });
+bindClick('move-ga-runtime-btn', async (e) => {
+  e.stopPropagation();
+  if (!window.__TAURI__?.core?.invoke) {
+    showChanToast(t('err.gaRuntimeDesktopOnly'), '', 'err');
+    return;
+  }
+  try {
+    const dir = await window.ga.tauriInvoke('pick_directory', { title: t('sys.gaRuntimeMoveTitle') });
+    if (!dir) return;
+    const confirmed = await showConfirmDialog({
+      title: t('confirm.gaRuntimeMoveTitle'),
+      message: t('confirm.gaRuntimeMove'),
+      okText: t('set.moveGaRuntime'),
+    });
+    if (!confirmed) return;
+    showChanToast(t('sys.gaRuntimeMoving'), dir, 'ok');
+    const project = await window.ga.moveGaRuntime(dir);
+    await refreshGaSource();
+    showChanToast(t('sys.gaRuntimeMoved'), project || dir, 'ok');
+  } catch (err) {
+    showChanToast(t('err.gaRuntimeMove'), err.message || String(err), 'err');
+  }
+});
 const gaSourceCurrentEl = document.getElementById('ga-source-current');
 const gaSourceClearBtn = document.getElementById('ga-source-clear-btn');
 async function refreshGaSource() {
@@ -767,12 +791,25 @@ bindClick('ga-source-clear-btn', async (e) => {
   }
 });
 refreshGaSource();
-// 侧边栏「快速接入」：点击官方模型按钮 → 打开预填好的添加模型表单
+// 侧边栏「快速接入」：官方模型 → 预填表单；ga-token → 开 portal 写 mykey
 const pqEl = document.getElementById('provider-quickstart');
+const pqGaBtn = document.getElementById('pq-ga-token');
+if (pqGaBtn) bridgeFetch('/subscription-portal').then(r => { pqGaBtn.hidden = !r?.available; }).catch(() => {});
 if (pqEl) pqEl.addEventListener('click', (e) => {
   const btn = e.target.closest('.pq-btn[data-provider]');
   if (!btn) return;
   e.preventDefault(); e.stopPropagation();
+  if (btn.dataset.provider === 'ga-token') {
+    window.ga.getMykeyContent().then(r => {
+      const base = r?.content || '', t0 = Date.now();
+      bridgeFetch('/subscription-portal', { method: 'POST', body: {} });
+      const timer = setInterval(async () => {
+        const cur = (await window.ga.getMykeyContent().catch(() => null))?.content;
+        if ((cur != null && cur !== base) || Date.now() - t0 > 3e5) { clearInterval(timer); if (cur !== base) await loadModelProfiles(); }
+      }, 3000);
+    });
+    return;
+  }
   openAddModelFormForProvider(btn.dataset.provider);
 });
 // 「快速接入」卡片折叠/展开（向下箭头），状态记忆到 localStorage
@@ -2698,6 +2735,7 @@ function setActiveSession(id) {
   r.draftEl = null;
   resetTypewriterState(r);
   renderAllMessages(sess);
+  scrollBottom(true);
   setBusy(sess, rt(sess).busy);
   renderSessionList();
   refreshPlanBar(null);
