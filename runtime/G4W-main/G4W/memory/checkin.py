@@ -69,7 +69,7 @@ class CheckinService:
         return self.store.update(update) or {}
 
     def emit_due(self, event_store, l4_service=None, maintenance_service=None, user_name: str = "User",
-                 todo_service=None, limit: int = 20) -> int:
+                 todo_service=None, limit: int = 20, menu_service=None, address: str = "") -> int:
         now = time.time()
         state = self.store.read()
         due = [entry for entry in state.get("bindings", {}).values() if entry.get("enabled") and float(entry.get("nextAt", 0)) <= now]
@@ -103,6 +103,10 @@ class CheckinService:
                 "mode": "companion", "text": f"{user_name or 'User'} comes to mind again."
             }
             todo_menu = todo_service.render_checkin(entry["senderId"]) if todo_service is not None else ""
+            maintenance_menu = (
+                menu_service.render_checkin(entry["bindingKey"], address=address or user_name, now=now)
+                if menu_service is not None else ""
+            )
 
             # Walk fireIndex until enqueue actually yields a pending event.
             # EventStore.enqueue returns an existing row (including terminal done/failed)
@@ -119,6 +123,7 @@ class CheckinService:
                     "maximumMinutes": entry["maximumMinutes"],
                     "l4Check": l4_result or {},
                     "todoMenu": todo_menu,
+                    "maintenanceMenu": maintenance_menu,
                     **checkin,
                 }
                 dedupe_key = f"system.checkin:{entry['bindingKey']}:{fi}"

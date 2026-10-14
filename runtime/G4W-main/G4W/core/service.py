@@ -1,4 +1,5 @@
 import json
+import re
 import threading
 import time
 import traceback
@@ -18,11 +19,13 @@ from ..memory.wechat_maintenance import WechatMaintenanceService
 from ..features.supervision import DidaCli, SelfControlService
 from ..memory.checkin import CheckinService
 from ..memory.todo import TodoStore
+from ..memory.maintenance_menu import MaintenanceMenuStore
 from ..features.timeline_publish import TimelinePublisher
 from .scheduler import ScheduledStore
 from .storage import DeferredReplyStore, EventStore, JsonStore, OutboxStore
 from ..agents.turn_progress import TurnProgressStore
 from ..agents.worker_turn import WorkerTurnStore
+from ..agents.maintenance_turn import MaintenanceTurnStore
 from ..agents.input_capture import InputCaptureStore
 from .cache_metrics import CacheMetricsStore
 from .dashboard_control import DashboardControlMailbox
@@ -57,6 +60,8 @@ class G4WService:
         self.deferred = DeferredReplyStore(config.state_dir / "deferred-replies.json")
         self.turn_progress = TurnProgressStore(config.state_dir / "turn-progress-config.json")
         self.worker_turn = WorkerTurnStore(config.state_dir / "worker-turn-config.json")
+        self.maintenance_turn = MaintenanceTurnStore(config.state_dir / "maintenance-turn-config.json")
+        self.maintenance_menu = MaintenanceMenuStore(config.state_dir / "maintenance-menu-config.json")
         self.input_capture = InputCaptureStore(config.state_dir / "input-capture-config.json", config.conversations_dir)
         self.cache_metrics = CacheMetricsStore(config.state_dir / "cache-metrics.json")
         self.dashboard_control = DashboardControlMailbox(config.state_dir)
@@ -240,7 +245,11 @@ class G4WService:
                 self.workers.scan_stalled(self.config.worker_stall_seconds)
                 self._last_worker_watchdog = time.time()
             self.supervision.process_due()
-            self.checkins.emit_due(self.events, self.l4, self.wechat_maintenance, self.config.user_name, todo_service=self.todos)
+            self.checkins.emit_due(
+            self.events, self.l4, self.wechat_maintenance, self.config.user_name,
+            todo_service=self.todos, menu_service=self.maintenance_menu,
+            address=self.config.user_identity or self.config.user_name,
+        )
             self.schedules.emit_due(self.events, limit=20)
             self.todos.emit_due(self.events, self._sender_to_binding(), limit=20)
             self.process_dashboard_requests(limit=10)
@@ -617,6 +626,7 @@ class G4WService:
                         message_subtype = "" if user_intervened else self._message_subtype(normal_events)
                         event_ids = ":".join(event["id"] for event in normal_events)
                         final_turn = self.controller.last_turn(binding["senderId"])
+                        reply = self._silence_maintenance_round(first["bindingKey"], normal_events, reply)
                         self.outbox.prepare(
                             first["bindingKey"], binding["senderId"], binding.get("contextToken", ""), reply or "",
                             dedupe_key=f"event-reply:{event_ids}", round_id=round_id,
@@ -815,6 +825,34 @@ class G4WService:
         with self.delivery_lock:
             current = str(self._round_deferred_prefixes.get(target) or "").strip()
             self._round_deferred_prefixes[target] = "\n\n".join(part for part in (current, value) if part)
+
+    @staticmethod
+    def _is_maintenance_round(events: list[dict]) -> bool:
+        """内部维护轮: checkin 维护模式(payload.mode=maintenance)或显式 payload.maintenance。
+
+        随机 check-in(companion)是主动联系，不在维护轮范围内。
+        """
+        for event in events:
+            payload = event.get("payload") or {}
+            if payload.get("maintenance") is True or str(payload.get("mode") or "") == "maintenance":
+                return True
+        return False
+
+    def _silence_maintenance_round(self, binding_key: str, events: list[dict], reply: str) -> str:
+        """维护轮默认静默；Conductor 写 <notify/> 才放行其后的正文。
+
+        见 templates/agents/conductor-policy.md 第 10 条：维护轮的收尾文本不该打扰用户，
+        但 Conductor 需要主动联系时必须有显式通道。非维护轮只清掉标记。
+        """
+        value = str(reply or "")
+        notify = bool(re.search(r"<notify\s*/?>", value, flags=re.I))
+        if notify:
+            value = re.split(r"<notify\s*/?>", value, flags=re.I)[-1].strip()
+        if not self._is_maintenance_round(events):
+            return value
+        if self.maintenance_turn.get(binding_key) or notify:
+            return value
+        return ""
 
     @staticmethod
     def _delivery_kind(events: list[dict]) -> str:

@@ -220,6 +220,23 @@ def _todo(context: dict, action: str, arguments: dict) -> dict:
     raise ValueError(f"unknown todo action: {action}")
 
 
+def _greeting(context: dict, action: str, arguments: dict) -> dict:
+    """看板首页问候语：由 checkin 维护轮写入，看板读取（不经过微信出站）。"""
+    from ..memory.greeting import GreetingStore, period_for
+
+    state_dir = Path(context["stateDir"]).resolve()
+    store = GreetingStore(state_dir / "memory" / "dashboard-greeting.json")
+    if action == "read":
+        return {"ok": True, **store.read()}
+    if action == "write":
+        text = str(arguments.get("text") or "").strip()
+        if not text:
+            raise ValueError("greeting text is required")
+        period = str(arguments.get("period") or "").strip() or period_for()
+        return {"ok": True, **store.write(text, period=period, sender_id=context.get("senderId", ""))}
+    raise ValueError(f"unknown greeting action: {action}")
+
+
 def execute(domain: str, action: str, arguments: dict | None = None, context_path: str | Path = "G4W-context.json") -> dict:
     name = str(domain or "").strip().lower().replace("_", "-")
     action = str(action or "status").strip().lower()
@@ -239,6 +256,8 @@ def execute(domain: str, action: str, arguments: dict | None = None, context_pat
         return _scheduling(context, action, args)
     if name == "todo":
         return _todo(context, action, args)
+    if name == "greeting":
+        return _greeting(context, action, args)
     raise ValueError(f"unknown G4W native SOP domain: {domain}")
 
 

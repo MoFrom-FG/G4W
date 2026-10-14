@@ -74,7 +74,7 @@
 
       <section class="page-view active" data-page-view="overview">
         <section class="hero glass-card">
-          <div><div class="eyebrow">PERSONAL AI OPERATIONS</div><h1>你好，<span id="user-name">本地用户</span></h1><p>任务、记忆、知识与提示词，现在都在同一个本地控制中心。</p></div>
+          <div><div class="eyebrow">PERSONAL AI OPERATIONS</div><h1><span id="hero-greeting">你好</span></h1><p>任务、记忆、知识与提示词，现在都在同一个本地控制中心。</p></div>
           <div class="hero-side">
             <div class="hero-status"><span class="status-ring"></span><div><strong id="hero-status">CORE STANDBY</strong><small id="hero-model">模型状态读取中</small></div></div>
             <div class="hero-actions"><button id="overview-start" class="hero-start-btn" title="后台启动 G4W 主服务（无终端窗口，实时日志见 服务与终端 页）">▶ 一键启动 G4W</button></div>
@@ -249,7 +249,7 @@
         <div class="page-header"><div><div class="eyebrow">RUNTIME CONFIGURATION</div><h1>环境配置</h1><p>微信命令与 WebUI 共用现有持久化配置；密钥不会展示。</p></div><span class="page-badge">EDITABLE</span></div>
         <form id="settings-form" class="settings-grid">
           <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">IDENTITY</div><h2>个人与助手</h2></div><span class="scope">全局 · 重启生效</span></div><label>用户名字<input name="userName" id="setting-user-name" /></label><label>日常称呼<input name="userIdentity" id="setting-user-identity" /></label><label>用户性别<select name="userGender" id="setting-user-gender"><option value="male">male</option><option value="female">female</option><option value="neutral">neutral</option></select></label><label>助手名字<input name="botName" id="setting-bot-name" /></label></article>
-          <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">INTERACTION</div><h2>微信交互</h2></div><span class="scope">当前微信用户 · 实时</span></div><label class="switch-row"><span><b>中间 Turn 回复</b><small>/turn on|off</small></span><input type="checkbox" name="turnEnabled" id="setting-turn" /></label><label class="switch-row"><span><b>Worker 进度汇报</b><small>/worker_turn on|off</small></span><input type="checkbox" name="workerTurnEnabled" id="setting-worker-turn" /></label><label class="switch-row"><span><b>完整 Input 快照</b><small>/input on|off</small></span><input type="checkbox" name="inputCaptureEnabled" id="setting-input" /></label><label>微信分片阈值<input type="number" min="1" max="3800" name="chunkChars" id="setting-chunk" /></label></article>
+          <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">INTERACTION</div><h2>微信交互</h2></div><span class="scope">当前微信用户 · 实时</span></div><label class="switch-row"><span><b>中间 Turn 回复</b><small>/turn on|off</small></span><input type="checkbox" name="turnEnabled" id="setting-turn" /></label><label class="switch-row"><span><b>Worker 进度汇报</b><small>/worker_turn on|off</small></span><input type="checkbox" name="workerTurnEnabled" id="setting-worker-turn" /></label><label class="switch-row"><span><b>维护轮回复</b><small>/maintenance_turn on|off</small></span><input type="checkbox" name="maintenanceTurnEnabled" id="setting-maintenance-turn" /></label><div class="maintenance-actions" id="setting-maintenance-actions"></div><label class="switch-row"><span><b>完整 Input 快照</b><small>/input on|off</small></span><input type="checkbox" name="inputCaptureEnabled" id="setting-input" /></label><label>微信分片阈值<input type="number" min="1" max="3800" name="chunkChars" id="setting-chunk" /></label></article>
           <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">MODEL ROUTING</div><h2>模型与工作区</h2></div><span class="scope" id="model-control-status">连接主进程</span></div><label>conductor 模型<select id="setting-conductor-model" data-model-target="conductor" disabled><option>正在读取真实模型列表…</option></select><small class="model-hint">与微信 /model 完全相同，选择后立即切换当前会话。</small></label><label>worker 模型<select id="setting-worker-model" data-model-target="worker" disabled><option>正在读取真实模型列表…</option></select><small class="model-hint">选择后立即保存，新建 Worker 生效。</small></label><label>pro 模型<select id="setting-pro-model" data-model-target="pro" disabled><option>正在读取真实模型列表…</option></select><small class="model-hint">选择后立即保存，新建升级任务生效。</small></label><label>当前工作区<input name="workspaceRoot" id="setting-workspace" /></label></article>
           <article class="settings-card glass-card"><div class="settings-head"><div><div class="eyebrow">PROVIDERS</div><h2>供应商配置</h2></div><span class="scope" id="provider-config-scope">读取中…</span></div>
             <div id="provider-config-list" class="model-list"><span class="muted-tag">检测中…</span></div>
@@ -296,6 +296,6 @@
   <div class="timeline-tooltip" id="timeline-tooltip" role="tooltip" hidden></div>
   <script src="/vendor/markdown-it.min.js"></script>
   <script src="/vendor/katex/katex.min.js"></script>
-  <script src="/app.js?v=20261007-model3"></script>
+  <script src="/app.js?v=20261015-maintenance1"></script>
 </body>
 </html>

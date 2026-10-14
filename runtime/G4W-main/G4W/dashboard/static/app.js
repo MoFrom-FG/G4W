@@ -848,6 +848,13 @@ async function resetTheme() {
   }
 }
 
+function renderMaintenanceActions(actions) {
+  const host = $("setting-maintenance-actions");
+  if (!host) return;
+  if (!Array.isArray(actions) || !actions.length) { host.innerHTML = ""; return; }
+  host.innerHTML = actions.map((item) => `<label class="switch-row"><span><b>${esc(item.label || item.id)}</b><small>${esc(item.desc || "")}</small></span><input type="checkbox" data-maintenance-action="${esc(item.id)}" ${item.allowed ? "checked" : ""} /></label>`).join("");
+}
+
 function renderSettings(config) {
   if (settingsDirty || !config) return;
   const values = {
@@ -864,12 +871,14 @@ function renderSettings(config) {
   const checks = {
     "setting-turn": config.turnEnabled,
     "setting-worker-turn": config.workerTurnEnabled,
+    "setting-maintenance-turn": config.maintenanceTurnEnabled,
     "setting-input": config.inputCaptureEnabled,
     "setting-checkin": config.checkinEnabled,
     "setting-vector": config.vectorEnabled,
     "setting-web-search": config.webSearchEnabled
   };
   Object.entries(checks).forEach(([id, value]) => { if ($(id)) $(id).checked = Boolean(value); });
+  renderMaintenanceActions(config.maintenanceActions);
   renderThemeEditor();
   loadEmbeddingConfig();
 }
@@ -924,7 +933,12 @@ function render(data) {
   const events = data.events || [];
   const online = system.status === "online";
 
-  $("user-name").textContent = system.user || "本地用户";
+  const greeting = system.greeting || {};
+  const greetingText = String(greeting.text || "").trim() || `你好，${system.user || "本地用户"}`;
+  if ($("hero-greeting")) {
+    $("hero-greeting").textContent = greetingText;
+    $("hero-greeting").title = greeting.source === "conductor" ? "由 conductor 在 checkin 维护时生成" : "时段兜底文案（等待 conductor 生成）";
+  }
   $("top-status").textContent = statusLabel(system.status);
   $("hero-status").textContent = `CORE ${statusLabel(system.status)}`;
   $("hero-model").textContent = `${system.model || "未配置模型"} · ${system.vector ? "VECTOR ON" : "KEYWORD MODE"}`;
@@ -1988,7 +2002,7 @@ async function renderTodoPage(force = false) {
       .join("");
     listEl.querySelectorAll("[data-todo-act]").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        const { sender, id, act } = btn.dataset;
+        const { sender, id, todoAct: act } = btn.dataset;
         btn.disabled = true;
         try {
           await fetchJson(`/api/todo?action=${encodeURIComponent(act)}&sender=${encodeURIComponent(sender)}&id=${encodeURIComponent(id)}`);
@@ -2585,7 +2599,8 @@ async function saveSettings(event) {
   event.preventDefault();
   const payload = {
     userName: $("setting-user-name").value.trim(), userIdentity: $("setting-user-identity").value.trim(), userGender: $("setting-user-gender").value, botName: $("setting-bot-name").value.trim(),
-    turnEnabled: $("setting-turn").checked, workerTurnEnabled: $("setting-worker-turn").checked, inputCaptureEnabled: $("setting-input").checked, chunkChars: Number($("setting-chunk").value),
+    turnEnabled: $("setting-turn").checked, workerTurnEnabled: $("setting-worker-turn").checked, maintenanceTurnEnabled: $("setting-maintenance-turn").checked, inputCaptureEnabled: $("setting-input").checked, chunkChars: Number($("setting-chunk").value),
+    maintenanceActions: Array.from(document.querySelectorAll("[data-maintenance-action]")).filter((el) => el.checked).map((el) => el.dataset.maintenanceAction),
     workspaceRoot: $("setting-workspace").value.trim(),
     checkinEnabled: $("setting-checkin").checked, checkinMin: Number($("setting-checkin-min").value), checkinMax: Number($("setting-checkin-max").value), vectorEnabled: $("setting-vector").checked, webSearchEnabled: $("setting-web-search").checked
   };

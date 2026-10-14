@@ -20,6 +20,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 from ..agents.input_capture import InputCaptureStore
 from ..agents.turn_progress import TurnProgressStore
 from ..agents.worker_turn import WorkerTurnStore
+from ..agents.maintenance_turn import MaintenanceTurnStore
+from ..memory.greeting import GreetingStore
+from ..memory.maintenance_menu import ACTION_CATALOG, MaintenanceMenuStore
 from ..core.config import Config
 from ..core.dashboard_control import DashboardControlMailbox
 from ..core.storage import JsonStore, safe_segment
@@ -846,12 +849,16 @@ class DashboardState:
         except Exception:
             pass
 
+        greeting = GreetingStore(state_dir / "memory" / "dashboard-greeting.json").render(
+            address=config.user_identity or config.user_name or "你",
+        )
         return {
             "updatedAt": time.time(),
             "nextCheckinAt": next_checkin_at,
             "system": {
                 "name": config.bot_name or "G4W",
                 "user": config.user_name or "本地用户",
+                "greeting": greeting,
                 "status": "online" if _pid_alive(pid) else "standby",
                 "corePid": pid,
                 "model": config.conductor_model,
@@ -2509,6 +2516,9 @@ class DashboardState:
         binding_key, sender_id, binding = self._binding(config)
         turn = TurnProgressStore(config.state_dir / "turn-progress-config.json")
         worker_turn = WorkerTurnStore(config.state_dir / "worker-turn-config.json")
+        maintenance_turn = MaintenanceTurnStore(config.state_dir / "maintenance-turn-config.json")
+        maintenance_menu = MaintenanceMenuStore(config.state_dir / "maintenance-menu-config.json")
+        maintenance_actions = maintenance_menu.allowed(binding_key) if binding_key else []
         input_capture = InputCaptureStore(config.state_dir / "input-capture-config.json", config.conversations_dir)
         checkins = CheckinService(config.state_dir / "checkin-config.json")
         checkin = checkins.status(binding_key) if binding_key else {}
@@ -2528,6 +2538,16 @@ class DashboardState:
             "proModel": config.pro_model,
             "turnEnabled": turn.get(binding_key) if binding_key else True,
             "workerTurnEnabled": worker_turn.get(binding_key) if binding_key else False,
+            "maintenanceTurnEnabled": maintenance_turn.get(binding_key) if binding_key else False,
+            "maintenanceActions": [
+                {
+                    "id": item["id"],
+                    "label": item["label"],
+                    "desc": item["desc"],
+                    "allowed": item["id"] in maintenance_actions,
+                }
+                for item in ACTION_CATALOG
+            ],
             "inputCaptureEnabled": input_capture.get(binding_key) if binding_key else False,
             "chunkChars": max(1, min(int(chunk.get("minChunkChars") or 10), 3800)),
             "checkinEnabled": bool(checkin.get("enabled", config.checkin_enabled)),
@@ -2674,6 +2694,10 @@ class DashboardState:
                 TurnProgressStore(config.state_dir / "turn-progress-config.json").set(binding_key, bool(updates["turnEnabled"]))
             if "workerTurnEnabled" in updates:
                 WorkerTurnStore(config.state_dir / "worker-turn-config.json").set(binding_key, bool(updates["workerTurnEnabled"]))
+            if "maintenanceTurnEnabled" in updates:
+                MaintenanceTurnStore(config.state_dir / "maintenance-turn-config.json").set(binding_key, bool(updates["maintenanceTurnEnabled"]))
+            if "maintenanceActions" in updates:
+                MaintenanceMenuStore(config.state_dir / "maintenance-menu-config.json").set_allowed(binding_key, updates["maintenanceActions"] or [])
             if "inputCaptureEnabled" in updates:
                 InputCaptureStore(config.state_dir / "input-capture-config.json", config.conversations_dir).set(binding_key, bool(updates["inputCaptureEnabled"]))
 

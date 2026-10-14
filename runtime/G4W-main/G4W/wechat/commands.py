@@ -20,6 +20,7 @@ COMMAND_GROUPS = [
         ("⏰", "/checkin <min>-<max>", "设置主动 check-in 间隔，单位分钟"),
         ("📣", "/turn status, /turn on, /turn off", "查看、开启或关闭中间 turn 回复显示"),
         ("🐾", "/worker_turn status, /worker_turn on, /worker_turn off", "查看、开启或关闭 worker 中间进度汇报"),
+    ("🧭", "/maintenance_turn status|on|off", "查看、开关维护轮（checkin 维护/内部事件）的收尾回复，关闭时只有 <notify/> 才会发出"),
         ("🧾", "/input status, /input on, /input off", "查看、开启或关闭完整LLM Input快照"),
         ("🧩", "/chunk <number>", "调整微信短回复合并的最小字符数"),
     ]),
@@ -378,6 +379,14 @@ class CommandRouter:
                 self.service.worker_turn.set(binding_key, mode == "on")
                 return self.service.worker_turn.status_text(binding_key)
             return "用法：/worker_turn status | /worker_turn on | /worker_turn off"
+        if name == "maintenance_turn":
+            mode = args.lower() or "status"
+            if mode == "status":
+                return self.service.maintenance_turn.status_text(binding_key)
+            if mode in ("on", "off"):
+                self.service.maintenance_turn.set(binding_key, mode == "on")
+                return self.service.maintenance_turn.status_text(binding_key)
+            return "用法：/maintenance_turn status | /maintenance_turn on | /maintenance_turn off"
         if name == "input":
             mode = args.lower() or "status"
             if mode == "status":

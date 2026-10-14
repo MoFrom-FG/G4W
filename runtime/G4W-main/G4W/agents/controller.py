@@ -1007,8 +1007,10 @@ class G4WController:
         if checkin_reports:
             maintenance_due = any(item.get("mode") == "maintenance" for item in checkin_reports)
             instruction = (
-                "This is original G4W maintenance mode. Use the timeline and/or diary tools for the due fields. "
-                "Do not send a companion check-in in this round; a short completion acknowledgement is enough."
+                "This is original G4W maintenance mode. Work through the MAINTENANCE_MENU items in the payload; "
+                "every item is optional, pick only what is genuinely useful, then stop. "
+                "This round is silent by default: your closing text is NOT sent to the user, so never write a completion "
+                "acknowledgement or describe internal work. If you really need to reach the user, write that text after <notify/>."
                 if maintenance_due else
                 "Decide whether a natural context-aware message is useful. Silence is allowed when interruption would not help."
             )
