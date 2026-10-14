@@ -848,6 +848,32 @@ async function resetTheme() {
   }
 }
 
+const HERO_GREETING_MAX_LINES = 3;
+let heroFitBound = false;
+
+// 问候语长短不一：按行数上限自动缩字号，避免把右侧状态组件挤变形
+function fitHeroGreeting() {
+  const span = $("hero-greeting");
+  const host = span ? span.parentElement : null;
+  if (!host) return;
+  if (!heroFitBound) {
+    heroFitBound = true;
+    window.addEventListener("resize", () => {
+      window.clearTimeout(fitHeroGreeting._t);
+      fitHeroGreeting._t = window.setTimeout(fitHeroGreeting, 150);
+    });
+  }
+  host.style.fontSize = "";
+  host.style.lineHeight = "";
+  let size = parseFloat(window.getComputedStyle(host).fontSize) || 32;
+  for (let i = 0; i < 24 && size > 17; i += 1) {
+    if (host.scrollHeight <= size * 1.28 * HERO_GREETING_MAX_LINES + 1) break;
+    size -= 1;
+    host.style.fontSize = `${size}px`;
+    host.style.lineHeight = `${(size * 1.28).toFixed(1)}px`;
+  }
+}
+
 function renderMaintenanceActions(actions) {
   const host = $("setting-maintenance-actions");
   if (!host) return;
@@ -934,10 +960,13 @@ function render(data) {
   const online = system.status === "online";
 
   const greeting = system.greeting || {};
-  const greetingText = String(greeting.text || "").trim() || `你好，${system.user || "本地用户"}`;
+  const rawGreeting = String(greeting.text || "").trim() || `你好，${system.user || "本地用户"}`;
+  // 服务端已限长（greeting.py MAX_TEXT_CHARS），这里再挡一层异常超长文本
+  const greetingText = rawGreeting.length > 80 ? `${rawGreeting.slice(0, 80).trimEnd()}…` : rawGreeting;
   if ($("hero-greeting")) {
     $("hero-greeting").textContent = greetingText;
     $("hero-greeting").title = greeting.source === "conductor" ? "由 conductor 在 checkin 维护时生成" : "时段兜底文案（等待 conductor 生成）";
+    fitHeroGreeting();
   }
   $("top-status").textContent = statusLabel(system.status);
   $("hero-status").textContent = `CORE ${statusLabel(system.status)}`;

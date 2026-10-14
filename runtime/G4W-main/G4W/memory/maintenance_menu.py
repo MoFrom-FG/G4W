@@ -63,7 +63,8 @@ class MaintenanceMenuStore:
                 desc += (
                     f"；调用方式是 GA code_run 里执行 "
                     f"print_result(\"greeting\", \"write\", {{\"text\": \"{PERIOD_LABELS.get(period, '')}，{name}，…\"}})；"
-                    "正文一句话即可，不要出现系统/机制/英文内部词"
+                    "正文一句话、控制在 30 字以内、不要换行（看板 hero 只有一行位置），"
+                    "也不要出现系统/机制/英文内部词"
                 )
             lines.append(f"  [{item['id']}] {item['label']} — {desc}")
         lines.append("维护轮默认静默：收尾文本不会发给用户，也不要写「静默收尾」这类说明；确实要联系用户时把正文写在 <notify/> 之后。")

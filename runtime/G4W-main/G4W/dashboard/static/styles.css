@@ -583,3 +583,9 @@ footer { padding: 24px 3px 0; color: var(--faint); font: 9px Consolas, monospace
 .model-fetch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px; max-height: 220px; overflow: auto; padding: 9px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); }
 .model-fetch-item { display: flex; align-items: center; gap: 6px; color: var(--soft); font-size: 11px; }
 .model-fetch-item input { width: auto; min-width: 0; }
+
+/* 首页问候语：内容自适应字号 + 右侧组件不被挤压（2026-10-15） */
+.hero-copy { flex: 1 1 auto; min-width: 0; }
+.hero h1 { max-width: 62ch; font-size: clamp(20px, 2.7vw, 34px); line-height: 1.28; overflow-wrap: anywhere; }
+.hero-side, .hero-status, .hero-actions { flex: 0 0 auto; }
+.hero-start-btn { white-space: nowrap; }

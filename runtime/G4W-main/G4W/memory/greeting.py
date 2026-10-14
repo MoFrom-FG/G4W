@@ -11,6 +11,8 @@ from typing import Callable
 from ..core.storage import JsonStore
 
 MAX_AGE_SECONDS = 8 * 3600
+# 首页 hero 的显示上限：太长会把右侧状态组件挤变形，写入时就截断
+MAX_TEXT_CHARS = 56
 
 # (period, 起始小时, 结束小时, 兜底问候前缀)；23–05 跨午夜
 PERIODS: tuple[tuple[str, int, int, str], ...] = (
@@ -42,6 +44,20 @@ def period_for(now: datetime | float | None = None) -> str:
     return "morning"
 
 
+def _fit_text(text: str, limit: int = MAX_TEXT_CHARS) -> str:
+    """压平空白并按标点截断到 limit 以内，保留句读。"""
+    body = " ".join(str(text or "").split())
+    if len(body) <= limit:
+        return body
+    head = body[:limit]
+    floor = max(6, limit // 8)
+    for mark in ("。", "！", "？", "；", ".", "!", "?", ";", "，", ","):
+        cut = head.rfind(mark)
+        if cut >= floor:
+            return head[: cut + 1]
+    return body[: limit - 1].rstrip() + "…"
+
+
 def fallback_text(period: str, address: str) -> str:
     label = PERIOD_LABELS.get(period, "你好")
     name = str(address or "").strip()
@@ -58,7 +74,7 @@ class GreetingStore:
         return dict(self.store.read().get("greeting") or {})
 
     def write(self, text: str, period: str = "", sender_id: str = "", at: float | None = None) -> dict:
-        body = " ".join(str(text or "").split())
+        body = _fit_text(text)
         if not body:
             raise ValueError("greeting text is empty")
         value = {
