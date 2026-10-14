@@ -1,6 +1,19 @@
 # Plan Mode SOP
 
-**触发**：3步以上有依赖/多文件协同/条件分支/需并行 | **禁用**：1-2步简单任务直接做
+> ⚠️ **【已弃用 / DEPRECATED】**
+>
+> 本 SOP 已弃用，不适合现阶段模型，**全文仅作历史参考，禁止再按本文进入 plan mode / 起探索 subagent / 写 plan_XXX**。文件未来将被删除。
+>
+> **维护动作**：若在 L1（`global_mem_insight.txt`）中发现对本 SOP（`plan_sop`）的任何索引，**立即删除该索引**，勿再导航到此文件。
+>
+> **请改用（按场景）：**
+> | 场景 | 替代 | 入口 |
+> |------|------|------|
+> | 复杂多阶段 / 多 agent 编排 | `ultraplan_sop` | 仅当用户明确说 `ultraplan` / `UltraPlan` / `ultraplan mode` 时启用 |
+> | 跨会话长期项目认知与记忆 | `project_mode_sop` | 用户要求「进入项目模式」或指定项目名时 |
+> | 其他任务 | 直接执行 | 无需任何 plan/mode |
+
+**触发（历史，已失效）**：30步以上有依赖/多文件协同/条件分支/需并行 | **禁用**：简单任务直接做
 任务开始前必须先创建工作目录 `./plan_XXX/`（XXX=任务英文短名）
 单独使用一个code_run({'inline_eval':True, 'script':'handler.enter_plan_mode("./plan_XXX/plan.md")'})进入plan模式
 handler是inline_eval自动注入的变量
@@ -107,7 +120,7 @@ handler是inline_eval自动注入的变量
 
 ## 验证检查点
 N+1. [ ] **[VERIFY] 启动独立验证subagent**
-     SOP: verify_sop.md plan_sop.md
+     SOP: deliverable_audit_sop.md plan_sop.md
      操作：读plan_sop.md第四章内容 → 准备verify_context.json → 启动验证subagent → 读取VERDICT → 按结果处理
      ⚠ 不可跳过，不可在未启动subagent的情况下标记[✓]
 
@@ -199,12 +212,12 @@ file_read(plan.md) 全文扫描，确认所有步骤（含[VERIFY]）均为 `[�
 按 subagent.md 标准流程启动验证subagent，input要点：
 
 - **角色**：你是独立验证者，工作是对抗性验证（证明交付物不能用）
-- **第一步强制**：file_read verify_sop.md 完整阅读验证SOP
-- **按 verify_sop.md 第3节**选择对应task_type的验证策略执行
+- **第一步强制**：file_read deliverable_audit_sop.md 完整阅读验证SOP
+- **按 deliverable_audit_sop.md 第3节**选择对应task_type的验证策略执行
 - **每个检查必须有工具调用证据**（实际执行，不是叙述）
 - **任务描述**：（填入原始任务描述）
 - **交付物清单**：（填入deliverables列表）
-- **输出**：在 result.md 中按 verify_sop.md 第6节格式输出，最后一行 `VERDICT: PASS / FAIL / PARTIAL`
+- **输出**：在 result.md 中按 deliverable_audit_sop.md 第6节格式输出，最后一行 `VERDICT: PASS / FAIL / PARTIAL`
 - **约束**：3轮内完成，每轮至少1个实际工具调用
 
 同时传入 verify_context.json 的路径，让subagent自行读取详细上下文。
