@@ -589,3 +589,23 @@ footer { padding: 24px 3px 0; color: var(--faint); font: 9px Consolas, monospace
 .hero h1 { max-width: 62ch; font-size: clamp(20px, 2.7vw, 34px); line-height: 1.28; overflow-wrap: anywhere; }
 .hero-side, .hero-status, .hero-actions { flex: 0 0 auto; }
 .hero-start-btn { white-space: nowrap; }
+
+/* 模型测试结果：独立成块、可断行、超长自己滚 —— 修 2026-10-15 用户反馈的「报错撑破卡片」 */
+.model-test { display: block; flex: 1 1 100%; min-width: 0; margin-top: 4px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--field); color: var(--muted); font-size: 10px; line-height: 1.45; white-space: normal; overflow-wrap: anywhere; word-break: break-word; max-height: 72px; overflow: auto; }
+.model-test.ok { color: var(--wechat); border-color: rgba(7, 193, 96, .28); }
+.model-test.err { color: var(--danger); border-color: rgba(255, 107, 114, .32); }
+.model-fetch-item { flex-wrap: wrap; min-width: 0; }
+.model-fetch-item label { min-width: 0; overflow-wrap: anywhere; }
+.model-fetch-actions { display: flex; flex-shrink: 0; gap: 6px; margin-left: auto; }
+
+/* 添加 / 测试弹窗：把「添加过程」收进小弹窗，长报错的影响范围就锁在弹窗里 */
+.model-modal { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 20px; background: var(--overlay); backdrop-filter: blur(4px); }
+.model-modal[hidden] { display: none; }
+.model-modal-card { width: min(520px, 100%); max-height: 76vh; overflow: auto; padding: 16px 18px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel-strong); box-shadow: var(--shadow); }
+.model-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.model-modal-head b { min-width: 0; color: var(--text); font-size: 13px; overflow-wrap: anywhere; }
+.model-modal-meta { margin-top: 6px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.model-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.model-modal-result { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); color: var(--muted); font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; max-height: 40vh; overflow: auto; }
+.model-modal-result.ok { color: var(--wechat); border-color: rgba(7, 193, 96, .3); }
+.model-modal-result.err { color: var(--danger); border-color: rgba(255, 107, 114, .34); }

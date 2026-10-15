@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#111714" />
   <title>G4W Control Center</title>
-  <link rel="stylesheet" href="/styles.css?v=20261015-hero1" />
+  <link rel="stylesheet" href="/styles.css?v=20261015-modaltest1" />
   <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
 </head>
 <body>
@@ -292,10 +292,22 @@
     <aside class="drawer"><header><div><div class="eyebrow" id="drawer-eyebrow">DETAIL</div><h2 id="drawer-title">详情</h2></div><button class="drawer-close" data-close-drawer>×</button></header><div class="drawer-body" id="drawer-body"></div></aside>
   </div>
   <div class="refresh-overlay" id="refresh-overlay" hidden><div class="refresh-overlay-card"><b>正在刷新</b><span>重新读取当前页数据…</span></div></div>
+  <div class="model-modal" id="model-modal" hidden>
+    <div class="model-modal-card" role="dialog" aria-modal="true" aria-labelledby="model-modal-title">
+      <div class="model-modal-head"><b id="model-modal-title">模型</b><button type="button" class="ghost-button" id="model-modal-close">关闭</button></div>
+      <div class="model-modal-meta" id="model-modal-base"></div>
+      <div class="model-modal-actions">
+        <button type="button" class="ghost-button" id="model-modal-test">测试一次</button>
+        <button type="button" class="primary-button" id="model-modal-add">添加为可用模型</button>
+      </div>
+      <div class="model-modal-result" id="model-modal-result" hidden></div>
+      <small class="model-hint">添加只写入本机 mykey.py（GA 按文件时间自动重载）；「测试一次」会真的发一次最小请求，结果显示在这个弹窗里 —— 再长的报错也不会挤坏卡片布局。</small>
+    </div>
+  </div>
     <div class="toast" id="toast" hidden></div>
   <div class="timeline-tooltip" id="timeline-tooltip" role="tooltip" hidden></div>
   <script src="/vendor/markdown-it.min.js"></script>
   <script src="/vendor/katex/katex.min.js"></script>
-  <script src="/app.js?v=20261015-hero1"></script>
+  <script src="/app.js?v=20261015-modaltest1"></script>
 </body>
 </html>

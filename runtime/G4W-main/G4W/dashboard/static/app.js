@@ -3067,7 +3067,64 @@ function testLine(providerId, model) {
     const reply = info.reply ? ` · 回复 “${esc(info.reply)}”` : "";
     return `<span class="model-test ok">✓ ${esc(String(info.latencyMs ?? "?"))} ms${reply}</span>`;
   }
-  return `<span class="model-test err">✗ ${esc(info.error || "失败")}</span>`;
+  const detail = String(info.error || "失败");
+  return `<span class="model-test err" title="${esc(detail)}">✗ ${esc(detail)}</span>`;
+}
+
+// 添加 / 详情走弹窗：长报错只影响弹窗内部，不再撑破网格（2026-10-15 用户反馈的破版）
+let modelModalState = null;
+
+function openModelModal({ providerId, providerName, model, addable }) {
+  const box = $("model-modal");
+  if (!box) return;
+  modelModalState = { providerId, providerName, model, addable: !!addable };
+  $("model-modal-title").textContent = model;
+  $("model-modal-base").textContent = `${providerName || providerId} · ${providerId}`;
+  const add = $("model-modal-add");
+  if (add) { add.hidden = !modelModalState.addable; add.disabled = false; add.textContent = "添加为可用模型"; }
+  const res = $("model-modal-result");
+  if (res) { res.hidden = true; res.textContent = ""; res.classList.remove("ok", "err"); res.removeAttribute("title"); }
+  box.hidden = false;
+}
+
+function closeModelModal() {
+  const box = $("model-modal");
+  if (box) box.hidden = true;
+  modelModalState = null;
+}
+
+async function modelModalTest() {
+  if (!modelModalState) return;
+  const { providerId, model } = modelModalState;
+  const res = $("model-modal-result");
+  if (!res) return;
+  res.hidden = false;
+  res.classList.remove("ok", "err");
+  res.textContent = `正在测试 ${model}…`;
+  const result = await modelTestRaw(providerId, model);
+  modelTestResults[testKey(providerId, model)] = result;
+  if (result.ok) {
+    res.classList.add("ok");
+    res.textContent = `✓ 可用 · ${result.latencyMs ?? "?"} ms` + (result.reply ? `\n回复：${result.reply}` : "");
+  } else {
+    res.classList.add("err");
+    res.textContent = `✗ 失败\n${result.error || "未知错误"}`;
+  }
+  res.title = res.textContent;
+}
+
+async function modelModalAdd() {
+  if (!modelModalState || !modelModalState.addable) return;
+  const { providerId, model } = modelModalState;
+  const button = $("model-modal-add");
+  if (button) { button.disabled = true; button.textContent = "添加中…"; }
+  const state = await modelConfigPost("model/add", { providerId, model });
+  if (button) { button.disabled = false; button.textContent = "添加为可用模型"; }
+  if (!state) return;
+  modelConfigRender(state);
+  modelMessage(`已添加 ${model}；GA 按文件时间自动重载，无需重启。`, false);
+  if (typeof loadModels === "function") { try { loadModels(); } catch (_) {} }
+  closeModelModal();
 }
 
 function providerIdForBase(apibase) {
@@ -3136,10 +3193,8 @@ function modelConfigRenderFetch() {
         <label><input type="checkbox" value="${esc(name)}" ${added ? "checked disabled" : ""}>
           <span>${esc(name)}${added ? "（已添加）" : ""}</span></label>
         <span class="model-fetch-actions">
-          <button type="button" class="ghost-button" data-test-fetched="${esc(name)}">测试</button>
-          ${added ? "" : `<button type="button" class="ghost-button" data-add-one="${esc(name)}">添加</button>`}
+          <button type="button" class="ghost-button" data-modal-model="${esc(name)}" data-modal-addable="${added ? "0" : "1"}">${added ? "详情" : "添加…"}</button>
         </span>
-        ${testLine(state.providerId, name)}
       </div>`;
   }).join("");
   box.innerHTML = `
@@ -3148,6 +3203,14 @@ function modelConfigRenderFetch() {
       <button type="button" class="ghost-button" id="model-fetch-close">收起</button></div>
     <div class="model-fetch-grid">${rows || '<span class="muted-tag">该供应商没有返回模型列表</span>'}</div>`;
   $("model-fetch-add")?.addEventListener("click", modelConfigAddChecked);
+  box.querySelectorAll("[data-modal-model]").forEach((node) => {
+    node.addEventListener("click", () => openModelModal({
+      providerId: state.providerId,
+      providerName: state.providerName,
+      model: node.dataset.modalModel,
+      addable: node.dataset.modalAddable === "1",
+    }));
+  });
   $("model-fetch-close")?.addEventListener("click", () => {
     modelFetchState = { providerId: "", providerName: "", models: [] };
     modelConfigRenderFetch();
@@ -3281,14 +3344,24 @@ $("model-config-models")?.addEventListener("click", (event) => {
   if (deleteButton) modelConfigModelDelete(deleteButton.dataset.deleteModel);
 });
 $("model-config-fetched")?.addEventListener("click", (event) => {
-  const testButton = event.target.closest("[data-test-fetched]");
-  if (testButton) { modelConfigTestModel(modelFetchState.providerId, testButton.dataset.testFetched); return; }
-  const addButton = event.target.closest("[data-add-one]");
-  if (addButton) modelConfigAddOne(addButton.dataset.addOne);
+  const openButton = event.target.closest("[data-modal-model]");
+  if (openButton) {
+    openModelModal({
+      providerId: modelFetchState.providerId,
+      providerName: modelFetchState.providerName,
+      model: openButton.dataset.modalModel,
+      addable: openButton.dataset.modalAddable === "1",
+    });
+  }
 });
 $("model-provider-save")?.addEventListener("click", modelConfigProviderSave);
 $("model-fetch-run")?.addEventListener("click", modelConfigFetchRun);
 $("model-test-all")?.addEventListener("click", modelConfigTestAll);
+$("model-modal-close")?.addEventListener("click", closeModelModal);
+$("model-modal-test")?.addEventListener("click", modelModalTest);
+$("model-modal-add")?.addEventListener("click", modelModalAdd);
+$("model-modal")?.addEventListener("click", (event) => { if (event.target === $("model-modal")) closeModelModal(); });
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeModelModal(); });
 $("timeline-board").addEventListener("wheel", (event) => {
   const scroll = event.target.closest(".timeline-scroll");
   if (!scroll) return;
