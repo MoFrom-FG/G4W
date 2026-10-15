@@ -1007,8 +1007,9 @@ class G4WController:
         if checkin_reports:
             maintenance_due = any(item.get("mode") == "maintenance" for item in checkin_reports)
             instruction = (
-                "This is original G4W maintenance mode. Work through the MAINTENANCE_MENU items in the payload; "
-                "every item is optional, pick only what is genuinely useful, then stop. "
+                "This is original G4W maintenance mode. The payload marks dueTimeline / dueDiary: when either is true you MUST "
+                "write that surface (timeline.write / diary.append) before finishing — that is why this round exists. "
+                "The remaining MAINTENANCE_MENU items are optional; pick only what is genuinely useful, then stop. "
                 "This round is silent by default: your closing text is NOT sent to the user, so never write a completion "
                 "acknowledgement or describe internal work. If you really need to reach the user, write that text after <notify/>."
                 if maintenance_due else

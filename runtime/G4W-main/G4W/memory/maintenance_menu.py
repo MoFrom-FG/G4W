@@ -42,17 +42,33 @@ class MaintenanceMenuStore:
         self.store.update(update)
         return value
 
-    def render_checkin(self, binding_key: str, address: str = "", now: float | None = None) -> str:
-        """注入 checkin 维护轮的菜单块；没有允许项时返回空串。"""
+    def render_checkin(self, binding_key: str, address: str = "", now: float | None = None,
+                       due_timeline: bool = False, due_diary: bool = False) -> str:
+        """注入 checkin 维护轮的菜单块；没有允许项时返回空串。
+
+        due_timeline/due_diary 直接来自 checkin payload（确定性层判定的到期字段）：
+        它们标【必做】——这两个才是维护轮存在的理由，其余动作才是自主选做。
+        """
         allowed = self.allowed(binding_key)
         if not allowed:
             return ""
         stamp = float(now if now is not None else time.time())
         period = period_for(stamp)
         name = str(address or "").strip() or "你"
+        required = set()
+        if due_timeline and "timeline" in allowed:
+            required.add("timeline")
+        if due_diary and "diary" in allowed:
+            required.add("diary")
+        due_note = (
+            "payload 里 dueTimeline/dueDiary 为真：标【必做】的项必须真的落盘（timeline.write / diary.append）后才能收尾；"
+            "其余项自主选做，也可以都不做。"
+            if required else
+            "这一轮没有到期的维护字段：下面各项都由你自主选做，可以只做一件，也可以都不做。"
+        )
         lines = [
             "MAINTENANCE_MENU",
-            "这是内部维护轮：以下几点由你自主选做，可以只做一件，也可以都不做；做完直接收尾。",
+            "这是内部维护轮。" + due_note,
             f"当前时段：{PERIOD_LABELS.get(period, '')}（{PERIOD_RANGES.get(period, '')}）；你对用户的称呼是「{name}」。",
         ]
         for item in ACTION_CATALOG:
@@ -66,6 +82,7 @@ class MaintenanceMenuStore:
                     "正文一句话、控制在 30 字以内、不要换行（看板 hero 只有一行位置），"
                     "也不要出现系统/机制/英文内部词"
                 )
-            lines.append(f"  [{item['id']}] {item['label']} — {desc}")
+            mark = "【必做】" if item["id"] in required else ""
+            lines.append(f"  [{item['id']}] {mark}{item['label']} — {desc}")
         lines.append("维护轮默认静默：收尾文本不会发给用户，也不要写「静默收尾」这类说明；确实要联系用户时把正文写在 <notify/> 之后。")
         return "\n".join(lines)

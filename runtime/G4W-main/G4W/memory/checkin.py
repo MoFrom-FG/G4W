@@ -104,8 +104,11 @@ class CheckinService:
             }
             todo_menu = todo_service.render_checkin(entry["senderId"]) if todo_service is not None else ""
             maintenance_menu = (
-                menu_service.render_checkin(entry["bindingKey"], address=address or user_name, now=now)
-                if menu_service is not None else ""
+                menu_service.render_checkin(
+                    entry["bindingKey"], address=address or user_name, now=now,
+                    due_timeline=bool(checkin.get("dueTimeline")), due_diary=bool(checkin.get("dueDiary")),
+                )
+                if (menu_service is not None and str(checkin.get("mode") or "") == "maintenance") else ""
             )
 
             # Walk fireIndex until enqueue actually yields a pending event.
