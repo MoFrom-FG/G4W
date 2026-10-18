@@ -162,7 +162,7 @@ def chunk_reply_text_for_weixin(text: str, min_chunk: int = DEFAULT_MIN_WEIXIN_C
                 continue
             chunks.extend([unit] if len(unit) <= MAX_WEIXIN_CHUNK else chunk_reply_text(unit, MAX_WEIXIN_CHUNK))
         if chunks:
-            return chunks
+            return [SPLIT_MARKER_RE.sub("", chunk).strip() for chunk in chunks if chunk]
     boundaries = collect_streaming_boundaries(normalized)
     if not boundaries:
         return chunk_reply_text(normalized, MAX_WEIXIN_CHUNK)
@@ -181,8 +181,9 @@ def chunk_reply_text_for_weixin(text: str, min_chunk: int = DEFAULT_MIN_WEIXIN_C
     chunks = []
     for unit in units:
         chunks.extend([unit] if len(unit) <= MAX_WEIXIN_CHUNK else chunk_reply_text(unit, MAX_WEIXIN_CHUNK))
-    return merge_short_chunks([chunk for chunk in chunks if chunk], MAX_WEIXIN_CHUNK,
-                              max(1, min(int(min_chunk), MAX_WEIXIN_CHUNK)))
+    merged = merge_short_chunks([chunk for chunk in chunks if chunk], MAX_WEIXIN_CHUNK,
+                                max(1, min(int(min_chunk), MAX_WEIXIN_CHUNK)))
+    return [SPLIT_MARKER_RE.sub("", chunk).strip() for chunk in merged if chunk]
 
 
 def prepare_reply_chunks(text: str, min_chunk: int = DEFAULT_MIN_WEIXIN_CHUNK) -> tuple[list[str], bool]:
