@@ -16,6 +16,19 @@ G4W（Generic Agent for WeChat）运行在 Windows 电脑上，通过微信提�
 
 WeChat功能逻辑参考：[Cyberboss](https://github.com/WenXiaoWendy/cyberboss/tree/main)。
 
+## 下载与平台
+
+| 平台 | 包 | 上手 |
+|---|---|---|
+| Windows x64 | `G4W-3.1.6-win-x64.zip` | 解压 → 双击 `G4W.exe` → 浏览器向导四步 |
+| Linux x64（推荐） | `G4W-3.1.6-linux-x64.tar.gz` | 解压 → `bash install.sh` → `./G4W`（自带 CPython + 离线 wheel，不依赖外网） |
+| Linux x64（精简） | `G4W-3.1.6-linux-x64-slim.tar.gz` | 需要宿主 `python3.12`；其余相同 |
+| 老版本升级 | `G4W-patch-<版本>-to-3.1.6.zip` | 增量补丁，保留 `G4W-data` 与密钥，不必重下整包 |
+
+Linux 完整说明（含 WSL、systemd 服务化、排错）见 [tools/linux/README-Linux.md](tools/linux/README-Linux.md)。
+
+> ⚠️ **看板默认只监听 `127.0.0.1`**。要放到公网（反向代理、域名、HTTPS）请先读 Linux 说明的「八、把看板放到公网？先读这一段」：用 SSH 隧道或「反代 + TLS + 二次认证」，不要直接暴露 `18180` —— 看板数据目录里存着微信 token、记忆与聊天记录。
+
 ## 为什么需要 G4W
 
 | 常见痛点 | G4W 的解决方式 |
