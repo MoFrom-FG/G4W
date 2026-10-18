@@ -2057,13 +2057,16 @@ function todoRow(sender, task) {
   const state = task.status === "done" ? "done" : task.classify;
   const labels = { overdue: "⚠️ 已到期", scheduled: "⏰ 有时间", ongoing: "📌 持续", done: "✅ 已完成" };
   const due = task.dueLabel ? ` <span class="muted">· ${esc(task.dueLabel)}</span>` : "";
+    const created = task.createdLabel ? ` <span class="muted">· 创建 ${esc(task.createdLabel)}</span>` : "";
+    const completed = task.completedLabel ? ` <span class="muted">· 完成 ${esc(task.completedLabel)}</span>` : "";
+    const overdue = task.status !== "done" && task.overdueDays > 0 ? ` <span class="muted">· 已逾期 ${esc(String(task.overdueDays))} 天</span>` : "";
   const recur = task.recurLabel ? ` <span class="muted">· ${esc(task.recurLabel)}</span>` : "";
   const fire = task.fireIndex > 0 ? ` <span class="muted">· 已提醒 ${task.fireIndex} 次</span>` : "";
   const del = `<button class="todo-act" data-todo-act="delete" data-sender="${esc(sender)}" data-id="${esc(task.id)}" title="删除">🗑</button>`;
   const act = task.status === "pending"
     ? `<button class="todo-act" data-todo-act="done" data-sender="${esc(sender)}" data-id="${esc(task.id)}" title="完成">✅</button>${del}`
     : del;
-  return `<div class="todo-item todo-${state}"><span class="todo-badge">${labels[state] || ""}</span><span class="todo-text">${esc(task.text)}</span><span class="todo-meta">${due}${recur}${fire}</span><span class="todo-actions">${act}</span></div>`;
+  return `<div class="todo-item todo-${state}"><span class="todo-badge">${labels[state] || ""}</span><span class="todo-text">${esc(task.text)}</span><span class="todo-meta">${due}${recur}${fire}${created}${completed}${overdue}</span><span class="todo-actions">${act}</span></div>`;
 }
 
 // ---- 服务与终端（服务启停 + 实时日志终端） ----
@@ -2073,6 +2076,7 @@ let servicesSignature = "";
 let terminalId = "";
 let terminalCursor = 0;
 let terminalTimer = null;
+let terminalPaused = false;
 let terminalLastError = "";
 let workerMonitorCursor = 0;
 let workerMonitorTimer = null;
@@ -2195,8 +2199,10 @@ function appendTerminalLines(lines) {
     frag.appendChild(div);
   });
   body.appendChild(frag);
-  while (body.childElementCount > 2000) body.removeChild(body.firstChild); // 只保留最近 2000 行
-  if (follow) body.scrollTop = body.scrollHeight;
+  if (!terminalPaused) {
+    while (body.childElementCount > 4000) body.removeChild(body.firstChild); // 只保留最近 4000 行
+    if (follow) body.scrollTop = body.scrollHeight;
+  }
 }
 
 function stopTerminalPoll() {
@@ -2208,6 +2214,7 @@ function startTerminalPoll() {
   const tick = async () => {
     if (document.hidden) return; // 后台标签不轮询，减少连接占用
     if (!terminalId) return;
+      if (terminalPaused) return; // 有选区时暂停轮询，保证复制稳定
     try {
       const res = await fetchJson(`/api/services/logs?id=${encodeURIComponent(terminalId)}&cursor=${terminalCursor}`);
       terminalLastError = "";
@@ -2613,6 +2620,13 @@ async function switchModel(select) {
   try {
     const result = await fetchJson("/api/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target, value }) });
     showToast(result.message || "模型已切换");
+    // 切换后首页立刻反映新模型：乐观更新本地快照并重绘，再拉服务端真值 + 一次延迟兜底
+    const appliedModel = String((result && result.selected && result.selected.model) || value || "").trim();
+    if (appliedModel && dashboardData && dashboardData.system) {
+      if (target === "conductor") dashboardData.system.model = appliedModel;
+      render(dashboardData);
+    }
+    window.setTimeout(() => { refresh(); }, 800);
     document.querySelectorAll("[data-model-target]").forEach((item) => { item.dataset.loaded = ""; });
     await refresh();
     await loadModels(true);
@@ -3539,3 +3553,41 @@ ensureAuth().then((ok) => {
 });
 setInterval(refresh, 30000);
 
+
+
+// ---------- 终端：cmd 式选中复制（选中期间不刷新、不裁剪、不滚动） ----------
+function ensureTerminalPauseHint() {
+  if (document.getElementById("terminal-pause-hint")) return;
+  const body = document.getElementById("terminal-body");
+  const header = body ? body.closest(".terminal-card")?.querySelector(".terminal-header") : null;
+  if (!header) return;
+  const hint = document.createElement("span");
+  hint.id = "terminal-pause-hint";
+  hint.className = "terminal-pause-hint";
+  hint.hidden = true;
+  hint.textContent = "已暂停刷新（选中中）";
+  header.appendChild(hint);
+}
+
+function updateTerminalPauseFromSelection() {
+  const body = document.getElementById("terminal-body");
+  if (!body) return;
+  const sel = window.getSelection ? window.getSelection() : null;
+  let paused = false;
+  if (sel && sel.rangeCount && !sel.isCollapsed) {
+    let node = sel.anchorNode;
+    if (node && node.nodeType !== 1) node = node.parentElement;
+    paused = !!(node && body.contains(node));
+  }
+  if (paused === terminalPaused) return;
+  terminalPaused = paused;
+  ensureTerminalPauseHint();
+  const hint = document.getElementById("terminal-pause-hint");
+  if (hint) hint.hidden = !paused;
+  if (!paused && terminalId) { stopTerminalPoll(); startTerminalPoll(); }
+}
+
+document.addEventListener("selectionchange", () => {
+  window.clearTimeout(updateTerminalPauseFromSelection._t);
+  updateTerminalPauseFromSelection._t = window.setTimeout(updateTerminalPauseFromSelection, 120);
+});

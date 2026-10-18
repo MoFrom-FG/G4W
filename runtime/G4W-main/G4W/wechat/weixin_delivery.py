@@ -3,6 +3,8 @@ import re
 
 MAX_WEIXIN_CHUNK = 3800
 DEFAULT_MIN_WEIXIN_CHUNK = 10
+# 分气泡标记：conductor 自主插在正文里；只有标记处才切新气泡，发送前剥离
+SPLIT_MARKER_RE = re.compile(r"<\s*split\s*/?\s*>", re.I)
 WEIXIN_LIVE_DELIVERY_MESSAGES = 8
 WEIXIN_MAX_DELIVERY_MESSAGES = 10
 DEFERRED_TAIL_NOTICE = "后面还有一段内容比较长，先暂存起来；等你下一条消息刷新微信 context_token 后，我会继续补发。"
@@ -142,28 +144,25 @@ def merge_short_chunks(chunks: list[str], max_length: int, min_length: int) -> l
 
 
 def chunk_reply_text_for_weixin(text: str, min_chunk: int = DEFAULT_MIN_WEIXIN_CHUNK) -> list[str]:
+    """一条回复怎么拆成多条微信消息。
+
+    规则（2026-10-16 第二批）：只在 conductor 写的 <split/> 处拆，标记本身剥离；
+    没有标记就整条发一条，只有超过微信上限才硬切。min_chunk 仅为兼容旧调用保留，不再合并短分片。
+    """
     normalized = trim_outer_blank_lines(str(text or "").replace("\r\n", "\n"))
     if not normalized.strip():
         return []
-    boundaries = collect_streaming_boundaries(normalized)
-    if not boundaries:
-        return chunk_reply_text(normalized, MAX_WEIXIN_CHUNK)
-    units = []
-    start = 0
-    for boundary in boundaries:
-        if boundary <= start:
-            continue
-        unit = trim_outer_blank_lines(normalized[start:boundary])
-        if unit:
-            units.append(unit)
-        start = boundary
-    tail = trim_outer_blank_lines(normalized[start:])
-    if tail:
-        units.append(tail)
-    chunks = []
-    for unit in units:
-        chunks.extend([unit] if len(unit) <= MAX_WEIXIN_CHUNK else chunk_reply_text(unit, MAX_WEIXIN_CHUNK))
-    return merge_short_chunks([chunk for chunk in chunks if chunk], MAX_WEIXIN_CHUNK, max(1, min(int(min_chunk), MAX_WEIXIN_CHUNK)))
+    segments = SPLIT_MARKER_RE.split(normalized)
+    if len(segments) > 1:
+        chunks = []
+        for segment in segments:
+            unit = trim_outer_blank_lines(segment)
+            if not unit.strip():
+                continue
+            chunks.extend([unit] if len(unit) <= MAX_WEIXIN_CHUNK else chunk_reply_text(unit, MAX_WEIXIN_CHUNK))
+        if chunks:
+            return chunks
+    return chunk_reply_text(normalized, MAX_WEIXIN_CHUNK)
 
 
 def prepare_reply_chunks(text: str, min_chunk: int = DEFAULT_MIN_WEIXIN_CHUNK) -> tuple[list[str], bool]:
