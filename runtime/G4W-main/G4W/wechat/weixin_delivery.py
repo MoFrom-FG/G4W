@@ -146,8 +146,9 @@ def merge_short_chunks(chunks: list[str], max_length: int, min_length: int) -> l
 def chunk_reply_text_for_weixin(text: str, min_chunk: int = DEFAULT_MIN_WEIXIN_CHUNK) -> list[str]:
     """一条回复怎么拆成多条微信消息。
 
-    规则（2026-10-16 第二批）：只在 conductor 写的 <split/> 处拆，标记本身剥离；
-    没有标记就整条发一条，只有超过微信上限才硬切。min_chunk 仅为兼容旧调用保留，不再合并短分片。
+    规则（2026-10-16 第二批，含兜底）：
+      1. 有 <split/>：只在标记处拆，标记剥离；每段过长才按 3800 硬切。
+      2. 没有标记：退回原来的分法（空行/列表项/句末标点边界 + 短分片合并）。
     """
     normalized = trim_outer_blank_lines(str(text or "").replace("\r\n", "\n"))
     if not normalized.strip():
@@ -162,12 +163,41 @@ def chunk_reply_text_for_weixin(text: str, min_chunk: int = DEFAULT_MIN_WEIXIN_C
             chunks.extend([unit] if len(unit) <= MAX_WEIXIN_CHUNK else chunk_reply_text(unit, MAX_WEIXIN_CHUNK))
         if chunks:
             return chunks
-    return chunk_reply_text(normalized, MAX_WEIXIN_CHUNK)
+    boundaries = collect_streaming_boundaries(normalized)
+    if not boundaries:
+        return chunk_reply_text(normalized, MAX_WEIXIN_CHUNK)
+    units = []
+    start_at = 0
+    for boundary in boundaries:
+        if boundary <= start_at:
+            continue
+        unit = trim_outer_blank_lines(normalized[start_at:boundary])
+        if unit:
+            units.append(unit)
+        start_at = boundary
+    tail = trim_outer_blank_lines(normalized[start_at:])
+    if tail:
+        units.append(tail)
+    chunks = []
+    for unit in units:
+        chunks.extend([unit] if len(unit) <= MAX_WEIXIN_CHUNK else chunk_reply_text(unit, MAX_WEIXIN_CHUNK))
+    return merge_short_chunks([chunk for chunk in chunks if chunk], MAX_WEIXIN_CHUNK,
+                              max(1, min(int(min_chunk), MAX_WEIXIN_CHUNK)))
 
 
 def prepare_reply_chunks(text: str, min_chunk: int = DEFAULT_MIN_WEIXIN_CHUNK) -> tuple[list[str], bool]:
     normalized = trim_outer_blank_lines(str(text or "").replace("\r\n", "\n"))
     preserve_markdown = has_structural_markdown(normalized)
+    # 显式标记优先：即使回复含 markdown 结构，也只在 <split/> 处切
+    if SPLIT_MARKER_RE.search(normalized):
+        chunks = []
+        for segment in SPLIT_MARKER_RE.split(normalized):
+            unit = trim_outer_blank_lines(segment)
+            if not unit.strip():
+                continue
+            body = unit if preserve_markdown else markdown_to_plain_text(unit)
+            chunks.extend([body] if len(body) <= MAX_WEIXIN_CHUNK else chunk_reply_text(body, MAX_WEIXIN_CHUNK))
+        return [chunk for chunk in chunks if chunk], preserve_markdown
     if preserve_markdown:
         return [chunk for chunk in split_utf8(normalized) if chunk], True
     plain = markdown_to_plain_text(normalized)

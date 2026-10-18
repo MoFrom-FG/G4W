@@ -112,6 +112,8 @@ def clean_visible_reply(text: str) -> str:
     value = re.sub(r"<summary>[\s\S]*?</summary>", "", value, flags=re.I)
     value = re.sub(r"<silent\s*/?>", "", value, flags=re.I)
     value = re.sub(r"<\s*split\s*/?\s*>", "", value, flags=re.I)
+    # 模型有时只输出孤立的 </summary> / <thinking> 闭合标签（不成对），会单独变成一个气泡
+    value = re.sub(r"</?\s*(?:summary|thinking)\s*/?>", "", value, flags=re.I)
     value = re.sub(r"(?im)^\s*(?:\*\*)?(?:LLM Running \(Turn \d+\)|Turn \d+) \.\.\.(?:\*\*)?\s*$", "", value)
     value = re.sub(r"(?im)^\s*\[ROUND END\]\s*$", "", value)
     value = re.sub(r"(?im)^\s*\[G4W\][^\n]*$", "", value)
