@@ -19,7 +19,7 @@ from .qr import make_svg
 from .media import AttachmentStore, extract_attachments, send_weixin_file
 from .account_store import WeixinAccountStore
 from ..core.storage import JsonStore, safe_segment
-from .weixin_delivery import DEFAULT_MIN_WEIXIN_CHUNK, MAX_WEIXIN_CHUNK, join_delivery_chunks, pack_final_burst, prepare_reply_chunks, strip_sentence_tail_chinese_full_stops, take_live_delivery
+from .weixin_delivery import SPLIT_MARKER_RE, DEFAULT_MIN_WEIXIN_CHUNK, MAX_WEIXIN_CHUNK, join_delivery_chunks, pack_final_burst, prepare_reply_chunks, strip_sentence_tail_chinese_full_stops, take_live_delivery
 
 
 class WeixinError(RuntimeError):
@@ -493,6 +493,9 @@ class WeixinChannel:
         if not token:
             raise WeixinError(f"missing context_token for {sender_id}")
         chunks, preserve_markdown = prepare_reply_chunks(text, self.get_min_chunk_chars())
+        if len(chunks) > 1 and not SPLIT_MARKER_RE.search(str(text or "")):
+            _raw_reply = str(text or "")
+            print("[G4W] reply had no <split/> -> punctuation fallback (" + str(len(chunks)) + " bubbles, " + str(len(_raw_reply)) + " chars)")
         if preserve_block:
             chunks = [str(text or "").strip()] if str(text or "").strip() else []
             preserve_markdown = True
