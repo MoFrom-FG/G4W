@@ -2057,13 +2057,16 @@ function todoRow(sender, task) {
   const state = task.status === "done" ? "done" : task.classify;
   const labels = { overdue: "⚠️ 已到期", scheduled: "⏰ 有时间", ongoing: "📌 持续", done: "✅ 已完成" };
   const due = task.dueLabel ? ` <span class="muted">· ${esc(task.dueLabel)}</span>` : "";
+    const created = task.createdLabel ? ` <span class="muted">· 创建 ${esc(task.createdLabel)}</span>` : "";
+    const completed = task.completedLabel ? ` <span class="muted">· 完成 ${esc(task.completedLabel)}</span>` : "";
+    const overdue = task.status !== "done" && task.overdueDays > 0 ? ` <span class="muted">· 已逾期 ${esc(String(task.overdueDays))} 天</span>` : "";
   const recur = task.recurLabel ? ` <span class="muted">· ${esc(task.recurLabel)}</span>` : "";
   const fire = task.fireIndex > 0 ? ` <span class="muted">· 已提醒 ${task.fireIndex} 次</span>` : "";
   const del = `<button class="todo-act" data-todo-act="delete" data-sender="${esc(sender)}" data-id="${esc(task.id)}" title="删除">🗑</button>`;
   const act = task.status === "pending"
     ? `<button class="todo-act" data-todo-act="done" data-sender="${esc(sender)}" data-id="${esc(task.id)}" title="完成">✅</button>${del}`
     : del;
-  return `<div class="todo-item todo-${state}"><span class="todo-badge">${labels[state] || ""}</span><span class="todo-text">${esc(task.text)}</span><span class="todo-meta">${due}${recur}${fire}</span><span class="todo-actions">${act}</span></div>`;
+  return `<div class="todo-item todo-${state}"><span class="todo-badge">${labels[state] || ""}</span><span class="todo-text">${esc(task.text)}</span><span class="todo-meta">${due}${recur}${fire}${created}${completed}${overdue}</span><span class="todo-actions">${act}</span></div>`;
 }
 
 // ---- 服务与终端（服务启停 + 实时日志终端） ----
@@ -2073,6 +2076,7 @@ let servicesSignature = "";
 let terminalId = "";
 let terminalCursor = 0;
 let terminalTimer = null;
+let terminalPaused = false;
 let terminalLastError = "";
 let workerMonitorCursor = 0;
 let workerMonitorTimer = null;
@@ -2195,8 +2199,10 @@ function appendTerminalLines(lines) {
     frag.appendChild(div);
   });
   body.appendChild(frag);
-  while (body.childElementCount > 2000) body.removeChild(body.firstChild); // 只保留最近 2000 行
-  if (follow) body.scrollTop = body.scrollHeight;
+  if (!terminalPaused) {
+    while (body.childElementCount > 4000) body.removeChild(body.firstChild); // 只保留最近 4000 行
+    if (follow) body.scrollTop = body.scrollHeight;
+  }
 }
 
 function stopTerminalPoll() {
@@ -2208,6 +2214,7 @@ function startTerminalPoll() {
   const tick = async () => {
     if (document.hidden) return; // 后台标签不轮询，减少连接占用
     if (!terminalId) return;
+      if (terminalPaused) return; // 有选区时暂停轮询，保证复制稳定
     try {
       const res = await fetchJson(`/api/services/logs?id=${encodeURIComponent(terminalId)}&cursor=${terminalCursor}`);
       terminalLastError = "";
@@ -2613,6 +2620,13 @@ async function switchModel(select) {
   try {
     const result = await fetchJson("/api/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target, value }) });
     showToast(result.message || "模型已切换");
+    // 切换后首页立刻反映新模型：乐观更新本地快照并重绘，再拉服务端真值 + 一次延迟兜底
+    const appliedModel = String((result && result.selected && result.selected.model) || value || "").trim();
+    if (appliedModel && dashboardData && dashboardData.system) {
+      if (target === "conductor") dashboardData.system.model = appliedModel;
+      render(dashboardData);
+    }
+    window.setTimeout(() => { refresh(); }, 800);
     document.querySelectorAll("[data-model-target]").forEach((item) => { item.dataset.loaded = ""; });
     await refresh();
     await loadModels(true);
@@ -3067,7 +3081,64 @@ function testLine(providerId, model) {
     const reply = info.reply ? ` · 回复 “${esc(info.reply)}”` : "";
     return `<span class="model-test ok">✓ ${esc(String(info.latencyMs ?? "?"))} ms${reply}</span>`;
   }
-  return `<span class="model-test err">✗ ${esc(info.error || "失败")}</span>`;
+  const detail = String(info.error || "失败");
+  return `<span class="model-test err" title="${esc(detail)}">✗ ${esc(detail)}</span>`;
+}
+
+// 添加 / 详情走弹窗：长报错只影响弹窗内部，不再撑破网格（2026-10-15 用户反馈的破版）
+let modelModalState = null;
+
+function openModelModal({ providerId, providerName, model, addable }) {
+  const box = $("model-modal");
+  if (!box) return;
+  modelModalState = { providerId, providerName, model, addable: !!addable };
+  $("model-modal-title").textContent = model;
+  $("model-modal-base").textContent = `${providerName || providerId} · ${providerId}`;
+  const add = $("model-modal-add");
+  if (add) { add.hidden = !modelModalState.addable; add.disabled = false; add.textContent = "添加为可用模型"; }
+  const res = $("model-modal-result");
+  if (res) { res.hidden = true; res.textContent = ""; res.classList.remove("ok", "err"); res.removeAttribute("title"); }
+  box.hidden = false;
+}
+
+function closeModelModal() {
+  const box = $("model-modal");
+  if (box) box.hidden = true;
+  modelModalState = null;
+}
+
+async function modelModalTest() {
+  if (!modelModalState) return;
+  const { providerId, model } = modelModalState;
+  const res = $("model-modal-result");
+  if (!res) return;
+  res.hidden = false;
+  res.classList.remove("ok", "err");
+  res.textContent = `正在测试 ${model}…`;
+  const result = await modelTestRaw(providerId, model);
+  modelTestResults[testKey(providerId, model)] = result;
+  if (result.ok) {
+    res.classList.add("ok");
+    res.textContent = `✓ 可用 · ${result.latencyMs ?? "?"} ms` + (result.reply ? `\n回复：${result.reply}` : "");
+  } else {
+    res.classList.add("err");
+    res.textContent = `✗ 失败\n${result.error || "未知错误"}`;
+  }
+  res.title = res.textContent;
+}
+
+async function modelModalAdd() {
+  if (!modelModalState || !modelModalState.addable) return;
+  const { providerId, model } = modelModalState;
+  const button = $("model-modal-add");
+  if (button) { button.disabled = true; button.textContent = "添加中…"; }
+  const state = await modelConfigPost("model/add", { providerId, model });
+  if (button) { button.disabled = false; button.textContent = "添加为可用模型"; }
+  if (!state) return;
+  modelConfigRender(state);
+  modelMessage(`已添加 ${model}；GA 按文件时间自动重载，无需重启。`, false);
+  if (typeof loadModels === "function") { try { loadModels(); } catch (_) {} }
+  closeModelModal();
 }
 
 function providerIdForBase(apibase) {
@@ -3136,10 +3207,8 @@ function modelConfigRenderFetch() {
         <label><input type="checkbox" value="${esc(name)}" ${added ? "checked disabled" : ""}>
           <span>${esc(name)}${added ? "（已添加）" : ""}</span></label>
         <span class="model-fetch-actions">
-          <button type="button" class="ghost-button" data-test-fetched="${esc(name)}">测试</button>
-          ${added ? "" : `<button type="button" class="ghost-button" data-add-one="${esc(name)}">添加</button>`}
+          <button type="button" class="ghost-button" data-modal-model="${esc(name)}" data-modal-addable="${added ? "0" : "1"}">${added ? "详情" : "添加…"}</button>
         </span>
-        ${testLine(state.providerId, name)}
       </div>`;
   }).join("");
   box.innerHTML = `
@@ -3148,6 +3217,14 @@ function modelConfigRenderFetch() {
       <button type="button" class="ghost-button" id="model-fetch-close">收起</button></div>
     <div class="model-fetch-grid">${rows || '<span class="muted-tag">该供应商没有返回模型列表</span>'}</div>`;
   $("model-fetch-add")?.addEventListener("click", modelConfigAddChecked);
+  box.querySelectorAll("[data-modal-model]").forEach((node) => {
+    node.addEventListener("click", () => openModelModal({
+      providerId: state.providerId,
+      providerName: state.providerName,
+      model: node.dataset.modalModel,
+      addable: node.dataset.modalAddable === "1",
+    }));
+  });
   $("model-fetch-close")?.addEventListener("click", () => {
     modelFetchState = { providerId: "", providerName: "", models: [] };
     modelConfigRenderFetch();
@@ -3281,14 +3358,24 @@ $("model-config-models")?.addEventListener("click", (event) => {
   if (deleteButton) modelConfigModelDelete(deleteButton.dataset.deleteModel);
 });
 $("model-config-fetched")?.addEventListener("click", (event) => {
-  const testButton = event.target.closest("[data-test-fetched]");
-  if (testButton) { modelConfigTestModel(modelFetchState.providerId, testButton.dataset.testFetched); return; }
-  const addButton = event.target.closest("[data-add-one]");
-  if (addButton) modelConfigAddOne(addButton.dataset.addOne);
+  const openButton = event.target.closest("[data-modal-model]");
+  if (openButton) {
+    openModelModal({
+      providerId: modelFetchState.providerId,
+      providerName: modelFetchState.providerName,
+      model: openButton.dataset.modalModel,
+      addable: openButton.dataset.modalAddable === "1",
+    });
+  }
 });
 $("model-provider-save")?.addEventListener("click", modelConfigProviderSave);
 $("model-fetch-run")?.addEventListener("click", modelConfigFetchRun);
 $("model-test-all")?.addEventListener("click", modelConfigTestAll);
+$("model-modal-close")?.addEventListener("click", closeModelModal);
+$("model-modal-test")?.addEventListener("click", modelModalTest);
+$("model-modal-add")?.addEventListener("click", modelModalAdd);
+$("model-modal")?.addEventListener("click", (event) => { if (event.target === $("model-modal")) closeModelModal(); });
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeModelModal(); });
 $("timeline-board").addEventListener("wheel", (event) => {
   const scroll = event.target.closest(".timeline-scroll");
   if (!scroll) return;
@@ -3466,3 +3553,41 @@ ensureAuth().then((ok) => {
 });
 setInterval(refresh, 30000);
 
+
+
+// ---------- 终端：cmd 式选中复制（选中期间不刷新、不裁剪、不滚动） ----------
+function ensureTerminalPauseHint() {
+  if (document.getElementById("terminal-pause-hint")) return;
+  const body = document.getElementById("terminal-body");
+  const header = body ? body.closest(".terminal-card")?.querySelector(".terminal-header") : null;
+  if (!header) return;
+  const hint = document.createElement("span");
+  hint.id = "terminal-pause-hint";
+  hint.className = "terminal-pause-hint";
+  hint.hidden = true;
+  hint.textContent = "已暂停刷新（选中中）";
+  header.appendChild(hint);
+}
+
+function updateTerminalPauseFromSelection() {
+  const body = document.getElementById("terminal-body");
+  if (!body) return;
+  const sel = window.getSelection ? window.getSelection() : null;
+  let paused = false;
+  if (sel && sel.rangeCount && !sel.isCollapsed) {
+    let node = sel.anchorNode;
+    if (node && node.nodeType !== 1) node = node.parentElement;
+    paused = !!(node && body.contains(node));
+  }
+  if (paused === terminalPaused) return;
+  terminalPaused = paused;
+  ensureTerminalPauseHint();
+  const hint = document.getElementById("terminal-pause-hint");
+  if (hint) hint.hidden = !paused;
+  if (!paused && terminalId) { stopTerminalPoll(); startTerminalPoll(); }
+}
+
+document.addEventListener("selectionchange", () => {
+  window.clearTimeout(updateTerminalPauseFromSelection._t);
+  updateTerminalPauseFromSelection._t = window.setTimeout(updateTerminalPauseFromSelection, 120);
+});

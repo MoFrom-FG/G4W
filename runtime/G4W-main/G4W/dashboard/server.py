@@ -1344,6 +1344,9 @@ class DashboardState:
                         "classify": store._classify(t),
                         "createdAt": t.get("createdAt"),
                         "createdLabel": _fmt_local(t.get("createdAt")),
+                        "completedLabel": _fmt_local(t.get("completedAt")),
+                        "overdueDays": (max(0, int((time.time() - float(t.get("dueAt") or 0)) // 86400))
+                                        if t.get("status") != "done" and t.get("dueAt") else 0),
                         "completedAt": t.get("completedAt"),
                         "fireIndex": t.get("fireIndex") or 0,
                         "source": t.get("source") or "",

@@ -6,13 +6,28 @@ G4W（Generic Agent for WeChat）运行在 Windows 电脑上，通过微信提�
 
 当前发布底座：[GenericAgent](https://github.com/lsdefine/GenericAgent) main@2026-10-14（核心） + [Desktop Portable 0.2.0](https://github.com/lsdefine/GenericAgent/releases#release-desktop-portable-v0.2.0)（桌面壳）。
 
-当前版本：**3.1.5**（2026-10）· [📦 下载 Windows 便携包](https://github.com/MoFrom-FG/G4W/releases/latest) · [各版本更新说明](https://github.com/MoFrom-FG/G4W/releases)
+当前版本：**3.1.6**（2026-10）· [📦 下载 Windows 便携包](https://github.com/MoFrom-FG/G4W/releases/latest) · [各版本更新说明](https://github.com/MoFrom-FG/G4W/releases)
 
-3.1.5 主要更新：**GA 底座换代**（main@2026-10-14 核心 + Desktop Portable 0.2.0 壳）、**维护轮默认静默**（要主动联系用户需显式 `<notify/>`）、**看板问候语**由 conductor 在维护轮生成、维护动作菜单（可勾选 + 到期项必做）、待办页按钮修复、首页问候语不再挤压右侧组件。
+3.1.6 主要更新：**微信分气泡改为显式控制**（conductor 在正文写 <split/>，未写则按标点兜底）、**终端日志支持 cmd 式选中复制**（选中期间不刷新不滚动）、**切换模型后首页即时刷新**、**待办显示创建/完成时间与逾期天数**；同时提供**首个 Linux 便携包**（自带 CPython + 离线 wheel）。
+
+3.1.5 主要更新：**GA 底座换代**（main@2026-10-14 核心 + Desktop Portable 0.2.0 壳）、**维护轮默认静默**（要主动联系用户需显式 <notify/>）、**看板问候语**由 conductor 在维护轮生成、维护动作菜单（可勾选 + 到期项必做）、待办页按钮修复、首页问候语不再挤压右侧组件。
 
 3.1.x 主要更新：**人设预设编辑页**、**供应商 / 模型可视化配置**（任意 OpenAI 兼容接口，不强制 DeepSeek）、**时间轴站点主题切换**、**提示词页三个视图独立显示**、首次向导**完成后自动进入看板**且 API Key 步骤**可跳过**、**全新安装向导卡死（pywebview 无限递归）根治**，以及 iLink 登录状态机补齐（验证码 / 二维码过期 / IDC 重定向 / 已绑定）。
 
 WeChat功能逻辑参考：[Cyberboss](https://github.com/WenXiaoWendy/cyberboss/tree/main)。
+
+## 下载与平台
+
+| 平台 | 包 | 上手 |
+|---|---|---|
+| Windows x64 | `G4W-3.1.6-win-x64.zip` | 解压 → 双击 `G4W.exe` → 浏览器向导四步 |
+| Linux x64（推荐） | `G4W-3.1.6-linux-x64.tar.gz` | 解压 → `bash install.sh` → `./G4W`（自带 CPython + 离线 wheel，不依赖外网） |
+| Linux x64（精简） | `G4W-3.1.6-linux-x64-slim.tar.gz` | 需要宿主 `python3.12`；其余相同 |
+| 老版本升级 | `G4W-patch-<版本>-to-3.1.6.zip` | 增量补丁，保留 `G4W-data` 与密钥，不必重下整包 |
+
+Linux 完整说明（含 WSL、systemd 服务化、排错）见 [tools/linux/README-Linux.md](tools/linux/README-Linux.md)。
+
+> ⚠️ **看板默认只监听 `127.0.0.1`**。要放到公网（反向代理、域名、HTTPS）请先读 Linux 说明的「八、把看板放到公网？先读这一段」：用 SSH 隧道或「反代 + TLS + 二次认证」，不要直接暴露 `18180` —— 看板数据目录里存着微信 token、记忆与聊天记录。
 
 ## 为什么需要 G4W
 

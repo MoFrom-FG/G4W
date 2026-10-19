@@ -1,7 +1,32 @@
 # G4W Linux 便携包 · 使用说明
 
-> 与 Windows 便携包同体验：**双击/运行一个入口 → 浏览器里走完向导 → 直接进入看板**。
-> 不需要手动建环境、不需要手动装依赖 —— 这些都在向导的「① 安装环境」里自动完成。
+> 与 Windows 便携包同体验：**运行一个入口 → 浏览器里走完向导 → 直接进入看板**。
+> 依赖全部用包内离线 wheel 安装，环境由 G4W 自己维护，不动系统 Python。
+
+## 零、解压后能直接用吗？
+
+能。两条路，建议走第一条：
+
+| 方式 | 命令 | 说明 |
+|---|---|---|
+| **推荐：一次装好** | `bash install.sh` | 用包内 `runtime/wheels` 的离线 wheel 建 venv；全量包还自带 CPython 3.12.14 → **不需要外网** |
+| 也可以直接跑 | `./G4W` | 环境未就绪时自动打开浏览器向导，「① 安装环境」里一键装（同样优先用离线 wheel） |
+
+两个包的区别：
+
+| 包 | 需要宿主 python3.12 | 大小 | 说明 |
+|---|---|---|---|
+| `G4W-3.1.6-linux-x64.tar.gz` | 不需要（自带 CPython 3.12.14） | ~117 MB | 解压即用，推荐 |
+| `G4W-3.1.6-linux-x64-slim.tar.gz` | **需要**（`python3.12` 在 PATH 或 `/usr/local/bin/python3`） | ~15 MB | 机器上已有 python3.12 时用这个 |
+
+三步上手：
+
+```bash
+tar -xzf G4W-3.1.6-linux-x64.tar.gz
+cd G4W-3.1.6-linux-x64
+bash install.sh      # 约 1–2 分钟；不要用 sudo，venv 属于当前用户
+./G4W                # 打开向导 / 直接进看板
+```
 
 ## 一、启动（唯一入口）
 
@@ -88,13 +113,61 @@ journalctl --user -u g4w-main.service -f
 
 - 包放 **WSL 原生文件系统**（`~/G4W-Linux`），不要放 `/mnt/c`
 - 同一微信账号不要在 Windows 版与 Linux 版同时登录（会互踢）
-- `runtime/G4W-data`、`runtime/app/mykey.py`、`runtime/G4W-main/.env` 是个人运行数据，**不要进发布包**
+- `runtime/G4W-data`、`runtime/app/mykey.py`、`runtime/G4W-main/.env` 是个人运行数据
 - 目录结构（与 Windows 包一致）：
-  ```
-  G4W-Linux/
-  ├── G4W                      # 启动器（向导/看板自动判断）
-  ├── install.sh uninstall.sh  # 可选：命令行安装 / 服务化
-  ├── tools/linux/*.sh         # 全部运维脚本
-  ├── tools/wsl/G4W.cmd        # Windows 双击入口
-  └── runtime/{python, wheels, app, G4W-main, G4W-data}
-  ```
+
+```
+G4W-3.1.6-linux-x64/
+├── G4W                  # 启动器（向导 / 看板）
+├── install.sh           # 一次性安装环境（可 --systemd）
+├── README-Linux.md      # 本文件
+├── runtime/
+│   ├── python/          # 自带 CPython（slim 包没有）
+│   ├── wheels/          # 离线依赖
+│   ├── app/             # GA 底座 + venv（安装后生成）
+│   ├── G4W-main/        # G4W 主程序
+│   └── G4W-data/        # 你的运行数据（首次运行生成）
+└── tools/linux/         # 1_prepare / 2_key / 3_env / 4_login / start / stop / dashboard / status / doctor
+```
+
+## 八、把看板放到公网？先读这一段
+
+**看板默认只监听 `127.0.0.1`（本机）**，这是刻意的安全默认：
+
+- 它自带的是**单用户登录**，不是面向公网的防护；
+- 默认 **HTTP 明文**，没有 TLS；
+- `runtime/G4W-data` 里存着微信登录 token、记忆、聊天记录与日志 —— 看板一旦裸暴露，等于把这些一起端出去。
+
+### 三种安全姿势（按省事程度排序）
+
+1. **SSH 隧道（最推荐，零暴露）**
+
+```bash
+ssh -N -L 18180:127.0.0.1:18180 you@your-server
+# 本机浏览器打开 http://127.0.0.1:18180
+```
+
+2. **反向代理 + HTTPS + 二次认证**
+   - nginx / caddy 反代到 `127.0.0.1:18180`，强制 HTTPS；
+   - 前面再挂一层口令 / 一次性验证码（nginx `auth_basic`、authelia 之类）；
+   - 只放行自己的 IP：`allow <你的IP>; deny all;`。
+3. **Cloudflare 隧道或橙云 + 源站证书**
+   - `cloudflared tunnel` 最省事，源站不用开任何入站端口；
+   - 用橙云代理时，SSL 模式设为 **Full (strict)**，并在源站装证书（Let's Encrypt 或 CF Origin Certificate）。
+
+### 明确不要做的事
+
+- ❌ 把 `18180` 直接映射到公网，或用 `--host 0.0.0.0` 且不配防火墙
+- ❌ 在 HTTP 明文下登录看板
+- ❌ 给「微信主服务」开入站端口 —— 它只需要**出网**（连 iLink），不需要任何入站
+
+### 暴露前先做这几件事
+
+```bash
+ss -ltnp | grep 18180                  # 确认监听地址仍是 127.0.0.1
+chmod 700 runtime/G4W-data runtime/app  # 数据与密钥目录只给自己
+tail -n 100 runtime/g4w-dashboard.log   # 看看有没有异常登录尝试
+```
+
+- 登录失败排查看 `runtime/g4w-dashboard.log`；怀疑泄露就改看板口令并重启。
+- **微信扫码登录需要交互控制台**（可能要输入验证码）：远程机器请 `ssh -t` 登录后跑 `bash tools/linux/4_login.sh`，或直接在浏览器向导第④步里扫。
