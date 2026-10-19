@@ -935,7 +935,32 @@ class G4WController:
                     "attachmentFailures": payload.get("attachmentFailures") or [],
                 })
         if attachment_reports:
-            context_parts.append("# Attachments belonging to the current user message\n" + json.dumps(attachment_reports, ensure_ascii=False, indent=2))
+            context_parts.append(
+                "# Attachments belonging to the current user message\n"
+                + json.dumps(attachment_reports, ensure_ascii=False, indent=2)
+                + "\n（如需看图/识图，直接调用 code_run 执行：`import sys; sys.path.insert(0, '/home/long-gui/Aggie/Aggie/runtime/app/memory'); from vision_api import ask_vision; print(ask_vision('图片绝对路径', prompt='你的问题'))`，1次调用即可秒回）"
+            )
+        elif user_messages:
+            inbox_dir = self.config.state_dir / "inbox"
+            if inbox_dir.is_dir():
+                try:
+                    recent_files = sorted(
+                        (p for p in inbox_dir.rglob("*") if p.is_file()),
+                        key=lambda p: p.stat().st_mtime,
+                        reverse=True,
+                    )[:3]
+                    if recent_files:
+                        recent_info = [
+                            {"fileName": p.name, "absolutePath": str(p.resolve()), "sizeBytes": p.stat().st_size}
+                            for p in recent_files
+                        ]
+                        context_parts.append(
+                            "# Recent received attachments in inbox (for follow-up reference)\n"
+                            + json.dumps(recent_info, ensure_ascii=False, indent=2)
+                            + "\n（若用户本轮消息在询问刚才发送的图片/附件，直接用 `from vision_api import ask_vision; print(ask_vision(absolutePath, prompt=...))` 读取，无需搜索目录）"
+                        )
+                except OSError:
+                    pass
         if worker_reports:
             context_parts.append(
                 "# Worker completion reports awaiting review\n" +
