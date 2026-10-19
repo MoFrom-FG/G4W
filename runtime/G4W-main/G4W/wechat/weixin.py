@@ -70,6 +70,8 @@ def _ilink_headers(token: str = "") -> dict:
 def _is_timeout(error: Exception) -> bool:
     if isinstance(error, (TimeoutError, socket.timeout)):
         return True
+    if isinstance(error, urllib.error.HTTPError) and error.code in (502, 504, 522, 524):
+        return True
     if isinstance(error, urllib.error.URLError):
         return _is_timeout(error.reason) if isinstance(error.reason, Exception) else False
     return False

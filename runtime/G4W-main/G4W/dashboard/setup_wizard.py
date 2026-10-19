@@ -245,7 +245,7 @@ def _render_inline_page() -> bytes:
         "<label>日常称呼</label><input id='env-identity'>"
         "<label>性别</label><select id='env-gender'><option value='male'>male</option><option value='female'>female</option><option value='neutral'>neutral</option></select>"
         "<label>机器人名字</label><input id='env-bot' placeholder='必填'>"
-        "<label>默认模型</label><select id='env-model'><option value='deepseek-v4-flash'>deepseek-v4-flash（快）</option><option value='deepseek-v4-pro'>deepseek-v4-pro（强）</option></select>"
+        "<label>默认模型</label><select id='env-model'><option value='none'>none（稍后在看板配置自定义模型）</option><option value='deepseek-v4-flash'>deepseek-v4-flash（快）</option><option value='deepseek-v4-pro'>deepseek-v4-pro（强）</option></select>"
         "<button id='btn-env'>保存并继续</button><div class='msg' id='msg-env'></div></div>"
         "<div class='card'><h2>④ 微信扫码登录</h2>"
         "<p class='sub'>使用专门用于 G4W 的微信账号扫码；与 Windows 版同一账号会互踢。</p>"
@@ -309,6 +309,9 @@ def handle_post(handler, path: str) -> bool:
         elif path == "/api/setup/key":
             payload = handler._read_json_body()
             handler._send_json(save_key(payload.get("api_key", "")))
+        elif path == "/api/setup/key/skip":
+            handler._read_json_body()
+            handler._send_json(skip_key())
         elif path == "/api/setup/env":
             payload = handler._read_json_body()
             handler._send_json(save_env(payload.get("values") or {}))

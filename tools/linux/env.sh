@@ -19,10 +19,14 @@ if [ -z "${G4W_DASHBOARD_PORT:-}" ]; then
 fi
 export G4W_DASHBOARD_HOST="${G4W_DASHBOARD_HOST:-127.0.0.1}"
 
-G4W_PY="$G4W_APP_DIR/.venv/bin/python"
+# 修改：直接使用當前環境的 Python (例如 Conda 環境)
+G4W_PY="$(command -v python)"
 if [ ! -x "$G4W_PY" ]; then
-  echo "[G4W] 运行环境不存在：$G4W_PY" >&2
-  echo "[G4W] 请先执行 tools/linux/1_prepare.sh" >&2
+  G4W_PY="$(command -v python3)"
+fi
+
+if [ ! -x "$G4W_PY" ]; then
+  echo "[G4W] 无法在当前环境中找到 python (請確認 conda 環境已啟動)" >&2
   return 1 2>/dev/null || exit 1
 fi
 export G4W_PY

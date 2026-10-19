@@ -34,6 +34,7 @@ SHIM = """<script>
       });
     },
     save_key: function (key) { return post('/api/setup/key', { api_key: key }); },
+    skip_key: function () { return post('/api/setup/key/skip', {}); },
     save_env: function (values) { return post('/api/setup/env', { values: values }); },
     login_start: function () { return post('/api/setup/login/start', {}); },
     login_status: function () { return get('/api/setup/login/status'); },

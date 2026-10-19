@@ -225,6 +225,8 @@ def installed_status(embedding_root: Path | str, *, force: bool = False) -> Dict
         return cached
 
     venv_py = root / ".venv" / "Scripts" / "python.exe"
+    if not venv_py.is_file():
+        venv_py = root / ".venv" / "bin" / "python"
     config_file = root / "vector_config.json"
     installed = venv_py.is_file()
     enabled = False

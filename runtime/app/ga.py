@@ -109,11 +109,12 @@ def first_init_driver():
     global driver
     from TMWebDriver import TMWebDriver
     driver = TMWebDriver()
-    for i in range(7):
-        time.sleep(2)
+    auto_open = os.environ.get("G4W_WEBDRIVER_AUTO_OPEN", "0") == "1"
+    for i in range(7 if auto_open else 2):
+        time.sleep(1 if not auto_open else 2)
         sess = driver.get_all_sessions()
         if len(sess) > 0: break
-        if i == 4: webbrowser.open("https://example.com")
+        if auto_open and i == 4: webbrowser.open("https://example.com")
 
 def web_scan(tabs_only=False, switch_tab_id=None, text_only=False, maxlen=35000):
     """获取当前页面的简化HTML内容和标签页列表。注意：简化过程会过滤边栏、浮动元素等非主体内容。

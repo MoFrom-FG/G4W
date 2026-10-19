@@ -660,6 +660,7 @@ class G4WController:
             "API history只包含用户在微信实际看到的纯净消息，不包含工具调用、内部推理或Worker内部Turn。\n"
             "历史时间使用Asia/Shanghai，消息头格式为[MM-DD HH:mm:ss][role]。",
             "# 当前G4W配置\n" + "\n".join([
+                f"当前日期时间：{datetime.now(SHANGHAI).strftime('%Y-%m-%d %H:%M:%S (%a) Asia/Shanghai')}（当前年份为 {datetime.now(SHANGHAI).year} 年，搜索近期/最新信息时必须以 {datetime.now(SHANGHAI).year} 年为准，切勿使用旧年份如 2024/2025）",
                 f"用户名：{user_name or '未设置'}",
                 f"用户身份/称呼：{user_identity or user_name or '未设置'}",
                 f"用户性别：{user_gender}",

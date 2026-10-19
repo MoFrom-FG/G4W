@@ -56,9 +56,17 @@ def service_python(root: Path) -> Path:
     """看板拉起内建服务时用的解释器。
 
     Windows 用包内 base python（venv 的 python 是 redirector，会新开控制台窗口，
-    CREATE_NO_WINDOW 对其无效）；POSIX 直接用 venv 解释器（无该问题且依赖齐全）。
+    CREATE_NO_WINDOW 对其无效）；POSIX 优先用环境变量 G4W_PY / 当前解释器（例如 Conda），
+    否则回退 venv 解释器。
     """
     root = Path(root)
+    if not IS_WINDOWS:
+        env_py = os.environ.get("G4W_PY", "").strip()
+        if env_py and Path(env_py).is_file():
+            return Path(env_py)
+        import sys
+        if sys.executable and Path(sys.executable).is_file():
+            return Path(sys.executable)
     venv = venv_python(root / "runtime" / "app" / ".venv")
     if not IS_WINDOWS and venv.is_file():
         return venv

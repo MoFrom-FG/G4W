@@ -4,7 +4,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/env.sh"
 cd "$G4W_HOME"
-LOG="$G4W_ROOT/runtime/g4w.service.console.log"
+LOG="$G4W_ROOT/runtime/g4w.service.log"
 if [ "${1:-}" = "--bg" ]; then
   echo "[G4W] 后台启动主服务，日志：$LOG"
   nohup "$G4W_PY" -u -m G4W start >>"$LOG" 2>&1 &

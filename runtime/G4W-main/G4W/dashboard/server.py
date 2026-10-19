@@ -1580,7 +1580,7 @@ class DashboardState:
                 "desc": "Conductor 主服务（-m G4W start）",
                 "command": [str(base_py), "-u", "-m", "G4W", "start"],
                 "cwd": str(ga_home),
-                "logs": [str(root / "runtime" / "g4w.service.log")],
+                "logs": [str(root / "runtime" / "g4w.service.log"), str(root / "runtime" / "g4w.service.console.log")],
                 "health": {"kind": "pidfile", "value": str(config.pid_file)},
                 "managed": True,
                 "builtin": True,
@@ -1598,7 +1598,7 @@ class DashboardState:
             "embedding": {
                 "name": "向量 Embedding",
                 "desc": "ST 推理服务（127.0.0.1:8081，GPU 强制策略）",
-                "command": [str(base_py), "server.py"],
+                "command": [str(emb_py if emb_py.is_file() else base_py), "server.py"],
                 "cwd": str(emb_root),
                 "logs": [str(root / "runtime" / "g4w-embedding.log")],
                 "health": {"kind": "port", "value": "127.0.0.1:8081"},
@@ -1640,6 +1640,22 @@ class DashboardState:
         # 清理：注册表中 builtin 但代码已移除的条目（如旧版内置服务下线）
         for sid in [k for k, v in services.items() if v.get("builtin") and k not in builtin]:
             del services[sid]
+            changed = True
+        # 若安装任务正在运行或日志已生成，自动补回条目以便服务页查看进度与日志
+        if "embedding-install" not in services and (
+            self._cmdline_pids("install_embedding.py")
+            or (root / "runtime" / "embedding-install.log").is_file()
+        ):
+            services["embedding-install"] = {
+                "name": "Embedding 安装任务",
+                "desc": "向量检索环境安装（torch + sentence-transformers + 模型下载，约 4-8GB）。完成后自动变为已停止。",
+                "command": [str(base_py), "-u", str(ga_home / "G4W" / "memory" / "vector" / "install_embedding.py"), "--yes", "--root", str(emb_root)],
+                "cwd": str(ga_home),
+                "logs": [str(root / "runtime" / "embedding-install.log")],
+                "health": {"kind": "cmdline", "value": "install_embedding.py"},
+                "managed": True,
+                "builtin": False,
+            }
             changed = True
         if changed:
             store["path"].write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1733,8 +1749,11 @@ class DashboardState:
         env.setdefault("G4W_HOME", str(root / "runtime" / "G4W-main"))
         env.setdefault("GA_APP_DIR", str(root / "runtime" / "app"))
         site_packages = []
-        for venv in (root / "runtime" / "app" / ".venv", root / "runtime" / "G4W-embedding" / ".venv"):
-            site_packages.extend(str(path) for path in venv_site_packages(venv))
+        # 仅当命令未使用独立 G4W-embedding/.venv 时才混入 site-packages，避免不同 Python 版本(如 3.12 与 3.13)冲突
+        cmd_first = str((spec.get("command") or [""])[0])
+        if "G4W-embedding" not in cmd_first:
+            for venv in (root / "runtime" / "app" / ".venv",):
+                site_packages.extend(str(path) for path in venv_site_packages(venv))
         # base python 直启时依赖来自各 venv 的 site-packages。
         # 注意：不能用 setdefault——bat 已设置 PYTHONPATH 时不会生效（实证 bug），
         # 必须把 venv site-packages 追加进现有值并去重。
@@ -1801,6 +1820,7 @@ class DashboardState:
         popen_kwargs.update(service_launch_kwargs())
         try:
             proc = subprocess.Popen(cmd, **popen_kwargs)
+            threading.Thread(target=proc.wait, daemon=True, name=f"G4W-reap-{service_id}").start()
         except Exception as exc:
             return {"ok": False, "error": f"启动失败: {type(exc).__name__}: {exc}", "id": service_id}
         return {"ok": True, "started": True, "pid": proc.pid, "id": service_id,
@@ -2209,6 +2229,8 @@ class DashboardState:
         if self._cmdline_pids("install_embedding.py"):
             return {"ok": False, "error": "安装任务已在运行（服务与终端页可查看进度）"}
         env = self._env_for_service(config, {"command": [], "cwd": "", "logs": [], "health": {}})
+        # 移除主环境 PYTHONPATH，防止 pip 安装到独立 venv 时误把主环境已有的包当作已安装
+        env.pop("PYTHONPATH", None)
         env.update(em.install_env(config.state_dir))
         detach = detached_kwargs()
         try:
@@ -2220,6 +2242,7 @@ class DashboardState:
             cwd=str(g4w_root / "runtime" / "G4W-main"),
             env=env, **detach, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
         )
+        threading.Thread(target=proc.wait, daemon=True, name="G4W-reap-embed-install").start()
         spec = {
             "name": "Embedding 安装任务",
             "desc": "向量检索环境安装（torch + sentence-transformers + 模型下载，约 4-8GB）。完成后自动变为已停止。",
@@ -2589,33 +2612,80 @@ class DashboardState:
         target.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
         return cleaned
 
+    def _fallback_models(self, config: Config) -> dict:
+        state = read_mykey_config(config)
+        models = []
+        current_item = {}
+        configured_conductor = str(config.conductor_model or "").strip()
+        for idx, entry in enumerate(state.get("entries") or []):
+            model_name = str(entry.get("model") or entry.get("name") or idx).strip()
+            name = str(entry.get("name") or model_name).strip()
+            is_current = (
+                model_name == configured_conductor
+                or name == configured_conductor
+                or (idx == 0 and configured_conductor in ("", "none"))
+            )
+            item = {
+                "index": idx,
+                "label": f"NativeOAI/{name}",
+                "model": model_name,
+                "name": name,
+                "current": is_current,
+            }
+            if is_current and not current_item:
+                current_item = item
+            models.append(item)
+        if models and not current_item:
+            models[0]["current"] = True
+            current_item = models[0]
+        return {
+            "models": models,
+            "current": current_item,
+            "workerModel": config.worker_model,
+            "proModel": config.pro_model,
+            "online": _pid_alive(self._core_pid(config)),
+        }
+
     def models(self) -> dict:
         config = self._fresh_config()
         _, sender_id, _ = self._binding(config)
-        if not sender_id:
-            raise RuntimeError("尚未找到微信会话，无法读取模型列表")
-        result = self._control("list_models", {"senderId": sender_id})
-        result.update({
-            "workerModel": config.worker_model,
-            "proModel": config.pro_model,
-            "online": True,
-        })
-        return result
+        if sender_id and _pid_alive(self._core_pid(config)):
+            try:
+                result = self._control("list_models", {"senderId": sender_id})
+                result.update({
+                    "workerModel": config.worker_model,
+                    "proModel": config.pro_model,
+                    "online": True,
+                })
+                return result
+            except Exception:
+                pass
+        return self._fallback_models(config)
 
     def switch_model(self, target: str, value) -> dict:
         config = self._fresh_config()
         _, sender_id, _ = self._binding(config)
         target = str(target or "").strip().lower()
         if target == "conductor":
-            if not sender_id:
-                raise RuntimeError("尚未找到微信会话，无法切换当前模型")
-            result = self._control("set_model", {"senderId": sender_id, "query": value})
-            selected = result.get("selected") if isinstance(result.get("selected"), dict) else {}
-            model = str(selected.get("model") or "").strip()
-            if model:
-                update_env_file(config.env_file, {"G4W_CONDUCTOR_MODEL": model})
-            result["message"] = f"当前对话模型已切换为 {model or value}"
-            return result
+            if sender_id and _pid_alive(self._core_pid(config)):
+                result = self._control("set_model", {"senderId": sender_id, "query": value})
+                selected = result.get("selected") if isinstance(result.get("selected"), dict) else {}
+                model = str(selected.get("model") or "").strip()
+                if model:
+                    update_env_file(config.env_file, {"G4W_CONDUCTOR_MODEL": model})
+                result["message"] = f"当前对话模型已切换为 {model or value}"
+                return result
+            fallback = self._fallback_models(config)["models"]
+            raw = str(value or "").strip()
+            picked = next(
+                (m for m in fallback if str(m["index"]) == raw or m["model"] == raw or m["name"] == raw),
+                None,
+            )
+            model = picked["model"] if picked else raw
+            if not model:
+                raise ValueError("模型不能为空")
+            update_env_file(config.env_file, {"G4W_CONDUCTOR_MODEL": model})
+            return {"ok": True, "model": model, "message": f"Conductor 默认模型已保存为 {model}"}
         if target not in {"worker", "pro"}:
             raise ValueError("target 必须是 conductor、worker 或 pro")
         model = str(value or "").strip()
@@ -2623,7 +2693,13 @@ class DashboardState:
             raise ValueError("模型不能为空")
         worker_model = model if target == "worker" else config.worker_model
         pro_model = model if target == "pro" else config.pro_model
-        result = self._control("set_model_defaults", {"workerModel": worker_model, "proModel": pro_model})
+        if _pid_alive(self._core_pid(config)):
+            try:
+                result = self._control("set_model_defaults", {"workerModel": worker_model, "proModel": pro_model})
+            except Exception:
+                result = {"ok": True}
+        else:
+            result = {"ok": True}
         update_env_file(config.env_file, {
             "G4W_WORKER_MODEL": worker_model,
             "G4W_PRO_MODEL": pro_model,
@@ -3216,10 +3292,9 @@ def _warmup(server) -> None:
 
 def run_dashboard(config: Config | None = None, host: str = "127.0.0.1", port: int = 18180) -> int:
     config = config or Config.load()
-    # 禁止端口复用：Windows 上 SO_REUSEADDR 允许重复绑定同一端口，
-    # 会同时跑两个看板实例、请求被随机分发（实证：用户页面时好时坏）。
-    # 关闭后重复启动会直接报 "address already in use"，行为更清晰。
-    ThreadingHTTPServer.allow_reuse_address = False
+    # Windows 上 SO_REUSEADDR 允许重复绑定同一活跃端口，因此仅在 Windows 关闭；
+    # Linux/POSIX 下 SO_REUSEADDR 只允许复用 TIME_WAIT 端口，不会双实例共存，开启以避免重启报 Address already in use。
+    ThreadingHTTPServer.allow_reuse_address = (os.name != "nt")
     server = ThreadingHTTPServer((host, int(port)), DashboardHandler)
     server.dashboard = DashboardState(config)  # type: ignore[attr-defined]
     server.auth = DashboardAuth(config.state_dir)  # type: ignore[attr-defined]

@@ -1131,7 +1131,7 @@ class ConductorHandler(GenericAgentHandler):
 
         is_deepseek = "deepseek" in model.lower()
         if not is_deepseek or not api_key or not base_url:
-            return (yield from self._web_search_fallback(response))
+            return (yield from self._web_search_fallback(query, args, response))
 
         # DeepSeek Responses API + web_search（服务端执行搜索）。
         # 端点跟随 mykey 的 apibase：便携包直连官方，个人环境经 CPA 中转（看板可统计）。
@@ -1158,7 +1158,7 @@ class ConductorHandler(GenericAgentHandler):
             with _urllib.urlopen(request, timeout=90) as response_http:
                 data = _json.loads(response_http.read().decode("utf-8"))
         except Exception:
-            return (yield from self._web_search_fallback(response))
+            return (yield from self._web_search_fallback(query, args, response))
 
         outputs = data.get("output") or []
         search_calls = [item for item in outputs if item.get("type") == "web_search_call"]
@@ -1171,8 +1171,8 @@ class ConductorHandler(GenericAgentHandler):
                     texts.append(block["text"])
         answer = "\n".join(texts).strip()
         if not answer or not search_calls:
-            # 无搜索结果或模型未实际执行搜索 → 视为失效，回退 web_scan。
-            return (yield from self._web_search_fallback(response))
+            # 无搜索结果或模型未实际执行搜索 → 视为失效，回退。
+            return (yield from self._web_search_fallback(query, args, response))
 
         result = {
             "ok": True,
@@ -1186,12 +1186,216 @@ class ConductorHandler(GenericAgentHandler):
         outcome = StepOutcome(result, next_prompt="基于检索结果回答用户；回答应带来源或日期，不得编造未出现的内容。")
         return self._bound_tool_outcome("G4W_web_search", args, outcome)
 
-    def _web_search_fallback(self, response):
-        """G4W_web_search 失效时的回退：走 GA 浏览器扫描（text_only 拿正文）。"""
-        outcome = yield from super().do_web_scan(
-            {"tabs_only": False, "text_only": True}, response
+    def _detect_search_region(self) -> str:
+        """根据配置或网络连通性判断地区：abroad (台湾/海外) 或 domestic (大陆)。"""
+        explicit = (os.environ.get("G4W_SEARCH_REGION") or "").strip().lower()
+        if explicit in ("abroad", "tw", "global", "international"):
+            return "abroad"
+        if explicit in ("domestic", "cn", "mainland"):
+            return "domestic"
+        try:
+            cfg = getattr(self.controller, "config", None)
+            state_dir = getattr(cfg, "state_dir", None)
+            if state_dir:
+                emb_cfg = Path(state_dir) / "embedding-config.json"
+                if emb_cfg.is_file():
+                    data = json.loads(emb_cfg.read_text(encoding="utf-8"))
+                    net = str(data.get("network") or "").strip().lower()
+                    if net in ("abroad", "domestic"):
+                        return net
+        except Exception:
+            pass
+        return "abroad"
+
+    def _http_web_search(self, query: str) -> dict:
+        """无浏览器依赖的直接联网检索：按台湾/国外 (abroad) 与大陆 (domestic) 自动选择最佳搜索引擎。"""
+        import urllib.parse as _up
+        import urllib.request as _ur
+        import xml.etree.ElementTree as _ET
+        from bs4 import BeautifulSoup as _BS
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        }
+
+        def _fetch(url: str, timeout: float = 8.0) -> str:
+            req = _ur.Request(url, headers=headers)
+            with _ur.urlopen(req, timeout=timeout) as resp:
+                return resp.read().decode("utf-8", errors="replace")
+
+        def _google_news_rss(q: str) -> list[dict]:
+            url = "https://news.google.com/rss/search?" + _up.urlencode(
+                {"q": q, "hl": "zh-TW", "gl": "TW", "ceid": "TW:zh-Hant"}
+            )
+            xml_text = _fetch(url, timeout=8.0)
+            root = _ET.fromstring(xml_text)
+            items = []
+            for item in root.findall(".//item")[:8]:
+                title = (item.findtext("title") or "").strip()
+                pub_date = (item.findtext("pubDate") or "").strip()
+                link = (item.findtext("link") or "").strip()
+                source_el = item.find("source")
+                source = (source_el.text or "").strip() if source_el is not None else ""
+                source_url = (source_el.get("url") or "").strip() if source_el is not None else ""
+                desc_html = item.findtext("description") or ""
+                desc = _BS(desc_html, "html.parser").get_text(" ", strip=True)
+                if title:
+                    items.append({
+                        "title": title,
+                        "source": source,
+                        "date": pub_date,
+                        "url": source_url or link,
+                        "snippet": desc if desc and desc != title else title,
+                    })
+            return items
+
+        def _bing_rss(q: str, host: str = "www.bing.com") -> list[dict]:
+            items = []
+            for path, extra in (
+                ("/news/search", {"q": q, "format": "rss", "setlang": "zh-Hant"}),
+                ("/search", {"q": q, "format": "rss", "setlang": "zh-Hant"}),
+            ):
+                try:
+                    url = f"https://{host}{path}?" + _up.urlencode(extra)
+                    xml_text = _fetch(url, timeout=8.0)
+                    root = _ET.fromstring(xml_text)
+                    for item in root.findall(".//item")[:6]:
+                        title = (item.findtext("title") or "").strip()
+                        desc = (item.findtext("description") or "").strip()
+                        pub_date = (item.findtext("pubDate") or "").strip()
+                        link = (item.findtext("link") or "").strip()
+                        if title:
+                            items.append({
+                                "title": title,
+                                "source": host,
+                                "date": pub_date,
+                                "url": link,
+                                "snippet": desc or title,
+                            })
+                    if len(items) >= 5:
+                        break
+                except Exception:
+                    continue
+            return items[:8]
+
+        def _so360_search(q: str) -> list[dict]:
+            items = []
+            for endpoint, param_key in (
+                ("https://news.so.com/ns", "q"),
+                ("https://www.so.com/s", "q"),
+            ):
+                try:
+                    url = f"{endpoint}?" + _up.urlencode({param_key: q})
+                    html_text = _fetch(url, timeout=8.0)
+                    soup = _BS(html_text, "html.parser")
+                    for li in soup.select("li.res-list")[:6]:
+                        h3 = li.find(["h3", "h2"])
+                        a = h3.find("a") if h3 else li.find("a")
+                        title = h3.get_text(" ", strip=True) if h3 else (a.get_text(" ", strip=True) if a else "")
+                        link = (a.get("data-mdurl") or a.get("href") or "") if a else ""
+                        body = li.get_text(" ", strip=True)
+                        if title and body.startswith(title):
+                            body = body[len(title):].strip()
+                        if title:
+                            items.append({
+                                "title": title,
+                                "source": "360搜索",
+                                "date": "",
+                                "url": link,
+                                "snippet": body[:300] or title,
+                            })
+                    if len(items) >= 5:
+                        break
+                except Exception:
+                    continue
+            return items[:8]
+
+        region = self._detect_search_region()
+        if region == "domestic":
+            providers = [
+                ("so360", _so360_search),
+                ("bing_cn", lambda q: _bing_rss(q, "cn.bing.com")),
+                ("google_news_tw", _google_news_rss),
+                ("bing_global", lambda q: _bing_rss(q, "www.bing.com")),
+            ]
+        else:
+            providers = [
+                ("google_news_tw", _google_news_rss),
+                ("bing_global", lambda q: _bing_rss(q, "www.bing.com")),
+                ("so360", _so360_search),
+            ]
+
+        collected: list[dict] = []
+        used_engines: list[str] = []
+        seen_titles: set[str] = set()
+        for engine_name, fn in providers:
+            try:
+                rows = fn(query)
+            except Exception:
+                rows = []
+            added = 0
+            for row in rows:
+                norm_title = row.get("title", "").strip()
+                if not norm_title or norm_title in seen_titles:
+                    continue
+                seen_titles.add(norm_title)
+                collected.append(row)
+                added += 1
+            if added:
+                used_engines.append(engine_name)
+            if len(collected) >= 8:
+                break
+
+        if not collected:
+            return {"ok": False, "query": query, "region": region, "results": []}
+
+        lines = []
+        for idx, item in enumerate(collected[:10], 1):
+            meta = " | ".join(part for part in (item.get("source"), item.get("date")) if part)
+            head = f"{idx}. {item['title']}" + (f" ({meta})" if meta else "")
+            snippet = item.get("snippet") or ""
+            url = item.get("url") or ""
+            block = head
+            if snippet and snippet != item["title"]:
+                block += f"\n   摘要: {snippet}"
+            if url:
+                block += f"\n   链接: {url}"
+            lines.append(block)
+
+        return {
+            "ok": True,
+            "query": query,
+            "region": region,
+            "engine": "+".join(used_engines),
+            "result_count": len(collected[:10]),
+            "results": collected[:10],
+            "answer": "\n\n".join(lines),
+        }
+
+    def _web_search_fallback(self, query: str, args: dict, response):
+        """G4W_web_search 非 DeepSeek 或失效时的回退：优先走无浏览器 HTTP 检索，仍失败才尝试已连接的 TMWebDriver。"""
+        yield f"[Info] Searching web ({self._detect_search_region()}): {query}\n"
+        http_result = self._http_web_search(query)
+        if http_result.get("ok"):
+            outcome = StepOutcome(
+                http_result,
+                next_prompt="基于检索结果回答用户；回答应带来源或日期，不得编造未出现的内容。",
+            )
+            return self._bound_tool_outcome("G4W_web_search", args, outcome)
+
+        outcome = StepOutcome(
+            {
+                "ok": False,
+                "query": query,
+                "error": "联网检索未返回有效结果，请尝试更换关键词重试。",
+            },
+            next_prompt="当前关键词未检索到结果，可精简或更换关键词重试，或向用户如实说明。",
         )
-        return self._bound_tool_outcome("web_scan", {"text_only": True}, outcome)
+        return self._bound_tool_outcome("G4W_web_search", args, outcome)
 
     def do_ask_user(self, args, response):
         question = str(args.get("question") or "需要你补充一点信息").strip()

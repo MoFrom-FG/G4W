@@ -269,9 +269,15 @@ def _requirements_text() -> str:
     return "\n".join(_REQ_LINES) + "\n"
 
 
+_NO_WINDOW_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
+
 def _nvidia_gpu_probe() -> Dict[str, Any]:
     """Detect a usable NVIDIA driver without importing torch."""
-    candidates = [shutil.which("nvidia-smi")]
+    candidates = [
+        shutil.which("nvidia-smi"),
+        "/usr/lib/wsl/lib/nvidia-smi",
+    ]
     if os.name == "nt":
         system_root = Path(os.environ.get("SystemRoot") or r"C:\Windows")
         candidates.extend(
@@ -292,7 +298,7 @@ def _nvidia_gpu_probe() -> Dict[str, Any]:
             errors="replace",
             timeout=20,
             check=False,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=_NO_WINDOW_FLAGS,
         )
         lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
         return {
@@ -334,6 +340,8 @@ def _torch_install_plan() -> Dict[str, Any]:
             custom = (em.resolve(_state_dir())["torch"] or [""])[0].rstrip("/")
         except Exception:
             custom = ""
+    if custom and not custom.endswith(f"/{channel}"):
+        custom = f"{custom}/{channel}"
     indexes: List[str] = []
     for url in (
         custom,
@@ -375,7 +383,7 @@ def _probe_torch_package(vpy: Path) -> Dict[str, Any]:
             errors="replace",
             timeout=30,
             check=False,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=_NO_WINDOW_FLAGS,
         )
         version = (result.stdout or "").strip().splitlines()
         return {
@@ -476,7 +484,7 @@ def _probe_torch(vpy: Path) -> Dict[str, Any]:
             errors="replace",
             timeout=90,
             check=False,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=_NO_WINDOW_FLAGS,
         )
         stdout = (result.stdout or "").strip()
         details: Dict[str, Any] = {}
@@ -581,7 +589,7 @@ def ensure_windows_vc_runtime(
             text=True,
             timeout=900,
             check=False,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=_NO_WINDOW_FLAGS,
         )
     except Exception as exc:
         return {
@@ -664,7 +672,7 @@ def ensure_venv(
                 text=True,
                 timeout=120,
                 check=False,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=_NO_WINDOW_FLAGS,
             )
             out["steps"].append(
                 {
@@ -674,8 +682,24 @@ def ensure_venv(
                 }
             )
             if r.returncode != 0 or not vpy.is_file():
-                out["error"] = f"venv create failed rc={r.returncode}"
-                return out
+                r_fb = subprocess.run(
+                    [str(base_py), "-m", "virtualenv", str(venv_dir)],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    check=False,
+                    creationflags=_NO_WINDOW_FLAGS,
+                )
+                out["steps"].append(
+                    {
+                        "action": "virtualenv_fallback",
+                        "returncode": r_fb.returncode,
+                        "stderr": (r_fb.stderr or "")[-400:],
+                    }
+                )
+                if r_fb.returncode != 0 or not vpy.is_file():
+                    out["error"] = f"venv create failed rc={r.returncode} (fallback rc={r_fb.returncode})"
+                    return out
         except Exception as exc:
             out["error"] = f"venv: {type(exc).__name__}: {exc}"
             return out
@@ -733,7 +757,7 @@ def ensure_venv(
                     errors="replace",
                     bufsize=1,
                     env=child_env,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    creationflags=_NO_WINDOW_FLAGS,
                 )
                 tail: List[str] = []
                 assert proc.stdout is not None
@@ -989,7 +1013,7 @@ def _stream_command(
         errors="replace",
         bufsize=1,
         env=env,
-        creationflags=subprocess.CREATE_NO_WINDOW,
+        creationflags=_NO_WINDOW_FLAGS,
     )
     tail: List[str] = []
     assert proc.stdout is not None

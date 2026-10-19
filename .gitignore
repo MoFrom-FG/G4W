@@ -29,8 +29,14 @@
 *.py[cod]
 .pytest_cache/
 *.log
+*.pid
 *.tmp
 *.bak
+*.bak-*
+.pip-cache/
+/runtime/app/*.backup-*
+/runtime/G4W-main/.env.backup-*
+/runtime/dashboard-port
 .idea/
 .vscode/
 

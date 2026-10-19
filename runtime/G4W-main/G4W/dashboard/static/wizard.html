@@ -82,6 +82,7 @@ button { padding:9px 20px; border:0; border-radius:9px; font-size:13px; cursor:p
     <label>API Key（DeepSeek 在 platform.deepseek.com 获取；其他服务商填其提供的 Key）</label>
     <input id="key-input" type="password" placeholder="sk-..." autocomplete="off">
     <div class="row">
+      <button class="btn-ghost" id="key-back">← 返回上一步</button>
       <div class="msg info grow" id="key-msg">填写后保存，或点右侧“先跳过”</div>
       <button class="btn-ghost" id="key-skip">先跳过，稍后在看板配置</button>
       <button class="btn-primary" id="key-save">保存</button>
@@ -102,10 +103,12 @@ button { padding:9px 20px; border:0; border-radius:9px; font-size:13px; cursor:p
     <input id="env-bot" placeholder="例如：小助手">
     <label>默认模型</label>
     <select id="env-model">
+      <option value="none">none（稍后在看板配置自定义模型）</option>
       <option value="deepseek-v4-flash">deepseek-v4-flash（快）</option>
       <option value="deepseek-v4-pro">deepseek-v4-pro（强）</option>
     </select>
     <div class="row">
+      <button class="btn-ghost" id="env-back">← 返回上一步</button>
       <div class="msg info grow" id="env-msg">填写后保存</div>
       <button class="btn-primary" id="env-save">保存</button>
     </div>
@@ -327,8 +330,10 @@ async function keySkip() {
 
 // 事件绑定
 $('prepare-start').addEventListener('click', prepareStart);
+if ($('key-back')) $('key-back').addEventListener('click', () => showCard('prepare'));
 $('key-save').addEventListener('click', keySave);
 $('key-skip').addEventListener('click', keySkip);
+if ($('env-back')) $('env-back').addEventListener('click', () => showCard('key'));
 $('env-save').addEventListener('click', envSave);
 $('login-refresh').addEventListener('click', loginRefresh);
 

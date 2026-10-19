@@ -19,6 +19,7 @@ VECTOR_INDEX_DIR = RUNTIME_DIR / "G4W-vector-index"
 MODEL_CHOICES = {
     "0": "deepseek-v4-pro",
     "1": "deepseek-v4-flash",
+    "2": "none",
 }
 THEME_CHOICES = {
     "0": "default",
@@ -218,8 +219,8 @@ def configure_env(values: dict[str, str]) -> dict:
         "G4W_USER_GENDER": _clean_value(values.get("G4W_USER_GENDER", existing.get("G4W_USER_GENDER", "neutral")), "用户性别") or "neutral",
         "G4W_BOT_NAME": _clean_value(values.get("G4W_BOT_NAME", existing.get("G4W_BOT_NAME", "")), "机器人名字"),
         "G4W_ACCOUNT_ID": existing.get("G4W_ACCOUNT_ID", ""),
-        "G4W_CONDUCTOR_MODEL": values.get("G4W_CONDUCTOR_MODEL", existing.get("G4W_CONDUCTOR_MODEL", "deepseek-v4-flash")),
-        "G4W_WORKER_MODEL": values.get("G4W_WORKER_MODEL", existing.get("G4W_WORKER_MODEL", "deepseek-v4-flash")),
+        "G4W_CONDUCTOR_MODEL": _clean_value(values.get("G4W_CONDUCTOR_MODEL", existing.get("G4W_CONDUCTOR_MODEL", "deepseek-v4-flash")), "Conductor 模型") or "none",
+        "G4W_WORKER_MODEL": _clean_value(values.get("G4W_WORKER_MODEL", existing.get("G4W_WORKER_MODEL", "deepseek-v4-flash")), "Worker 模型") or "none",
         "G4W_TIMELINE_UI_THEME": values.get("G4W_TIMELINE_UI_THEME", existing.get("G4W_TIMELINE_UI_THEME", "default")),
         "G4W_DIDA_COMMAND": existing.get("G4W_DIDA_COMMAND", ""),
         "G4W_DIDA_TOKEN": existing.get("G4W_DIDA_TOKEN", ""),
@@ -228,10 +229,6 @@ def configure_env(values: dict[str, str]) -> dict:
         "G4W_CHECKIN_MAX_INTERVAL_MS": existing.get("G4W_CHECKIN_MAX_INTERVAL_MS", "5400000"),
         "G4W_VECTOR_INDEX_DIR": existing.get("G4W_VECTOR_INDEX_DIR", "${G4W_WORKSPACE_ROOT}/runtime/G4W-vector-index/memory"),
     }
-    if merged["G4W_CONDUCTOR_MODEL"] not in MODEL_CHOICES.values():
-        raise ValueError("Unsupported Conductor model")
-    if merged["G4W_WORKER_MODEL"] not in MODEL_CHOICES.values():
-        raise ValueError("Unsupported Worker model")
     if merged["G4W_TIMELINE_UI_THEME"] not in THEME_CHOICES.values():
         raise ValueError("Unsupported Timeline theme")
     if merged["G4W_USER_GENDER"] not in GENDER_CHOICES.values():
@@ -265,10 +262,10 @@ def interactive_env() -> dict:
     print("用户性别：0: male；1: female；2: neutral")
     user_gender = _choose("请输入 0、1 或 2", GENDER_CHOICES, current.get("G4W_USER_GENDER", "neutral"), "2")
     bot_name = input(f"机器人名字 [{current.get('G4W_BOT_NAME', '')}]：").strip() or current.get("G4W_BOT_NAME", "")
-    print("Conductor 默认模型：0: deepseek-v4-pro；1: deepseek-v4-flash（默认）")
-    conductor_model = _choose("请输入 0 或 1", MODEL_CHOICES, current.get("G4W_CONDUCTOR_MODEL", "deepseek-v4-flash"), "1")
-    print("Worker 默认模型：0: deepseek-v4-pro；1: deepseek-v4-flash（默认）")
-    worker_model = _choose("请输入 0 或 1", MODEL_CHOICES, current.get("G4W_WORKER_MODEL", "deepseek-v4-flash"), "1")
+    print("Conductor 默认模型：0: deepseek-v4-pro；1: deepseek-v4-flash（默认）；2: none")
+    conductor_model = _choose("请输入 0、1 或 2", MODEL_CHOICES, current.get("G4W_CONDUCTOR_MODEL", "deepseek-v4-flash"), "1")
+    print("Worker 默认模型：0: deepseek-v4-pro；1: deepseek-v4-flash（默认）；2: none")
+    worker_model = _choose("请输入 0、1 或 2", MODEL_CHOICES, current.get("G4W_WORKER_MODEL", "deepseek-v4-flash"), "1")
     print("Timeline 主题：0: default（默认）；1: neko")
     timeline_theme = _choose("请输入 0 或 1", THEME_CHOICES, current.get("G4W_TIMELINE_UI_THEME", "default"), "0")
     return configure_env({
