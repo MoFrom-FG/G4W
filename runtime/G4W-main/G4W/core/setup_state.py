@@ -22,6 +22,14 @@ def portable_root() -> Path:
 
 
 def venv_python_path() -> Path:
+    # 优先检测环境覆写的解释器（如 Conda 环境），而不是写死 .venv
+    import os
+    env_py = os.environ.get("G4W_PY", "").strip()
+    if env_py and Path(env_py).is_file():
+        return Path(env_py)
+    import sys
+    if sys.executable and Path(sys.executable).is_file():
+        return Path(sys.executable)
     return venv_python(GA_APP_DIR / ".venv")
 
 

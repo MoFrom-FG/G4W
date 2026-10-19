@@ -475,7 +475,7 @@ class DashboardState:
     # 更新源与 ga-admin 同构：GitHub Releases（api.github.com/repos/<owner>/<repo>/releases/latest），
     # 直连失败时回落到 gh-proxy 镜像；只做「检查 + 展示」，落盘/替换仍走经过验证的
     # apply-update 流程（停服 → 备份 → 原子替换 → journal → 重启）。
-    UPDATE_REPO = "MoFrom-FG/G4W"
+    UPDATE_REPO = os.environ.get("G4W_UPDATE_REPO", "MoFrom-FG/G4W")
 
     def update_status(self) -> dict:
         config = self._fresh_config()

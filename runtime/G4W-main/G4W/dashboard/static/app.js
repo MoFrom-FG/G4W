@@ -1870,8 +1870,12 @@ function initUpdateCard() {
     $("update-check")?.addEventListener("click", checkUpdate);
     $("update-apply")?.addEventListener("click", applyUpdate);
     $("update-release")?.addEventListener("click", () => {
-      const url = $("update-release")?.dataset.url || "https://github.com/MoFrom-FG/G4W/releases/latest";
-      window.open(url, "_blank");
+      fetchJson("/api/update/status").then(s => {
+        const url = s.latestReleasePage || "https://github.com/MoFrom-FG/G4W/releases/latest";
+        window.open(url, "_blank");
+      }).catch(() => {
+        window.open("https://github.com/MoFrom-FG/G4W/releases/latest", "_blank");
+      });
     });
   }
   if (location.hash.replace("#", "") === "environment") loadUpdateStatus();

@@ -19,6 +19,11 @@ if [ -z "${G4W_DASHBOARD_PORT:-}" ]; then
 fi
 export G4W_DASHBOARD_HOST="${G4W_DASHBOARD_HOST:-127.0.0.1}"
 
+# 支持从自定义 GitHub Repo 获取更新
+if [ -f "$G4W_ROOT/runtime/G4W-update-repo.txt" ]; then
+  export G4W_UPDATE_REPO="$(tr -d '[:space:]' < "$G4W_ROOT/runtime/G4W-update-repo.txt")"
+fi
+
 # 修改：直接使用當前環境的 Python (例如 Conda 環境)
 G4W_PY="$(command -v python)"
 if [ ! -x "$G4W_PY" ]; then
