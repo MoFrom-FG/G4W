@@ -21,15 +21,15 @@ CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
 # Regional & cultural terminology overrides for Traditional Chinese (zh-TW)
 ZH_TW_EXACT_OVERRIDES = {
-    "网络偏好：国内镜像加速": "網路偏好：大陸地區鏡像加速",
-    "开=国内镜像（推荐） · 关=国外官方源": "開=大陸地區鏡像（推薦） · 關=國際官方源",
+    "网络偏好：国内镜像加速": "網路偏好：中國大陸鏡像加速",
+    "开=国内镜像（推荐） · 关=国外官方源": "開=中國大陸鏡像（推薦） · 關=國際官方源",
     "开=gh-proxy 镜像（推荐） · 关=直连 GitHub": "開=gh-proxy 鏡像（推薦） · 關=直連 GitHub",
-    "国内（镜像加速）": "大陸地區（鏡像加速）",
+    "国内（镜像加速）": "中國大陸（鏡像加速）",
     "国外（官方源）": "國際（官方源）",
-    "网络偏好：国内（镜像加速）。测速选优结果自动用于安装源。": "網路偏好：大陸地區（鏡像加速）。測速選優結果自動用於安裝源。",
+    "网络偏好：国内（镜像加速）。测速选优结果自动用于安装源。": "網路偏好：中國大陸（鏡像加速）。測速選優結果自動用於安裝源。",
     "网络偏好：国外（官方源）。测速选优结果自动用于安装源。": "網路偏好：國際（官方源）。測速選優結果自動用於安裝源。",
-    "国内网络请打开「国内镜像加速」，或为 G4W 进程设置 HTTPS_PROXY（例如 http://127.0.0.1:7897）。": "大陸地區網路請打開「大陸地區鏡像加速」，或為 G4W 進程設定 HTTPS_PROXY（例如 http://127.0.0.1:7897）。",
-    "北京时间": "台北時間",
+    "国内网络请打开「国内镜像加速」，或为 G4W 进程设置 HTTPS_PROXY（例如 http://127.0.0.1:7897）。": "中國大陸網路請打開「中國大陸鏡像加速」，或為 G4W 進程設定 HTTPS_PROXY（例如 http://127.0.0.1:7897）。",
+    "北京时间": "北京時間",
     "台北时间": "台北時間",
     "美国时间": "美國時間",
     "切换语言后立即翻译界面并自动匹配对应时区（简体中文→北京时间、繁體中文→台北時間、English→US Time），也可单独指定时区。": "切換語言後立即翻譯介面並自動匹配對應時區（簡體中文→北京時間、繁體中文→台北時間、English→US Time），也可單獨指定時區。",
@@ -37,7 +37,8 @@ ZH_TW_EXACT_OVERRIDES = {
 
 EN_US_OVERRIDES = {
     "切换语言后立即翻译界面并自动匹配对应时区（简体中文→北京时间、繁體中文→台北時間、English→US Time），也可单独指定时区。": "Switching language immediately translates the UI and matches the default time zone (zh-CN → Beijing, zh-TW → Taipei, English → US Time), or you can select a specific time zone.",
-    "北京时间": "US Eastern Time",
+    "北京时间": "Beijing Time (Asia/Shanghai)",
+    "台北时间": "Taipei Time (Asia/Taipei)",
     "网络偏好：国内镜像加速": "Network Preference: China Mainland Mirror Acceleration",
     "开=国内镜像（推荐） · 关=国外官方源": "ON = China Mainland mirrors · OFF = International official sources",
     "开=gh-proxy 镜像（推荐） · 关=直连 GitHub": "ON = gh-proxy mirror (China Mainland) · OFF = Direct GitHub",
@@ -434,11 +435,24 @@ def build_locales_js(zh_cn: dict, zh_tw: dict, en_us: dict) -> str:
     return tz;
   }
 
+  const REVERSE_KEY_MAP = {};
+  if (window.G4W_LOCALES) {
+    for (const lang of ["zh-TW", "en-US"]) {
+      const d = window.G4W_LOCALES[lang] || {};
+      for (const [k, v] of Object.entries(d)) {
+        if (v && v !== k && REVERSE_KEY_MAP[v] === undefined) {
+          REVERSE_KEY_MAP[v] = k;
+        }
+      }
+    }
+  }
+
   function t(key, ...args) {
     if (key == null) return "";
-    const strKey = String(key);
+    const rawKey = String(key);
     const dict = (window.G4W_LOCALES && window.G4W_LOCALES[currentLang]) || {};
-    let val = dict[strKey] !== undefined ? dict[strKey] : strKey;
+    let strKey = dict[rawKey] !== undefined ? rawKey : (REVERSE_KEY_MAP[rawKey] || rawKey);
+    let val = dict[strKey] !== undefined ? dict[strKey] : rawKey;
     if (args.length > 0) {
       val = val.replace(/\\{(\\d+)\\}/g, (match, idx) => {
         const i = Number(idx);

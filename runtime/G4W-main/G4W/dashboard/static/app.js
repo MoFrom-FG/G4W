@@ -1,4 +1,14 @@
 const $ = (id) => document.getElementById(id);
+if (typeof window.t !== "function") {
+  window.t = (key, ...args) => {
+    if (key == null) return "";
+    let val = String(key);
+    if (args.length > 0) {
+      val = val.replace(/\{(\d+)\}/g, (m, i) => (args[Number(i)] !== undefined && args[Number(i)] !== null ? String(args[Number(i)]) : m));
+    }
+    return val;
+  };
+}
 let dashboardData = null;
 let promptData = null;
 let settingsDirty = false;
@@ -2734,6 +2744,9 @@ window.addEventListener("g4w:i18n-changed", () => {
     if (personaDraft) personaRenderEditor();
   }
   if (modelConfigData) modelConfigRender(modelConfigData);
+  if ( $("setting-conductor-model")?.dataset.loaded === "true" ) loadModels(true);
+  loadEmbeddingConfig(true);
+  loadUpdateStatus();
   if (currentMemoryData) renderMemoryDetail(currentMemoryData);
   if (promptData) renderPromptTree(promptData);
   servicesSignature = "";
@@ -3255,7 +3268,7 @@ function modelConfigRender(data) {
     }
   }
   const anthropic = $("model-config-anthropic");
-  if (anthropic) anthropic.textContent = data.anthropicHint || "";
+  if (anthropic) anthropic.textContent = t(data.anthropicHint || "");
   if (data.parseError) modelMessage(data.parseError, true);
   else if (data.skipped) modelMessage(t("首次向导里跳过了填 Key —— 在「供应商配置」里加一家就能用了。"));
   modelConfigRenderFetch();
