@@ -33,6 +33,8 @@ ZH_TW_EXACT_OVERRIDES = {
     "台北时间": "台北時間",
     "美国时间": "美國時間",
     "切换语言后立即翻译界面并自动匹配对应时区（简体中文→北京时间、繁體中文→台北時間、English→US Time），也可单独指定时区。": "切換語言後立即翻譯介面並自動匹配對應時區（簡體中文→北京時間、繁體中文→台北時間、English→US Time），也可單獨指定時區。",
+    "更新走 GitHub Releases：下载补丁/整包后关闭 G4W 运行升级脚本，runtime\\G4W-data 不会被改动。": "更新走 GitHub Releases：下載修補程式/完整包後關閉 G4W 執行升級腳本，runtime\\G4W-data 不會被改動。",
+    "供应商只存本机 G4W-data\\model-providers.json；每行的「测试」会用它的地址与 Key 拉一次模型列表（等于连通性检查）。": "供應商只存本機 G4W-data\\model-providers.json；每行的「測試」會用它的地址與 Key 拉一次模型列表（等於連通性檢查）。",
 }
 
 EN_US_OVERRIDES = {
@@ -44,6 +46,8 @@ EN_US_OVERRIDES = {
     "开=gh-proxy 镜像（推荐） · 关=直连 GitHub": "ON = gh-proxy mirror (China Mainland) · OFF = Direct GitHub",
     "国内（镜像加速）": "China Mainland (Mirror Acceleration)",
     "国外（官方源）": "International (Official Sources)",
+    "更新走 GitHub Releases：下载补丁/整包后关闭 G4W 运行升级脚本，runtime\\G4W-data 不会被改动。": "Updates via GitHub Releases: downloads patch/package, stops G4W and runs upgrade script; runtime\\G4W-data is untouched.",
+    "供应商只存本机 G4W-data\\model-providers.json；每行的「测试」会用它的地址与 Key 拉一次模型列表（等于连通性检查）。": "Providers are stored locally in G4W-data\\model-providers.json; \"Test\" fetches the model list using its URL and Key (connectivity check).",
 }
 
 
@@ -393,7 +397,7 @@ def build_locales_js(zh_cn: dict, zh_tw: dict, en_us: dict) -> str:
         '  "zh-TW": ' + json.dumps(zh_tw, ensure_ascii=False, indent=2) + ",\n"
         '  "en-US": ' + json.dumps(en_us, ensure_ascii=False, indent=2) + "\n"
         "};\n\n"
-        """(function () {
+        r"""(function () {
   const DEFAULT_TIMEZONES = {
     "zh-CN": "Asia/Shanghai",
     "zh-TW": "Asia/Taipei",
@@ -447,14 +451,31 @@ def build_locales_js(zh_cn: dict, zh_tw: dict, en_us: dict) -> str:
     }
   }
 
+  const DYNAMIC_PATTERNS = [
+    [/^port (\d+) 未监听$/, (m) => t("port {0} 未监听", m[1])],
+    [/^进程特征 '(.+)' 未匹配$/, (m) => t("进程特征 '{0}' 未匹配", m[1])],
+    [/^随机窗口 (\d+)–(\d+) 分钟$/, (m) => t("随机窗口 {0}–{1} 分钟", m[1], m[2])],
+    [/^最近 (\d+) 条记录中合并了 (\d+) 次检查；([\s\S]+)$/, (m) => t("最近 250 条记录中合并了 {0} 次检查；{1}", m[2], t(m[3]))]
+  ];
+
   function t(key, ...args) {
     if (key == null) return "";
     const rawKey = String(key);
     const dict = (window.G4W_LOCALES && window.G4W_LOCALES[currentLang]) || {};
     let strKey = dict[rawKey] !== undefined ? rawKey : (REVERSE_KEY_MAP[rawKey] || rawKey);
+    if (dict[strKey] === undefined) {
+      const collapsed = rawKey.replace(/\\\\/g, "\\");
+      if (dict[collapsed] !== undefined) strKey = collapsed;
+    }
+    if (dict[strKey] === undefined && args.length === 0) {
+      for (const [regex, handler] of DYNAMIC_PATTERNS) {
+        const m = rawKey.match(regex);
+        if (m) return handler(m);
+      }
+    }
     let val = dict[strKey] !== undefined ? dict[strKey] : rawKey;
     if (args.length > 0) {
-      val = val.replace(/\\{(\\d+)\\}/g, (match, idx) => {
+      val = val.replace(/\{(\d+)\}/g, (match, idx) => {
         const i = Number(idx);
         return args[i] !== undefined && args[i] !== null ? String(args[i]) : match;
       });

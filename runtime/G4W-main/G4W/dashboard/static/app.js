@@ -2131,7 +2131,7 @@ function serviceRow(svc) {
       <div class="service-info"><strong>${esc(t(svc.name))}</strong><small>${esc(t(svc.desc || svc.id))}</small></div>
       <span class="service-state ${running ? "is-running" : ""}">${running ? t("运行中") : t("已停止")}</span>
     </div>
-    <div class="service-foot"><code>${esc(svc.detail || "")}</code><span class="service-actions">${actions}</span></div>
+    <div class="service-foot"><code>${esc(t(svc.detail || ""))}</code><span class="service-actions">${actions}</span></div>
   </div>`;
 }
 

@@ -59,6 +59,7 @@ window.G4W_LOCALES = {
   "md 内容（## 大节 / ### 小节）": "md 内容（## 大节 / ### 小节）",
   "none（稍后在看板配置自定义模型）": "none（稍后在看板配置自定义模型）",
   "pip 源": "pip 源",
+  "port {0} 未监听": "port {0} 未监听",
   "pro 模型": "pro 模型",
   "torch 源": "torch 源",
   "worker 模型": "worker 模型",
@@ -538,6 +539,7 @@ window.G4W_LOCALES = {
   "最早 {0}": "最早 {0}",
   "最短分钟": "最短分钟",
   "最终有效 Prompt": "最终有效 Prompt",
+  "最近 250 条记录中合并了 {0} 次检查；{1}": "最近 250 条记录中合并了 {0} 次检查；{1}",
   "最近运行记录": "最近运行记录",
   "最长分钟": "最长分钟",
   "月": "月",
@@ -834,6 +836,7 @@ window.G4W_LOCALES = {
   "这部分附加在当前用户消息中，不属于稳定 System Prompt。": "这部分附加在当前用户消息中，不属于稳定 System Prompt。",
   "进入控制中心": "进入控制中心",
   "进入模型": "进入模型",
+  "进程特征 '{0}' 未匹配": "进程特征 '{0}' 未匹配",
   "进行中项目": "进行中项目",
   "连接主进程": "连接主进程",
   "连通正常：返回 {0} 个模型。": "连通正常：返回 {0} 个模型。",
@@ -862,6 +865,7 @@ window.G4W_LOCALES = {
   "阴影": "阴影",
   "附件": "附件",
   "随机 Check-in": "随机 Check-in",
+  "随机窗口 {0}–{1} 分钟": "随机窗口 {0}–{1} 分钟",
   "面板": "面板",
   "面板(实)": "面板(实)",
   "预览渲染结果（md）": "预览渲染结果（md）",
@@ -945,6 +949,7 @@ window.G4W_LOCALES = {
   "md 内容（## 大节 / ### 小节）": "md 內容（## 大節 / ### 小節）",
   "none（稍后在看板配置自定义模型）": "none（稍後在看板配置自訂模型）",
   "pip 源": "pip 源",
+  "port {0} 未监听": "連接埠 {0} 未監聽",
   "pro 模型": "pro 模型",
   "torch 源": "torch 源",
   "worker 模型": "worker 模型",
@@ -1424,6 +1429,7 @@ window.G4W_LOCALES = {
   "最早 {0}": "最早 {0}",
   "最短分钟": "最短分鐘",
   "最终有效 Prompt": "最終有效 Prompt",
+  "最近 250 条记录中合并了 {0} 次检查；{1}": "最近 250 條記錄中合併了 {0} 次檢查；{1}",
   "最近运行记录": "最近執行記錄",
   "最长分钟": "最長分鐘",
   "月": "月",
@@ -1720,6 +1726,7 @@ window.G4W_LOCALES = {
   "这部分附加在当前用户消息中，不属于稳定 System Prompt。": "這部分附加在目前使用者消息中，不屬於穩定 System Prompt。",
   "进入控制中心": "進入控制中心",
   "进入模型": "進入模型",
+  "进程特征 '{0}' 未匹配": "進程特徵 '{0}' 未匹配",
   "进行中项目": "進行中項目",
   "连接主进程": "連線主進程",
   "连通正常：返回 {0} 个模型。": "連通正常：返回 {0} 個模型。",
@@ -1748,6 +1755,7 @@ window.G4W_LOCALES = {
   "阴影": "陰影",
   "附件": "附件",
   "随机 Check-in": "隨機 Check-in",
+  "随机窗口 {0}–{1} 分钟": "隨機視窗 {0}–{1} 分鐘",
   "面板": "面板",
   "面板(实)": "面板(實)",
   "预览渲染结果（md）": "預覽渲染結果（md）",
@@ -1831,6 +1839,7 @@ window.G4W_LOCALES = {
   "md 内容（## 大节 / ### 小节）": "Markdown Content (## Section / ### Subsection)",
   "none（稍后在看板配置自定义模型）": "none (Configure custom model later in Dashboard)",
   "pip 源": "pip Mirror",
+  "port {0} 未监听": "port {0} not listening",
   "pro 模型": "Pro Model",
   "torch 源": "PyTorch Mirror",
   "worker 模型": "Worker Model",
@@ -1959,7 +1968,7 @@ window.G4W_LOCALES = {
   "例如：DeepSeek 官方 / 我的中转": "e.g., DeepSeek Official / My Relay",
   "例如：小助手": "e.g., Assistant",
   "例如：老师 / 老板 / 名字": "e.g., Boss / Sensei / Name",
-  "供应商只存本机 G4W-data\\\\model-providers.json；每行的「测试」会用它的地址与 Key 拉一次模型列表（等于连通性检查）。": "供应商只存本机 G4W-data\\\\model-providers.json；每行的「测试」会用它的地址与 Key 拉一次模型列表（等于连通性检查）。",
+  "供应商只存本机 G4W-data\\\\model-providers.json；每行的「测试」会用它的地址与 Key 拉一次模型列表（等于连通性检查）。": "Providers are stored locally in G4W-data\\model-providers.json; \"Test\" fetches the model list using its URL and Key (connectivity check).",
   "供应商只存本机 G4W-data\\model-providers.json；每行的「测试」会用它的地址与 Key 拉一次模型列表（等于连通性检查）。": "Providers are stored locally in G4W-data\\model-providers.json; \"Test\" fetches the model list using its URL and Key (connectivity check).",
   "供应商已保存（只写本机）。点它的「测试」可拉一次模型列表。": "Provider saved locally. Click \"Test\" to fetch its model list.",
   "供应商已删除。": "Provider deleted.",
@@ -2221,7 +2230,7 @@ window.G4W_LOCALES = {
   "把当前运行时人设导入为新预设": "Import Current Runtime Persona as New Preset",
   "把当前预设导出到下方": "Export Current Preset Below",
   "拉取到 {0} 个模型：可以逐个「测试」，或勾选后添加。": "Fetched {0} models: test individually or check to add.",
-  "拉取后勾选添加 → 写入 runtime\\\\app\\\\mykey.py，GA 按文件时间自动重载；「测试」会真的发一次最小请求（显示耗时与回复片段）；删除只移除该模型配置，原文件自动备份。": "拉取后勾选添加 → 写入 runtime\\\\app\\\\mykey.py，GA 按文件时间自动重载；「测试」会真的发一次最小请求（显示耗时与回复片段）；删除只移除该模型配置，原文件自动备份。",
+  "拉取后勾选添加 → 写入 runtime\\\\app\\\\mykey.py，GA 按文件时间自动重载；「测试」会真的发一次最小请求（显示耗时与回复片段）；删除只移除该模型配置，原文件自动备份。": "Fetch and check to add → writes to runtime\\app\\mykey.py (GA auto-reloads by file mtime); \"Test\" sends a minimal real request (shows latency and reply snippet); deleting removes only that model with automatic backup.",
   "拉取后勾选添加 → 写入 runtime\\app\\mykey.py，GA 按文件时间自动重载；「测试」会真的发一次最小请求（显示耗时与回复片段）；删除只移除该模型配置，原文件自动备份。": "Fetch and check to add → writes to runtime\\app\\mykey.py (GA auto-reloads by file mtime); \"Test\" sends a minimal real request (shows latency and reply snippet); deleting removes only that model with automatic backup.",
   "拉取失败：{0}": "Fetch failed: {0}",
   "拉取模型列表": "Fetch Model List",
@@ -2302,7 +2311,7 @@ window.G4W_LOCALES = {
   "更新失败：": "Update failed: ",
   "更新时间": "Updated At",
   "更新走 GitHub Releases：下载补丁/整包后关闭 G4W 运行升级脚本，runtime\\G4W-data 不会被改动。": "Updates via GitHub Releases: downloads patch/package, stops G4W and runs upgrade script; runtime\\G4W-data is untouched.",
-  "更新走 GitHub Releases：下载补丁/整包后关闭 G4W 运行升级脚本，runtime\\\\G4W-data 不会被改动。": "更新走 GitHub Releases：下载补丁/整包后关闭 G4W 运行升级脚本，runtime\\\\G4W-data 不会被改动。",
+  "更新走 GitHub Releases：下载补丁/整包后关闭 G4W 运行升级脚本，runtime\\\\G4W-data 不会被改动。": "Updates via GitHub Releases: downloads patch/package, stops G4W and runs upgrade script; runtime\\G4W-data is untouched.",
   "最后回复": "Latest Reply",
   "最弱文字": "Faint Text",
   "最新 {0}": "Latest {0}",
@@ -2310,6 +2319,7 @@ window.G4W_LOCALES = {
   "最早 {0}": "Earliest {0}",
   "最短分钟": "Min Minutes",
   "最终有效 Prompt": "Final Effective Prompt",
+  "最近 250 条记录中合并了 {0} 次检查；{1}": "Merged {0} checks from last 250 records; {1}",
   "最近运行记录": "Recent Activity Log",
   "最长分钟": "Max Minutes",
   "月": "Month",
@@ -2606,6 +2616,7 @@ window.G4W_LOCALES = {
   "这部分附加在当前用户消息中，不属于稳定 System Prompt。": "Attached to the current user message; not part of the stable System Prompt.",
   "进入控制中心": "Enter Control Center",
   "进入模型": "Sent to Model",
+  "进程特征 '{0}' 未匹配": "process pattern '{0}' not matched",
   "进行中项目": "Ongoing Projects",
   "连接主进程": "Connected to Core",
   "连通正常：返回 {0} 个模型。": "Connection OK: returned {0} models.",
@@ -2634,6 +2645,7 @@ window.G4W_LOCALES = {
   "阴影": "Shadow",
   "附件": "Assets",
   "随机 Check-in": "Random Check-in",
+  "随机窗口 {0}–{1} 分钟": "Random window {0}–{1} min",
   "面板": "Panel",
   "面板(实)": "Panel (Solid)",
   "预览渲染结果（md）": "Preview Rendered Result (md)",
@@ -2714,11 +2726,28 @@ window.G4W_LOCALES = {
     }
   }
 
+  const DYNAMIC_PATTERNS = [
+    [/^port (\d+) 未监听$/, (m) => t("port {0} 未监听", m[1])],
+    [/^进程特征 '(.+)' 未匹配$/, (m) => t("进程特征 '{0}' 未匹配", m[1])],
+    [/^随机窗口 (\d+)–(\d+) 分钟$/, (m) => t("随机窗口 {0}–{1} 分钟", m[1], m[2])],
+    [/^最近 (\d+) 条记录中合并了 (\d+) 次检查；([\s\S]+)$/, (m) => t("最近 250 条记录中合并了 {0} 次检查；{1}", m[2], t(m[3]))]
+  ];
+
   function t(key, ...args) {
     if (key == null) return "";
     const rawKey = String(key);
     const dict = (window.G4W_LOCALES && window.G4W_LOCALES[currentLang]) || {};
     let strKey = dict[rawKey] !== undefined ? rawKey : (REVERSE_KEY_MAP[rawKey] || rawKey);
+    if (dict[strKey] === undefined) {
+      const collapsed = rawKey.replace(/\\\\/g, "\\");
+      if (dict[collapsed] !== undefined) strKey = collapsed;
+    }
+    if (dict[strKey] === undefined && args.length === 0) {
+      for (const [regex, handler] of DYNAMIC_PATTERNS) {
+        const m = rawKey.match(regex);
+        if (m) return handler(m);
+      }
+    }
     let val = dict[strKey] !== undefined ? dict[strKey] : rawKey;
     if (args.length > 0) {
       val = val.replace(/\{(\d+)\}/g, (match, idx) => {
