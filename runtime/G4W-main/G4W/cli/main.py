@@ -156,18 +156,21 @@ def main():
             parser.error("bind-legacy requires --sender and --legacy-sender")
         print(json.dumps(bind_legacy_user(config.state_dir, args.sender, args.legacy_sender), ensure_ascii=False, indent=2))
         return
-    service = G4WService(config)
     if args.command == "login":
+        service = G4WService(config)
         print(json.dumps(service.login(), ensure_ascii=False, indent=2))
     elif args.command == "accounts":
+        service = G4WService(config)
         accounts = service.channel.accounts.read().get("accounts", {})
         print(json.dumps({"accounts": [{key: value.get(key) for key in ("accountId", "baseUrl", "userId", "savedAt")} for value in accounts.values()]}, ensure_ascii=False, indent=2))
     elif args.command == "doctor":
+        service = G4WService(config)
         print(json.dumps(service.doctor(), ensure_ascii=False, indent=2))
     else:
         config.stop_marker_file.unlink(missing_ok=True)
         _write_pid(config.pid_file)
         try:
+            service = G4WService(config)
             service.run()
         finally:
             _remove_own_pid(config.pid_file)

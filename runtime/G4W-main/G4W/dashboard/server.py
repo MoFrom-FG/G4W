@@ -375,6 +375,14 @@ def _embed_mirrors_module():
 
 
 class DashboardState:
+
+    def _is_zh_tw(self) -> bool:
+        try:
+            from ..memory.instructions import update_env_file
+            # fallback to read from config / env
+            return (self._fresh_config().timeline_locale or "zh-CN") == "zh-TW"
+        except Exception:
+            return False
     def __init__(self, config: Config):
         self.config = config
 
@@ -624,7 +632,7 @@ class DashboardState:
         if not info.get("ok"):
             return {"ok": False, "error": info.get("error") or "无法检查最新版本", "hint": info.get("hint")}
         if not info.get("hasUpdate"):
-            return {"ok": False, "error": f"当前已是最新版本（{info.get('current') or info.get('latest')}）"}
+            return {"ok": False, "error": f"目前已是最新版本（{info.get('current') or info.get('latest')}）" if self._is_zh_tw() else f"当前已是最新版本（{info.get('current') or info.get('latest')}）"}
         current = str(info.get("current") or "").lstrip("vV") or "unknown"
         latest = str(info.get("latest") or "").lstrip("vV")
         want = f"g4w-patch-{current}-to-{latest}.zip".lower()
@@ -1305,7 +1313,7 @@ class DashboardState:
         if result.get("ok"):
             note = "已对当前会话注入；其他会话下一条消息自动生效。"
         else:
-            note = f"注入未完成（{result.get('error') or '未知错误'}）。下一条消息仍会生效。"
+            note = f"注入未完成（{result.get('error') or '未知錯誤'}）。下一條消息仍會生效。" if self._is_zh_tw() else f"注入未完成（{result.get('error') or '未知错误'}）。下一条消息仍会生效。"
         return {"ok": True, "done": True, "injectId": request_id, "injectOk": bool(result.get("ok")),
                 "reply": reply, "note": note}
 
@@ -1801,6 +1809,8 @@ class DashboardState:
             return {"ok": False, "error": f"service {service_id} 不支持启动"}
         current = self._service_status(config, service_id, spec)
         if current["status"] == "running":
+            return {"ok": True, "message": "已在运行", "status": "running", "id": service_id}
+        if service_id == "main" and self._cmdline_pids("-m g4w start"):
             return {"ok": True, "message": "已在运行", "status": "running", "id": service_id}
         cmd = list(spec.get("command") or [])
         cwd = str(spec.get("cwd") or str(Path(config.workspace_root)))
@@ -2583,6 +2593,8 @@ class DashboardState:
             "locationEnabled": config.location_enabled,
             "webSearchEnabled": config.web_search_enabled,
             "vectorEnabled": bool(load_vector_config().get("enabled")),
+            "uiLocale": config.timeline_locale or "zh-CN",
+            "uiTimezone": os.environ.get("G4W_TIMEZONE", "auto") or "auto",
             "theme": self.read_custom_theme(),
         }
 
@@ -2676,7 +2688,7 @@ class DashboardState:
                 model = str(selected.get("model") or "").strip()
                 if model:
                     update_env_file(config.env_file, {"G4W_CONDUCTOR_MODEL": model})
-                result["message"] = f"当前对话模型已切换为 {model or value}"
+                result["message"] = f"目前對話模型已切換為 {model or value}" if self._is_zh_tw() else f"当前对话模型已切换为 {model or value}"
                 return result
             fallback = self._fallback_models(config)["models"]
             raw = str(value or "").strip()
@@ -2688,7 +2700,7 @@ class DashboardState:
             if not model:
                 raise ValueError("模型不能为空")
             update_env_file(config.env_file, {"G4W_CONDUCTOR_MODEL": model})
-            return {"ok": True, "model": model, "message": f"Conductor 默认模型已保存为 {model}"}
+            return {"ok": True, "model": model, "message": f"Conductor 預設模型已保存為 {model}" if self._is_zh_tw() else f"Conductor 默认模型已保存为 {model}"}
         if target not in {"worker", "pro"}:
             raise ValueError("target 必须是 conductor、worker 或 pro")
         model = str(value or "").strip()
@@ -2707,7 +2719,7 @@ class DashboardState:
             "G4W_WORKER_MODEL": worker_model,
             "G4W_PRO_MODEL": pro_model,
         })
-        result["message"] = f"{target.title()} 默认模型已切换为 {model}，新任务立即生效"
+        result["message"] = f"{target.title()} 預設模型已切換為 {model}，新任務立即生效" if self._is_zh_tw() else f"{target.title()} 默认模型已切换为 {model}，新任务立即生效"
         return result
 
     def update_settings(self, updates: dict) -> dict:
@@ -2752,6 +2764,17 @@ class DashboardState:
         if "webSearchEnabled" in updates:
             env_updates["G4W_WEB_SEARCH_ENABLED"] = "1" if bool(updates["webSearchEnabled"]) else "0"
             restart_fields.append("webSearchEnabled")
+
+        if "uiLocale" in updates:
+            locale_val = str(updates["uiLocale"] or "zh-CN").strip()
+            if locale_val in ("zh-CN", "zh-TW", "en-US"):
+                env_updates["G4W_TIMELINE_LOCALE"] = locale_val
+
+        if "uiTimezone" in updates:
+            tz_val = str(updates["uiTimezone"] or "auto").strip()
+            if tz_val in ("auto", "Asia/Taipei", "Asia/Shanghai", "America/New_York", "America/Los_Angeles", "UTC"):
+                env_updates["G4W_TIMEZONE"] = tz_val
+                os.environ["G4W_TIMEZONE"] = tz_val
 
         if env_updates:
             # 防 .env 注入:任何值含换行即拒绝(update_env_file 不做转义)
@@ -2940,7 +2963,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if setup_wizard.handle_get(self, path):
                 return
             skip_setup = "skip_setup" in query and self.client_address[0] in ("127.0.0.1", "::1")
-            if (not skip_setup) and setup_wizard.gate_active() and not path.startswith("/api/auth/"):
+            if (not skip_setup) and setup_wizard.gate_active() and not path.startswith("/api/auth/") and not path.startswith("/i18n/") and not path.startswith("/vendor/"):
                 if path.startswith("/api/"):
                     self._send_json({"ok": False, "error": "setup_required", "setup": setup_wizard.status_payload()}, 428)
                 else:

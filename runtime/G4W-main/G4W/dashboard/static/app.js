@@ -58,9 +58,9 @@ async function submitSetup() {
   const password = $("setup-password").value;
   const password2 = $("setup-password2").value;
   const errorEl = $("login-error");
-  if (!username) { errorEl.textContent = "请输入用户名"; errorEl.hidden = false; return; }
-  if (password.length < 8) { errorEl.textContent = "密码至少 8 位"; errorEl.hidden = false; return; }
-  if (password !== password2) { errorEl.textContent = "两次输入的密码不一致"; errorEl.hidden = false; return; }
+  if (!username) { errorEl.textContent = t("请输入用户名"); errorEl.hidden = false; return; }
+  if (password.length < 8) { errorEl.textContent = t("密码至少 8 位"); errorEl.hidden = false; return; }
+  if (password !== password2) { errorEl.textContent = t("两次输入的密码不一致"); errorEl.hidden = false; return; }
   errorEl.hidden = true;
   try {
     const res = await fetch("/api/auth/setup", {
@@ -77,10 +77,10 @@ async function submitSetup() {
       connectEvents();
       return;
     }
-    errorEl.textContent = data.error || "设置失败";
+    errorEl.textContent = data.error || t("设置失败");
     errorEl.hidden = false;
   } catch {
-    errorEl.textContent = "无法连接服务器";
+    errorEl.textContent = t("无法连接服务器");
     errorEl.hidden = false;
   }
 }
@@ -90,7 +90,7 @@ async function submitLogin() {
   const password = $("login-password").value;
   const errorEl = $("login-error");
   if (!username || !password) {
-    errorEl.textContent = "请输入用户名和密码";
+    errorEl.textContent = t("请输入用户名和密码");
     errorEl.hidden = false;
     return;
   }
@@ -109,10 +109,10 @@ async function submitLogin() {
       connectEvents();
       return;
     }
-    errorEl.textContent = data.error || "用户名或密码错误";
+    errorEl.textContent = data.error || t("用户名或密码错误");
     errorEl.hidden = false;
   } catch {
-    errorEl.textContent = "无法连接服务器";
+    errorEl.textContent = t("无法连接服务器");
     errorEl.hidden = false;
   }
 }
@@ -122,8 +122,8 @@ async function submitPasswordChange() {
   const newPwd = $("setting-new-password").value;
   const newPwd2 = $("setting-new-password2").value;
   const messageEl = $("password-message");
-  if (newPwd.length < 8) { messageEl.textContent = "新密码至少 8 位"; messageEl.style.color = "#ff6b6b"; return; }
-  if (newPwd !== newPwd2) { messageEl.textContent = "两次输入的新密码不一致"; messageEl.style.color = "#ff6b6b"; return; }
+  if (newPwd.length < 8) { messageEl.textContent = t("新密码至少 8 位"); messageEl.style.color = "#ff6b6b"; return; }
+  if (newPwd !== newPwd2) { messageEl.textContent = t("两次输入的新密码不一致"); messageEl.style.color = "#ff6b6b"; return; }
   try {
     const res = await fetch("/api/auth/password", {
       method: "POST",
@@ -135,14 +135,14 @@ async function submitPasswordChange() {
       $("setting-old-password").value = "";
       $("setting-new-password").value = "";
       $("setting-new-password2").value = "";
-      messageEl.textContent = "密码已更新，下次登录请使用新密码";
+      messageEl.textContent = t("密码已更新，下次登录请使用新密码");
       messageEl.style.color = "";
     } else {
-      messageEl.textContent = data.error || "修改失败";
+      messageEl.textContent = data.error || t("修改失败");
       messageEl.style.color = "#ff6b6b";
     }
   } catch {
-    messageEl.textContent = "无法连接服务器";
+    messageEl.textContent = t("无法连接服务器");
     messageEl.style.color = "#ff6b6b";
   }
 }
@@ -195,7 +195,7 @@ function renderDonut(categories, totalMinutes) {
     const mid = (start + end) / 2;
     const rad = mid * Math.PI / 180;
     const pct = (value / total * 100).toFixed(1).replace(/\.0$/, "");
-    const text = `${timelineCategories[category] || category} ${pct}%`;
+    const text = `${t(timelineCategories[category] || category)} ${pct}%`;
     const anchor = Math.cos(rad) >= 0 ? "start" : "end";
     let w = 34;
     try {
@@ -360,7 +360,7 @@ let knowledgeTag = "";
 
 const fallback = {
   updatedAt: Date.now() / 1000,
-  system: { name: "G4W", user: "本地用户", status: "standby", model: "--", vector: false },
+  system: { name: "G4W", user: t("本地用户"), status: "standby", model: "--", vector: false },
   metrics: { workers: 0, runningWorkers: 0, memoryProfiles: 0, memoryBackups: 0, knowledgeDocuments: 0, knowledgeChunks: 0, pendingEvents: 0 },
   workers: [], events: [], knowledge: { documents: 0, chunks: 0, vector: false, root: "--", items: [] },
   memory: { profiles: 0, backups: 0, root: "--", active: false, items: [] },
@@ -384,7 +384,7 @@ function formatBytes(value) {
 
 function jsonText(value, maxItems = 80) {
   let output = value;
-  if (Array.isArray(value) && value.length > maxItems) output = [...value.slice(0, maxItems), { note: `仅展示前 ${maxItems} 条，原始数据共 ${value.length} 条` }];
+  if (Array.isArray(value) && value.length > maxItems) output = [...value.slice(0, maxItems), { note: t("仅展示前 {0} 条，原始数据共 {1} 条", maxItems, value.length) }];
   return JSON.stringify(output ?? {}, null, 2);
 }
 
@@ -607,7 +607,7 @@ function escInline(text) {
 function renderProfileDiff(curText, prevText) {
   const cur = String(curText || "").trim();
   const prev = String(prevText || "").trim();
-  if (!cur) return renderMarkdown("（暂无画像，等待 L4 生成）");
+  if (!cur) return renderMarkdown(t("（暂无画像，等待 L4 生成）"));
   if (!prev || prev === cur) return renderMarkdown(cur);
   const segments = diffProfileSmart(cur, prev);
   let addCount = 0;
@@ -625,9 +625,9 @@ function renderProfileDiff(curText, prevText) {
   if (addCount || delCount) {
     parts.push(
       `<div class="profile-diff-legend">` +
-      (addCount ? `<span class="prof-legend-add">+${addCount} 处新增</span>` : "") +
-      (delCount ? `<span class="prof-legend-del">−${delCount} 处删除</span>` : "") +
-      `<span class="prof-legend-hint">相对上一版 · 句子级主题色标记</span></div>`
+      (addCount ? `<span class="prof-legend-add">${t("+{0} 处新增", addCount)}</span>` : "") +
+      (delCount ? `<span class="prof-legend-del">${t("−{0} 处删除", delCount)}</span>` : "") +
+      `<span class="prof-legend-hint">${t("相对上一版 · 句子级主题色标记")}</span></div>`
     );
   }
 
@@ -692,7 +692,7 @@ function showToast(message, isError = false) {
   showToast.timer = setTimeout(() => { toast.hidden = true; }, 3600);
 }
 
-const pageTitles = { overview: "Overview", workers: "Workers", memory: "Memory", sop: "SOP", persona: "人设", timeline: "Timeline", diary: "Diary", todo: "待办", services: "服务与终端", knowledge: "Knowledge", events: "System Activity", environment: "Environment", prompt: "System Prompt" };
+const pageTitles = { overview: "Overview", workers: "Workers", memory: "Memory", sop: "SOP", persona: t("人设"), timeline: "Timeline", diary: "Diary", todo: t("待办"), services: t("服务与终端"), knowledge: "Knowledge", events: "System Activity", environment: "Environment", prompt: "System Prompt" };
 
 function setSidebarOpen(open) {
   $("sidebar").classList.toggle("open", open);
@@ -704,8 +704,8 @@ function routeTo(page) {
   const target = pageTitles[page] ? page : "overview";
   document.querySelectorAll("[data-page-view]").forEach((view) => view.classList.toggle("active", view.dataset.pageView === target));
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === target));
-  $("page-name").textContent = pageTitles[target];
-  document.title = `${pageTitles[target]} · G4W Control Center`;
+  $("page-name").textContent = t(pageTitles[target]);
+  document.title = `${t(pageTitles[target])} · G4W Control Center`;
   setSidebarOpen(false);
   window.scrollTo(0, 0);
   if (target === "prompt" && !promptData) loadPrompt();
@@ -725,14 +725,14 @@ function routeFromHash() { routeTo((location.hash || "#overview").slice(1)); }
 // 自定义主题:变量清单(shared=通用, mode=分深浅两套)
 const THEME_EDITOR_VARS = {
   shared: [
-    ["accent-rgb", "强调色 RGB"], ["wechat", "主色"], ["wechat-strong", "主色(深)"], ["wechat-soft", "主色(淡)"], ["line-strong", "主色描边"], ["radius", "界面圆角(px)"],
-    ["danger", "危险"], ["warning", "警告"], ["blue", "蓝色"], ["purple", "紫色"],
-    ["cat-life", "分类·生活"], ["cat-work", "分类·工作"], ["cat-study", "分类·学习"], ["cat-exercise", "分类·运动"], ["cat-entertainment", "分类·娱乐"],
-    ["cat-health", "分类·健康"], ["cat-social", "分类·社交"], ["cat-care", "分类·照料"], ["cat-travel", "分类·出行"], ["cat-rest", "分类·休息"],
+    ["accent-rgb", t("强调色 RGB")], ["wechat", t("主色")], ["wechat-strong", t("主色(深)")], ["wechat-soft", t("主色(淡)")], ["line-strong", t("主色描边")], ["radius", t("界面圆角(px)")],
+    ["danger", t("危险")], ["warning", t("警告")], ["blue", t("蓝色")], ["purple", t("紫色")],
+    ["cat-life", t("分类·生活")], ["cat-work", t("分类·工作")], ["cat-study", t("分类·学习")], ["cat-exercise", t("分类·运动")], ["cat-entertainment", t("分类·娱乐")],
+    ["cat-health", t("分类·健康")], ["cat-social", t("分类·社交")], ["cat-care", t("分类·照料")], ["cat-travel", t("分类·出行")], ["cat-rest", t("分类·休息")],
   ],
   mode: [
-    ["bg", "背景"], ["sidebar", "侧边栏"], ["panel", "面板"], ["panel-strong", "面板(实)"], ["field", "输入框"], ["line", "分隔线"],
-    ["text", "文字"], ["soft", "次要文字"], ["muted", "弱文字"], ["faint", "最弱文字"], ["overlay", "遮罩"], ["shadow", "阴影"],
+    ["bg", t("背景")], ["sidebar", t("侧边栏")], ["panel", t("面板")], ["panel-strong", t("面板(实)")], ["field", t("输入框")], ["line", t("分隔线")],
+    ["text", t("文字")], ["soft", t("次要文字")], ["muted", t("弱文字")], ["faint", t("最弱文字")], ["overlay", t("遮罩")], ["shadow", t("阴影")],
   ],
 };
 
@@ -760,11 +760,11 @@ function applyAppearance(mode, palette) {
   document.documentElement.dataset.palette = resolvedPalette;
   if (resolvedPalette === "custom") applyCustomTheme(dashboardData?.configuration?.theme);
   $("theme-icon").textContent = mode === "light" ? "☀" : mode === "dark" ? "☾" : "◐";
-  $("theme-button").title = `主题：${mode === "system" ? "跟随系统" : mode === "light" ? "浅色" : "深色"}`;
+  $("theme-button").title = t("主题：{0}", mode === "system" ? t("跟随系统") : mode === "light" ? t("浅色") : t("深色"));
   $("theme-mode-select").value = mode;
   document.querySelectorAll("[data-palette-choice]").forEach((button) => button.classList.toggle("active", button.dataset.paletteChoice === resolvedPalette));
-  const paletteLabel = resolvedPalette === "neko" ? "Neko 粉" : resolvedPalette === "argon" ? "简洁蓝" : resolvedPalette === "custom" ? "自定义" : "微信绿";
-  const modeLabel = mode === "system" ? "跟随系统" : mode === "light" ? "浅色" : "深色";
+  const paletteLabel = resolvedPalette === "neko" ? t("Neko 粉") : resolvedPalette === "argon" ? t("简洁蓝") : resolvedPalette === "custom" ? t("自定义") : t("微信绿");
+  const modeLabel = mode === "system" ? t("跟随系统") : mode === "light" ? t("浅色") : t("深色");
   $("appearance-current").textContent = `${paletteLabel} · ${modeLabel}`;
   const metaColor = resolved === "light"
     ? (resolvedPalette === "neko" ? "#fff7f4" : resolvedPalette === "argon" ? "#f2f4f8" : "#f5f7f6")
@@ -782,7 +782,7 @@ function cycleTheme() {
 function workerRow(worker, compact = false) {
   if (compact) return `<div class="worker-row" data-worker-id="${esc(worker.id)}"><div class="worker-symbol">◈</div><div class="worker-copy"><strong>${esc(worker.topic)}</strong><span>${esc(worker.summary)}</span></div><div class="worker-meta"><b class="status-${esc(worker.status)}">${statusLabel(worker.status)}</b><small>${esc(worker.model)}</small></div></div>`;
   const outputBtn = (worker.dir || worker.archivePath)
-    ? `<button class="worker-output-btn" data-worker-output="${esc(worker.dir)}" data-worker-archive="${esc(worker.archivePath)}" data-worker-id="${esc(worker.id)}" data-worker-label="${esc(worker.topic)}" title="在右侧监视器查看该 worker 的输出（未运行则显示历史）">输出</button>`
+    ? `<button class="worker-output-btn" data-worker-output="${esc(worker.dir)}" data-worker-archive="${esc(worker.archivePath)}" data-worker-id="${esc(worker.id)}" data-worker-label="${esc(worker.topic)}" title="${t("在右侧监视器查看该 worker 的输出（未运行则显示历史）")}">${t("输出")}</button>`
     : "";
   return `<div class="data-row clickable" data-worker-id="${esc(worker.id)}"><div class="data-icon">◈</div><div class="data-copy"><strong>${esc(worker.topic)}</strong><span>${esc(worker.summary)}</span><small>${esc(worker.capability || worker.id)} · run ${esc(worker.runIndex)}</small></div><div class="data-meta"><b class="status-${esc(worker.status)}">${statusLabel(worker.status)}</b><span>${esc(worker.model)}</span>${outputBtn}</div></div>`;
 }
@@ -797,11 +797,11 @@ function renderThemeEditor() {
   const shared = theme.shared || {};
   const surface = theme[mode] || {};
   const row = (key, label, value, group) =>
-    `<label class="theme-row"><span>${label}<small>--${key}</small></span><input type="text" data-theme-var="${key}" data-theme-group="${group}" value="${esc(value)}" placeholder="默认" spellcheck="false" /></label>`;
+    `<label class="theme-row"><span>${t(label)}<small>--${key}</small></span><input type="text" data-theme-var="${key}" data-theme-group="${group}" value="${esc(value)}" placeholder="${t("默认")}" spellcheck="false" /></label>`;
   const html =
-    `<div class="theme-group-label">通用(深浅共用)</div>` +
+    `<div class="theme-group-label">${t("通用(深浅共用)")}</div>` +
     THEME_EDITOR_VARS.shared.map(([key, label]) => row(key, label, shared[key] || "", "shared")).join("") +
-    `<div class="theme-group-label">${mode === "dark" ? "深色" : "浅色"}模式界面</div>` +
+    `<div class="theme-group-label">${t("{0}模式界面", mode === "dark" ? t("深色") : t("浅色"))}</div>` +
     THEME_EDITOR_VARS.mode.map(([key, label]) => row(key, label, surface[key] || "", mode)).join("");
   container.innerHTML = html;
 }
@@ -821,13 +821,13 @@ async function saveTheme() {
   try {
     const theme = collectTheme();
     const res = await fetchJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ theme }) });
-    if (!res.ok) throw new Error(res.error || "保存失败");
+    if (!res.ok) throw new Error(res.error || t("保存失败"));
     if (dashboardData && dashboardData.configuration) dashboardData.configuration.theme = theme;
     if (document.documentElement.dataset.palette === "custom") applyAppearance(document.documentElement.dataset.themeMode || "system", "custom");
-    messageEl.textContent = "主题已保存，立即生效";
+    messageEl.textContent = t("主题已保存，立即生效");
     messageEl.style.color = "";
   } catch (error) {
-    messageEl.textContent = error.message || "保存失败";
+    messageEl.textContent = error.message || t("保存失败");
     messageEl.style.color = "#ff6b6b";
   }
 }
@@ -836,14 +836,14 @@ async function resetTheme() {
   const messageEl = $("theme-message");
   try {
     const res = await fetchJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ theme: { dark: {}, light: {}, shared: {} } }) });
-    if (!res.ok) throw new Error(res.error || "恢复失败");
+    if (!res.ok) throw new Error(res.error || t("恢复失败"));
     if (dashboardData && dashboardData.configuration) dashboardData.configuration.theme = { dark: {}, light: {}, shared: {} };
     renderThemeEditor();
     if (document.documentElement.dataset.palette === "custom") applyAppearance(document.documentElement.dataset.themeMode || "system", "custom");
-    messageEl.textContent = "已恢复默认";
+    messageEl.textContent = t("已恢复默认");
     messageEl.style.color = "";
   } catch (error) {
-    messageEl.textContent = error.message || "恢复失败";
+    messageEl.textContent = error.message || t("恢复失败");
     messageEl.style.color = "#ff6b6b";
   }
 }
@@ -878,11 +878,13 @@ function renderMaintenanceActions(actions) {
   const host = $("setting-maintenance-actions");
   if (!host) return;
   if (!Array.isArray(actions) || !actions.length) { host.innerHTML = ""; return; }
-  host.innerHTML = actions.map((item) => `<label class="switch-row"><span><b>${esc(item.label || item.id)}</b><small>${esc(item.desc || "")}</small></span><input type="checkbox" data-maintenance-action="${esc(item.id)}" ${item.allowed ? "checked" : ""} /></label>`).join("");
+  host.innerHTML = actions.map((item) => `<label class="switch-row"><span><b>${esc(t(item.label || item.id))}</b><small>${esc(t(item.desc || ""))}</small></span><input type="checkbox" data-maintenance-action="${esc(item.id)}" ${item.allowed ? "checked" : ""} /></label>`).join("");
 }
 
 function renderSettings(config) {
   if (settingsDirty || !config) return;
+  if ($("setting-ui-lang") && window.g4wI18n) $("setting-ui-lang").value = window.g4wI18n.getLang();
+  if ($("setting-ui-timezone") && window.g4wI18n) $("setting-ui-timezone").value = window.g4wI18n.getTimezonePref();
   const values = {
     "setting-user-name": config.userName,
     "setting-user-identity": config.userIdentity,
@@ -910,7 +912,7 @@ function renderSettings(config) {
 }
 
 function compactEventRows(items) {
-  return items.map((event) => `<div class="event-row"><span class="event-dot ${event.status === "failed" ? "danger" : ""}"></span><div><strong>${esc(event.type)}</strong><span>${esc(event.detail || event.rawType || "系统状态发生变化")}</span></div><time>${esc(event.time)}</time></div>`).join("");
+  return items.map((event) => `<div class="event-row"><span class="event-dot ${event.status === "failed" ? "danger" : ""}"></span><div><strong>${esc(t(event.type))}</strong><span>${esc(t(event.detail || event.rawType || t("系统状态发生变化")))}</span></div><time>${esc(event.time)}</time></div>`).join("");
 }
 
 function eventIcon(category) {
@@ -927,8 +929,8 @@ function renderSystemEvents(events) {
   $("events-visible-count").textContent = filtered.length;
   $("events-page-list").innerHTML = filtered.length ? filtered.map((event) => {
     const category = categories.includes(event.category) ? event.category : event.category === "conversation" ? "conversation" : "";
-    return `<article class="system-event"><div class="system-event-icon ${esc(category)}">${eventIcon(event.category)}</div><div class="system-event-copy"><strong>${esc(event.type)}</strong><span>${esc(event.detail || "系统状态发生变化")}</span><small>${esc(event.rawType || "system.event")}${event.relatedId ? ` · ${esc(event.relatedId)}` : ""}</small></div><div class="system-event-meta"><b>${esc(statusLabel(event.status || "done"))}</b>${esc(event.time || "--")}</div></article>`;
-  }).join("") : '<div class="empty-state">当前分类暂无系统动态</div>';
+    return `<article class="system-event"><div class="system-event-icon ${esc(category)}">${eventIcon(event.category)}</div><div class="system-event-copy"><strong>${esc(t(event.type))}</strong><span>${esc(t(event.detail || t("系统状态发生变化")))}</span><small>${esc(event.rawType || "system.event")}${event.relatedId ? ` · ${esc(event.relatedId)}` : ""}</small></div><div class="system-event-meta"><b>${esc(statusLabel(event.status || "done"))}</b>${esc(event.time || "--")}</div></article>`;
+  }).join("") : `<div class="empty-state">${t("当前分类暂无系统动态")}</div>`;
 }
 
 function renderKnowledgeCatalog(items) {
@@ -936,7 +938,7 @@ function renderKnowledgeCatalog(items) {
   const currentOptions = new Set(Array.from(tagSelect.options).map((option) => option.value));
   const tags = [...new Set(items.flatMap((item) => item.tags || []).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), "zh-CN"));
   if (tags.some((tag) => !currentOptions.has(String(tag))) || tagSelect.options.length !== tags.length + 1) {
-    tagSelect.innerHTML = '<option value="">全部标签</option>' + tags.map((tag) => `<option value="${esc(tag)}">${esc(tag)}</option>`).join("");
+    tagSelect.innerHTML = `<option value="">${t("全部标签")}</option>` + tags.map((tag) => `<option value="${esc(tag)}">${esc(tag)}</option>`).join("");
     tagSelect.value = knowledgeTag;
   }
   const query = knowledgeQuery.trim().toLowerCase();
@@ -944,7 +946,7 @@ function renderKnowledgeCatalog(items) {
     const haystack = [item.title, item.id, ...(item.tags || [])].join(" ").toLowerCase();
     return (!query || haystack.includes(query)) && (!knowledgeTag || (item.tags || []).includes(knowledgeTag));
   });
-  $("knowledge-page-list").innerHTML = visible.length ? visible.map((item) => `<div class="data-row clickable" data-knowledge-id="${esc(item.id)}"><div class="data-icon blue">▣</div><div class="data-copy"><strong>${esc(item.title)}</strong><span>${(item.tags || []).map((tag) => `<i class="tag">${esc(tag)}</i>`).join("") || "无标签"}</span><small>${esc(item.id)}</small></div><div class="data-meta"><b>${esc(item.chunks)} CHUNKS</b><span>${esc(item.updatedAt)}</span></div></div>`).join("") : '<div class="empty-state">没有符合筛选条件的文档</div>';
+  $("knowledge-page-list").innerHTML = visible.length ? visible.map((item) => `<div class="data-row clickable" data-knowledge-id="${esc(item.id)}"><div class="data-icon blue">▣</div><div class="data-copy"><strong>${esc(item.title)}</strong><span>${(item.tags || []).map((tag) => `<i class="tag">${esc(tag)}</i>`).join("") || t("无标签")}</span><small>${esc(item.id)}</small></div><div class="data-meta"><b>${esc(item.chunks)} CHUNKS</b><span>${esc(item.updatedAt)}</span></div></div>`).join("") : `<div class="empty-state">${t("没有符合筛选条件的文档")}</div>`;
 }
 
 function render(data) {
@@ -960,51 +962,57 @@ function render(data) {
   const online = system.status === "online";
 
   const greeting = system.greeting || {};
-  const rawGreeting = String(greeting.text || "").trim() || `你好，${system.user || "本地用户"}`;
+  const userDisplay = system.user === t("本地用户") ? t("本地用户") : (system.user || t("本地用户"));
+  let rawGreeting = String(greeting.text || "").trim();
+  if (!rawGreeting || greeting.source === "fallback") {
+    const periodMap = { morning: t("上午好"), noon: t("中午好"), afternoon: t("下午好"), evening: t("晚上好"), night: t("夜深了") };
+    const pKey = periodMap[greeting.period];
+    rawGreeting = pKey ? t(`${pKey}，{0}。`, userDisplay) : t(`你好，{0}`, userDisplay);
+  }
   // 服务端已限长（greeting.py MAX_TEXT_CHARS），这里再挡一层异常超长文本
   const greetingText = rawGreeting.length > 80 ? `${rawGreeting.slice(0, 80).trimEnd()}…` : rawGreeting;
   if ($("hero-greeting")) {
     $("hero-greeting").textContent = greetingText;
-    $("hero-greeting").title = greeting.source === "conductor" ? "由 conductor 在 checkin 维护时生成" : "时段兜底文案（等待 conductor 生成）";
+    $("hero-greeting").title = greeting.source === "conductor" ? t("由 conductor 在 checkin 维护时生成") : t("时段兜底文案（等待 conductor 生成）");
     fitHeroGreeting();
   }
   $("top-status").textContent = statusLabel(system.status);
   $("hero-status").textContent = `CORE ${statusLabel(system.status)}`;
-  $("hero-model").textContent = `${system.model || "未配置模型"} · ${system.vector ? "VECTOR ON" : "KEYWORD MODE"}`;
+  $("hero-model").textContent = `${system.model || t("未配置模型")} · ${system.vector ? "VECTOR ON" : "KEYWORD MODE"}`;
   $("conductor-node").textContent = online ? "ONLINE" : "STANDBY";
   document.querySelector(".node-core").classList.toggle("online", online);
   $("running-workers").textContent = metrics.runningWorkers ?? 0;
-  $("worker-total").textContent = `${metrics.workers ?? 0} 个已登记`;
+  $("worker-total").textContent = t("{0} 个已登记", metrics.workers ?? 0);
   $("memory-count").textContent = metrics.memoryProfiles ?? 0;
-  $("memory-backups").textContent = `${metrics.memoryBackups ?? 0} 个历史版本`;
+  $("memory-backups").textContent = t("{0} 个历史版本", metrics.memoryBackups ?? 0);
   $("knowledge-count").textContent = knowledge.documents ?? metrics.knowledgeDocuments ?? 0;
-  $("chunk-count").textContent = `${knowledge.chunks ?? metrics.knowledgeChunks ?? 0} 个内容分块`;
+  $("chunk-count").textContent = t("{0} 个内容分块", knowledge.chunks ?? metrics.knowledgeChunks ?? 0);
   $("event-count").textContent = metrics.pendingEvents ?? 0;
   $("worker-node").textContent = `${metrics.runningWorkers ?? 0} ACTIVE`;
   document.querySelector(".node-worker").classList.toggle("busy", (metrics.runningWorkers ?? 0) > 0);
   $("memory-node").textContent = `${metrics.memoryProfiles ?? 0} PROFILES`;
   $("kb-node").textContent = `${knowledge.documents ?? 0} DOCS`;
   $("context-model").textContent = system.model || "--";
-  $("context-vector").textContent = system.vector ? "已开启" : "未开启";
+  $("context-vector").textContent = system.vector ? t("已开启") : t("未开启");
   $("context-memory").textContent = memory.root || "--";
   $("context-kb").textContent = knowledge.root || "--";
-  $("last-updated").textContent = new Date((data.updatedAt || Date.now()/1000)*1000).toLocaleTimeString("zh-CN", { hour12: false });
+  $("last-updated").textContent = window.g4wI18n ? window.g4wI18n.formatTime((data.updatedAt || Date.now()/1000)*1000) : new Date((data.updatedAt || Date.now()/1000)*1000).toLocaleTimeString("zh-CN", { hour12: false });
   const nextCheckin = Number(data.nextCheckinAt) || 0;
   const nextCheckinEl = $("next-checkin-time");
   if (nextCheckinEl) {
     nextCheckinEl.textContent = nextCheckin > 0
-      ? new Date(nextCheckin * 1000).toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" })
-      : "未安排";
+      ? (window.g4wI18n ? window.g4wI18n.formatTime(nextCheckin * 1000, { hour: "2-digit", minute: "2-digit" }) : new Date(nextCheckin * 1000).toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" }))
+      : t("未安排");
   }
   $("footer-year").textContent = new Date().getFullYear();
   $("sidebar-status").textContent = "DASHBOARD ONLINE";
 
-  $("worker-list").innerHTML = workers.length ? workers.slice(0,8).map((worker) => workerRow(worker, true)).join("") : '<div class="empty-state">当前没有 Worker 记录</div>';
+  $("worker-list").innerHTML = workers.length ? workers.slice(0,8).map((worker) => workerRow(worker, true)).join("") : `<div class="empty-state">${t("当前没有 Worker 记录")}</div>`;
   $("workers-page-total").textContent = metrics.workers ?? workers.length;
   $("workers-page-running").textContent = metrics.runningWorkers ?? 0;
   $("workers-page-visible").textContent = workers.length;
   $("workers-page-badge").textContent = `${metrics.workers ?? workers.length} REGISTERED`;
-  $("worker-page-list").innerHTML = workers.length ? workers.map((worker) => workerRow(worker)).join("") : '<div class="empty-state">暂无 Worker 数据</div>';
+  $("worker-page-list").innerHTML = workers.length ? workers.map((worker) => workerRow(worker)).join("") : `<div class="empty-state">${t("暂无 Worker 数据")}</div>`;
   $("worker-page-list").querySelectorAll("[data-worker-output]").forEach((btn) => {
     btn.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -1012,7 +1020,7 @@ function render(data) {
     });
   });
 
-  $("event-list").innerHTML = events.length ? compactEventRows(events.slice(0,8)) : '<div class="empty-state">还没有活动事件</div>';
+  $("event-list").innerHTML = events.length ? compactEventRows(events.slice(0,8)) : `<div class="empty-state">${t("还没有活动事件")}</div>`;
   renderSystemEvents(events);
 
   renderMemoryPage(memory.items || []);
@@ -1075,12 +1083,12 @@ async function refresh() {
   }
 
   function markRefreshed(label) {
-    const now = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    const now = window.g4wI18n ? window.g4wI18n.formatTime(new Date()) : new Date().toLocaleTimeString("zh-CN", { hour12: false });
     const stamp = $("refresh-stamp");
     const last = $("last-updated");
     if (stamp) stamp.textContent = now;
     if (last) last.textContent = now;
-    showToast(`${label}已刷新 · ${now}`);
+    showToast(t("{0}已刷新 · {1}", t(label), now));
     const view = document.querySelector("[data-page-view].active");
     if (view) {
       view.classList.remove("just-refreshed");
@@ -1151,12 +1159,12 @@ async function refresh() {
     try {
       await refresh();
       const stamp = $("last-updated");
-      if (stamp) stamp.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
-        markRefreshed(pageTitles[currentPage()] || "当前页");
+      if (stamp) stamp.textContent = window.g4wI18n ? window.g4wI18n.formatTime(new Date()) : new Date().toLocaleTimeString("zh-CN", { hour12: false });
+        markRefreshed(t(pageTitles[currentPage()]) || t("当前页"));
       await refreshActivePage();
     } catch (error) {
       console.warn("G4W dashboard manual refresh failed", error);
-      showToast(error.message || "刷新失败", true);
+      showToast(error.message || t("刷新失败"), true);
     } finally {
       if (button) {
         if (overlay) overlay.hidden = true;
@@ -1170,7 +1178,7 @@ async function refresh() {
     const button = $("refresh-button");
     const overlay = $("refresh-overlay");
     const page = currentPage();
-    const label = pageTitles[page] || "当前页";
+    const label = t(pageTitles[page]) || t("当前页");
     if (button) {
       button.classList.add("is-refreshing");
       button.disabled = true;
@@ -1184,7 +1192,7 @@ async function refresh() {
     } catch (error) {
       if (!dashboardData) render(fallback);
       console.warn("G4W dashboard manual refresh failed", error);
-      showToast(error.message || "刷新失败", true);
+      showToast(error.message || t("刷新失败"), true);
     } finally {
       if (overlay) overlay.hidden = true;
       if (button) {
@@ -1195,8 +1203,8 @@ async function refresh() {
   }
 
 const timelineCategories = {
-  life: "生活", work: "工作", study: "学习", exercise: "运动", entertainment: "娱乐",
-  health: "健康", social: "社交", care: "照料", travel: "出行", rest: "休息"
+  life: t("生活"), work: t("工作"), study: t("学习"), exercise: t("运动"), entertainment: t("娱乐"),
+  health: t("健康"), social: t("社交"), care: t("照料"), travel: t("出行"), rest: t("休息")
 };
 
 function dateObject(value) { return new Date(`${value}T12:00:00`); }
@@ -1207,8 +1215,8 @@ function isoDate(value) {
   return `${year}-${month}-${day}`;
 }
 function addDays(value, amount) { const date = dateObject(value); date.setDate(date.getDate() + amount); return isoDate(date); }
-function shortDate(value) { return dateObject(value).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" }); }
-function weekday(value) { return dateObject(value).toLocaleDateString("zh-CN", { weekday: "short" }); }
+function shortDate(value) { return window.g4wI18n ? window.g4wI18n.formatDate(dateObject(value), { month: "numeric", day: "numeric" }) : dateObject(value).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" }); }
+function weekday(value) { return window.g4wI18n ? window.g4wI18n.formatDate(dateObject(value), { weekday: "short" }) : dateObject(value).toLocaleDateString("zh-CN", { weekday: "short" }); }
 function timelineColor(category) { return `var(--cat-${timelineCategories[category] ? category : "life"})`; }
 function eventClock(value) { return String(value || "").slice(11, 16) || "--:--"; }
 function clockMinutes(value) {
@@ -1246,14 +1254,14 @@ function hourLabels() {
   return `<div class="hour-labels">${Array.from({ length: 24 }, (_, hour) => `<span class="hour-label" style="top:${hour * timelineSlotHeight}px">${String(hour).padStart(2, "0")}:00</span>`).join("")}</div>`;
 }
 function timelineTooltipText(event) {
-  const category = timelineCategories[event.categoryId] || event.categoryId || "其他";
-  return `${event.date}|${eventClock(event.startAt)}–${eventClock(event.endAt)} · ${formatDuration(eventMinutes(event))}|${category}|${event.note || "没有附加说明"}`;
+  const category = t(timelineCategories[event.categoryId] || event.categoryId || t("其他"));
+  return `${event.date}|${eventClock(event.startAt)}–${eventClock(event.endAt)} · ${formatDuration(eventMinutes(event))}|${category}|${event.note || t("没有附加说明")}`;
 }
 function timelineBlock(event) {
   const dayHeight = timelineSlotHeight * 24;
   const top = clockMinutes(event.startAt) / 60 * timelineSlotHeight;
   const height = Math.max(24, Math.min(dayHeight - top, eventMinutes(event) / 60 * timelineSlotHeight));
-  return `<button class="timeline-event-block" data-timeline-tooltip="${esc(timelineTooltipText(event))}" data-timeline-event="${esc(event.id)}" data-timeline-date="${esc(event.date)}" style="top:${top}px;height:${height}px;--event-color:${timelineColor(event.categoryId)}"><strong>${esc(event.title)}<span class="block-duration"> | ${formatDuration(eventMinutes(event))}</span></strong><small>${eventClock(event.startAt)}–${eventClock(event.endAt)} · ${esc(timelineCategories[event.categoryId] || event.categoryId || "其他")}</small></button>`;
+  return `<button class="timeline-event-block" data-timeline-tooltip="${esc(timelineTooltipText(event))}" data-timeline-event="${esc(event.id)}" data-timeline-date="${esc(event.date)}" style="top:${top}px;height:${height}px;--event-color:${timelineColor(event.categoryId)}"><strong>${esc(event.title)}<span class="block-duration"> | ${formatDuration(eventMinutes(event))}</span></strong><small>${eventClock(event.startAt)}–${eventClock(event.endAt)} · ${esc(t(timelineCategories[event.categoryId] || event.categoryId || t("其他")))}</small></button>`;
 }
 function dayBoard(dates) {
   const date = dates[0];
@@ -1273,7 +1281,7 @@ function monthBoard(dates) {
       const width = Math.max(.5, Math.min(100 - left, eventMinutes(event) / 14.4));
       return `<button class="month-event" data-timeline-tooltip="${esc(timelineTooltipText(event))}" data-timeline-event="${esc(event.id)}" data-timeline-date="${esc(date)}" style="left:${left}%;width:${width}%;--event-color:${timelineColor(event.categoryId)}"><span>${esc(eventClock(event.startAt))} ${esc(event.title)}</span></button>`;
     }).join("");
-    return `<div class="month-row"><div class="month-day">${shortDate(date)}<small>${weekday(date)} · ${events.length} 条</small></div><div class="month-track">${blocks}</div></div>`;
+    return `<div class="month-row"><div class="month-day">${shortDate(date)}<small>${t("{0} · {1} 条", weekday(date), events.length)}</small></div><div class="month-track">${blocks}</div></div>`;
   }).join("");
   return `<div class="timeline-scroll"><div class="month-board" style="min-width:${Math.round(820 * timelineMonthZoom)}px">${rows}</div></div>`;
 }
@@ -1293,16 +1301,16 @@ function renderTimeline() {
   $("timeline-duration").textContent = formatDuration(minutes);
   $("timeline-category-count").textContent = categories.length;
   $("timeline-updated").textContent = timelineData.metrics?.updatedAt || "--";
-  $("timeline-focus-title").textContent = timelineMode === "day" ? `${shortDate(timelineDate)} 怎么过` : timelineMode === "week" ? "这一周怎么过" : `${timelineDate.slice(0, 7)} 月度节奏`;
-  $("timeline-focus-subtitle").textContent = timelineMode === "day" ? "时间竖着走，短记录也能看清。" : timelineMode === "week" ? "横向比较每天的活动密度与空白。" : "按天扫描整月的时间块分布。";
+  $("timeline-focus-title").textContent = timelineMode === "day" ? t("{0} 怎么过", shortDate(timelineDate)) : timelineMode === "week" ? t("这一周怎么过") : t("{0} 月度节奏", timelineDate.slice(0, 7));
+  $("timeline-focus-subtitle").textContent = timelineMode === "day" ? t("时间竖着走，短记录也能看清。") : timelineMode === "week" ? t("横向比较每天的活动密度与空白。") : t("按天扫描整月的时间块分布。");
   $("timeline-zoom-label").textContent = timelineMode === "month" ? `${Math.round(timelineMonthZoom * 100)}%` : `${Math.round(timelineSlotHeight / 30 * 100)}%`;
-  $("timeline-board").innerHTML = allEvents.length ? (timelineMode === "day" ? dayBoard(dates) : timelineMode === "week" ? weekBoard(dates) : monthBoard(dates)) : '<div class="empty-state">当前范围没有时间轴事件</div>';
-  $("timeline-legend").innerHTML = categories.map(([category]) => `<span class="legend-chip"><i style="background:${timelineColor(category)}"></i>${esc(timelineCategories[category] || category)}</span>`).join("");
+  $("timeline-board").innerHTML = allEvents.length ? (timelineMode === "day" ? dayBoard(dates) : timelineMode === "week" ? weekBoard(dates) : monthBoard(dates)) : `<div class="empty-state">${t("当前范围没有时间轴事件")}</div>`;
+  $("timeline-legend").innerHTML = categories.map(([category]) => `<span class="legend-chip"><i style="background:${timelineColor(category)}"></i>${esc(t(timelineCategories[category] || category))}</span>`).join("");
   let cursor = 0;
   const allMinutes = allEvents.reduce((total, event) => total + eventMinutes(event), 0);
   $("timeline-donut").innerHTML = renderDonut(categories, allMinutes);
   $("timeline-donut").dataset.total = formatDuration(allMinutes);
-  const filterLabel = timelineCategoryFilter ? timelineCategories[timelineCategoryFilter] || timelineCategoryFilter : "全部";
+  const filterLabel = timelineCategoryFilter ? t(timelineCategories[timelineCategoryFilter] || timelineCategoryFilter) : t("全部");
   const pillColor = timelineCategoryFilter ? timelineColor(timelineCategoryFilter) : "";
   ["timeline-filter-tag", "timeline-trend-tag", "timeline-events-tag"].forEach((id) => {
     const tag = $(id);
@@ -1314,8 +1322,8 @@ function renderTimeline() {
   $("timeline-distribution").innerHTML = categories.length ? categories.map(([category, value]) => {
     const active = timelineCategoryFilter === category;
     const dimmed = timelineCategoryFilter && !active;
-    return `<button class="distribution-row ${active ? "active" : ""} ${dimmed ? "dimmed" : ""}" data-timeline-filter="${esc(category)}"><i style="background:${timelineColor(category)}"></i><span>${esc(timelineCategories[category] || category)}</span><small>${formatDuration(value)} · ${Math.round(value / (allEvents.reduce((total, event) => total + eventMinutes(event), 0) || 1) * 100)}%</small></button>`;
-  }).join("") : '<div class="empty-state">暂无分类数据</div>';
+    return `<button class="distribution-row ${active ? "active" : ""} ${dimmed ? "dimmed" : ""}" data-timeline-filter="${esc(category)}"><i style="background:${timelineColor(category)}"></i><span>${esc(t(timelineCategories[category] || category))}</span><small>${formatDuration(value)} · ${Math.round(value / (allEvents.reduce((total, event) => total + eventMinutes(event), 0) || 1) * 100)}%</small></button>`;
+  }).join("") : `<div class="empty-state">${t("暂无分类数据")}</div>`;
   const dayTotals = dates.map((date) => filterTimelineEvents(eventsForDates([date])).reduce((total, event) => total + eventMinutes(event), 0));
   const peak = Math.max(1, ...dayTotals);
   const barColor = timelineCategoryFilter ? timelineColor(timelineCategoryFilter) : "";
@@ -1323,7 +1331,7 @@ function renderTimeline() {
   const gridFmt = (hours) => hours === 0 ? "0" : hours < 1 ? `${Math.round(hours * 60)}m` : hours % 1 === 0 ? `${hours}h` : `${hours.toFixed(1)}h`;
   const gridLines = [0, 1, 2, 3, 4].map((i) => `<div class="trend-grid-line" style="bottom:${i * 25}%"><span>${gridFmt(gridMax * i / 4)}</span></div>`).join("");
   $("timeline-trend").innerHTML = `<div class="trend-grid">${gridLines}</div>` + dates.map((date, index) => `<div class="trend-bar" style="height:${Math.max(2, dayTotals[index] / peak * 100)}%;${barColor ? `--bar-color:${barColor};` : ""}" data-value="${formatDuration(dayTotals[index])}"><span>${timelineMode === "month" ? date.slice(8) : shortDate(date)}</span></div>`).join("");
-  $("timeline-event-list").innerHTML = events.length ? events.map((event) => `<button class="timeline-event-card" data-timeline-event="${esc(event.id)}" data-timeline-date="${esc(event.date)}" style="--event-color:${timelineColor(event.categoryId)};--event-mix:${timelineMix(event)}%"><time>${esc(event.date)} · ${eventClock(event.startAt)}–${eventClock(event.endAt)}</time><strong>${esc(event.title)}<span class="block-duration"> | ${formatDuration(eventMinutes(event))}</span></strong><span>${esc(event.note || `${timelineCategories[event.categoryId] || event.categoryId || "其他"} · ${formatDuration(eventMinutes(event))}`)}</span></button>`).join("") : '<div class="empty-state">当前范围暂无事件</div>';
+  $("timeline-event-list").innerHTML = events.length ? events.map((event) => `<button class="timeline-event-card" data-timeline-event="${esc(event.id)}" data-timeline-date="${esc(event.date)}" style="--event-color:${timelineColor(event.categoryId)};--event-mix:${timelineMix(event)}%"><time>${esc(event.date)} · ${eventClock(event.startAt)}–${eventClock(event.endAt)}</time><strong>${esc(event.title)}<span class="block-duration"> | ${formatDuration(eventMinutes(event))}</span></strong><span>${esc(event.note || `${t(timelineCategories[event.categoryId] || event.categoryId || t("其他"))} · ${formatDuration(eventMinutes(event))}`)}</span></button>`).join("") : `<div class="empty-state">${t("当前范围暂无事件")}</div>`;
 }
 
 function changeTimelineZoom(direction, anchorEvent = null) {
@@ -1353,7 +1361,7 @@ function showTimelineTooltip(target, clientX, clientY) {
   const tooltip = $("timeline-tooltip");
   const eventColor = getComputedStyle(target).getPropertyValue("--event-color").trim();
   if (eventColor) tooltip.style.setProperty("--tip-color", eventColor);
-  tooltip.innerHTML = `<strong>${esc(target.querySelector("strong,span")?.textContent || "时间轴事件")}</strong><span>${esc(parts.slice(0, 3).filter(Boolean).join(" · "))}</span><span>${esc(parts.slice(3).join("|") || "没有附加说明")}</span>`;
+  tooltip.innerHTML = `<strong>${esc(target.querySelector("strong,span")?.textContent || t("时间轴事件"))}</strong><span>${esc(parts.slice(0, 3).filter(Boolean).join(" · "))}</span><span>${esc(parts.slice(3).join("|") || t("没有附加说明"))}</span>`;
   tooltip.hidden = false;
   const width = tooltip.offsetWidth;
   const height = tooltip.offsetHeight;
@@ -1365,7 +1373,7 @@ function hideTimelineTooltip() { $("timeline-tooltip").hidden = true; }
 
 async function loadTimeline() {
   lastTimelineAttempt = Date.now();
-  $("timeline-board").innerHTML = '<div class="empty-state">正在读取时间轴…</div>';
+  $("timeline-board").innerHTML = `<div class="empty-state">${t("正在读取时间轴…")}</div>`;
   try {
     timelineData = await fetchJson("/api/timeline");
     timelineDate = timelineDate || timelineData.latestDate || timelineData.dates.at(-1) || "";
@@ -1379,8 +1387,8 @@ function openTimelineEvent(eventId, date) {
   const event = ((((timelineData || {}).facts || {})[date] || {}).events || []).find((item) => String(item.id) === String(eventId));
   if (!event) return;
   const tags = (event.tags || []).map((tag) => `<span>${esc(tag)}</span>`).join("");
-  const html = `<div class="detail-pills"><span>${esc(date)}</span><span>${eventClock(event.startAt)}–${eventClock(event.endAt)}</span><span>${formatDuration(eventMinutes(event))}</span><span>${esc(timelineCategories[event.categoryId] || event.categoryId || "其他")}</span>${tags}</div><section class="drawer-section"><h3>记录</h3><p>${esc(event.note || "这条时间块没有附加说明。")}</p></section><section class="drawer-section"><h3>分类</h3><p>${esc(event.subcategoryId || event.categoryId || "未分类")}</p></section>`;
-  openDrawer(event.title || "时间轴事件", "TIMELINE EVENT", html, timelineColor(event.categoryId));
+  const html = `<div class="detail-pills"><span>${esc(date)}</span><span>${eventClock(event.startAt)}–${eventClock(event.endAt)}</span><span>${formatDuration(eventMinutes(event))}</span><span>${esc(t(timelineCategories[event.categoryId] || event.categoryId || t("其他")))}</span>${tags}</div><section class="drawer-section"><h3>${t("记录")}</h3><p>${esc(event.note || t("这条时间块没有附加说明。"))}</p></section><section class="drawer-section"><h3>${t("分类")}</h3><p>${esc(t(event.subcategoryId || event.categoryId || t("未分类")))}</p></section>`;
+  openDrawer(event.title || t("时间轴事件"), "TIMELINE EVENT", html, timelineColor(event.categoryId));
 }
 
 function renderDiaryIndex() {
@@ -1389,7 +1397,7 @@ function renderDiaryIndex() {
   const visible = entries.filter((entry) => (!diaryMonth || entry.date.startsWith(diaryMonth)) && (!query || [entry.date, entry.title, entry.excerpt].join(" ").toLowerCase().includes(query)));
   const monthCount = entries.filter((entry) => !diaryMonth || entry.date.startsWith(diaryMonth)).length;
   $("diary-page-badge").textContent = `${monthCount} / ${entries.length} DAYS`;
-  $("diary-date-list").innerHTML = visible.length ? visible.map((entry) => `<button class="diary-date ${entry.date === currentDiaryDate ? "active" : ""}" data-diary-date="${entry.date}"><time>${entry.date}</time><strong>${esc(entry.title || "当日日记")}</strong><span>${esc(entry.excerpt || "")}</span></button>`).join("") : '<div class="empty-state">没有符合搜索条件的日记</div>';
+  $("diary-date-list").innerHTML = visible.length ? visible.map((entry) => `<button class="diary-date ${entry.date === currentDiaryDate ? "active" : ""}" data-diary-date="${entry.date}"><time>${entry.date}</time><strong>${esc(entry.title || t("当日日记"))}</strong><span>${esc(entry.excerpt || "")}</span></button>`).join("") : `<div class="empty-state">${t("没有符合搜索条件的日记")}</div>`;
 }
 
 function renderDiaryMonths() {
@@ -1399,7 +1407,7 @@ function renderDiaryMonths() {
   diaryMonth = diaryMonth || months[0] || "";
   $("diary-month").innerHTML = months.map((month) => {
     const [year, number] = month.split("-");
-    return `<option value="${month}">${year}年${Number(number)}月（${counts[month]}篇）</option>`;
+    return `<option value="${month}">${t("{0}年{1}月（{2}篇）", year, Number(number), counts[month])}</option>`;
   }).join("");
   $("diary-month").value = diaryMonth;
 }
@@ -1420,18 +1428,18 @@ async function openDiary(date) {
   diaryMonth = date.slice(0, 7);
   if ($("diary-month")) $("diary-month").value = diaryMonth;
   renderDiaryIndex();
-  $("diary-title").textContent = "正在读取…";
-  $("diary-content").innerHTML = '<div class="empty-state">加载中…</div>';
+  $("diary-title").textContent = t("正在读取…");
+  $("diary-content").innerHTML = `<div class="empty-state">${t("加载中…")}</div>`;
   try {
     const data = await fetchJson(`/api/diary?date=${encodeURIComponent(date)}`);
     const entry = (diaryData?.entries || []).find((item) => item.date === date);
-    $("diary-title").textContent = entry?.title || `${date} 日记`;
-    $("diary-meta").innerHTML = [`日期 ${date}`, `${data.sections || 0} 个章节`, data.updatedAt || "--", data.source || ""].filter(Boolean).map((value) => `<span>${esc(value)}</span>`).join("");
-    $("diary-content").innerHTML = renderMarkdown(data.content || "这一天没有写下内容。");
+    $("diary-title").textContent = entry?.title || t("{0} 日记", date);
+    $("diary-meta").innerHTML = [t("日期 {0}", date), t("{0} 个章节", data.sections || 0), data.updatedAt || "--", data.source || ""].filter(Boolean).map((value) => `<span>${esc(value)}</span>`).join("");
+    $("diary-content").innerHTML = renderMarkdown(data.content || t("这一天没有写下内容。"));
     const index = (diaryData?.entries || []).findIndex((item) => item.date === date);
     $("diary-prev").disabled = index >= (diaryData?.entries || []).length - 1;
     $("diary-next").disabled = index <= 0;
-  } catch (error) { $("diary-title").textContent = "日记读取失败"; $("diary-content").innerHTML = `<div class="empty-state">${esc(error.message)}</div>`; }
+  } catch (error) { $("diary-title").textContent = t("日记读取失败"); $("diary-content").innerHTML = `<div class="empty-state">${esc(error.message)}</div>`; }
 }
 
 function moveDiary(direction) {
@@ -1522,8 +1530,8 @@ function renderSopIndex() {
   const list = $("sop-file-list");
   if (!list) return;
   if (!files.length) {
-    const scopeName = (sopData && sopData.scope === "sop-user") ? "个人 SOP（sop-user）" : "共享 SOP（sop）";
-    list.innerHTML = `<div class="empty-state">${scopeName} 目录里还没有可显示的 SOP 文件</div>`;
+    const scopeName = (sopData && sopData.scope === "sop-user") ? t("个人 SOP（sop-user）") : t("共享 SOP（sop）");
+    list.innerHTML = `<div class="empty-state">${t("{0} 目录里还没有可显示的 SOP 文件", scopeName)}</div>`;
     return;
   }
   const query = ($("sop-search")?.value || "").trim().toLowerCase();
@@ -1554,8 +1562,8 @@ async function loadSopIndex(force = false) {
       const stats = Object.fromEntries(sopData.scopes.map((item) => [String(item.id), item]));
       const scopes = ["sop-user", "sop"].map((id) => stats[id] || { id: id, exists: false, count: 0 });
       scopeSelect.innerHTML = scopes.map((item) => {
-        const label = item.id === "sop-user" ? `个人 SOP（sop-user）` : `共享 SOP（sop）`;
-        const count = item.exists ? ` · ${item.count}` : " · 不存在";
+        const label = item.id === "sop-user" ? t("个人 SOP（sop-user）") : t("共享 SOP（sop）");
+        const count = item.exists ? ` · ${item.count}` : t(" · 不存在");
         return `<option value="${esc(item.id)}">${esc(label + count)}</option>`;
       }).join("");
       // v3.0.3：默认落「共享 SOP」；只有个人 SOP 确实存在且有文件时才默认个人 SOP
@@ -1585,8 +1593,8 @@ async function loadSopIndex(force = false) {
 async function openSop(relPath) {
   currentSopPath = relPath;
   renderSopIndex();
-  if ($("sop-title")) $("sop-title").textContent = "正在读取…";
-  if ($("sop-content")) $("sop-content").innerHTML = '<div class="empty-state">加载中…</div>';
+  if ($("sop-title")) $("sop-title").textContent = t("正在读取…");
+  if ($("sop-content")) $("sop-content").innerHTML = `<div class="empty-state">${t("加载中…")}</div>`;
   try {
     const data = await fetchJson(`/api/sop?scope=${encodeURIComponent(sopScope)}&path=${encodeURIComponent(relPath)}`);
     const entry = ((sopData || {}).files || []).find((item) => item.path === relPath);
@@ -1595,7 +1603,7 @@ async function openSop(relPath) {
       $("sop-meta").innerHTML = [
         data.ext ? String(data.ext).toUpperCase() : "",
         data.path || relPath,
-        data.sections ? `${data.sections} 个章节` : "",
+        data.sections ? t("{0} 个章节", data.sections) : "",
         data.bytes != null ? formatBytes(data.bytes) : "",
         data.updatedAt || "",
         data.source || "",
@@ -1603,14 +1611,14 @@ async function openSop(relPath) {
     }
     if ($("sop-content")) {
       // md 直接渲染；json/txt/py 服务端已包代码围栏
-      $("sop-content").innerHTML = renderMarkdown(data.content || "（空文件）");
+      $("sop-content").innerHTML = renderMarkdown(data.content || t("（空文件）"));
     }
     const files = visibleSopFiles();
     const index = files.findIndex((item) => item.path === relPath);
     if ($("sop-prev")) $("sop-prev").disabled = index <= 0;
     if ($("sop-next")) $("sop-next").disabled = index < 0 || index >= files.length - 1;
   } catch (error) {
-    if ($("sop-title")) $("sop-title").textContent = "SOP 读取失败";
+    if ($("sop-title")) $("sop-title").textContent = t("SOP 读取失败");
     if ($("sop-content")) $("sop-content").innerHTML = `<div class="empty-state">${esc(error.message)}</div>`;
   }
 }
@@ -1623,18 +1631,18 @@ function moveSop(direction) {
 }
 
 async function openKnowledge(documentId) {
-  openDrawer("正在读取文档", "KNOWLEDGE DETAIL", '<div class="empty-state">加载正文与分块…</div>');
+  openDrawer(t("正在读取文档"), "KNOWLEDGE DETAIL", `<div class="empty-state">${t("加载正文与分块…")}</div>`);
   try {
     const data = await fetchJson(`/api/knowledge?id=${encodeURIComponent(documentId)}`);
-    const chunks = (data.chunks || []).map((chunk, index) => `<article class="chunk-card"><header><span>#${index + 1}${chunk.section ? ` · ${esc(chunk.section)}` : ""}</span><span>${chunk.page != null ? `PAGE ${esc(chunk.page)}` : esc(chunk.id)}</span></header><p>${esc(chunk.text)}${chunk.truncated ? "\n…" : ""}</p></article>`).join("") || '<div class="empty-state">没有找到文档分块</div>';
-    const sourceRows = [["文档 ID", data.id], ["来源文件", data.sourcePath], ["存储文件", data.storedPath], ["创建时间", data.createdAt], ["更新时间", data.updatedAt], ["文件大小", formatBytes(data.bytes)], ["分块", `${data.loadedChunks} / ${data.chunkCount}`]].map(([label, value]) => `<div class="source-row"><span>${esc(label)}</span><code>${esc(value || "--")}</code></div>`).join("");
+    const chunks = (data.chunks || []).map((chunk, index) => `<article class="chunk-card"><header><span>#${index + 1}${chunk.section ? ` · ${esc(chunk.section)}` : ""}</span><span>${chunk.page != null ? `PAGE ${esc(chunk.page)}` : esc(chunk.id)}</span></header><p>${esc(chunk.text)}${chunk.truncated ? "\n…" : ""}</p></article>`).join("") || `<div class="empty-state">${t("没有找到文档分块")}</div>`;
+    const sourceRows = [[t("文档 ID"), data.id], [t("来源文件"), data.sourcePath], [t("存储文件"), data.storedPath], [t("创建时间"), data.createdAt], [t("更新时间"), data.updatedAt], [t("文件大小"), formatBytes(data.bytes)], [t("分块"), `${data.loadedChunks} / ${data.chunkCount}`]].map(([label, value]) => `<div class="source-row"><span>${esc(label)}</span><code>${esc(value || "--")}</code></div>`).join("");
     const warning = data.extractionWarning ? `<div class="knowledge-warning">${esc(data.extractionWarning)}</div>` : "";
     const isPdf = data.format === "pdf";
     const pdfUrl = `/api/knowledge/pdf?id=${encodeURIComponent(data.id)}`;
-    const contentTab = isPdf ? `<div class="pdf-toolbar"><a class="secondary-button" href="${pdfUrl}" target="_blank" rel="noopener">在新窗口打开 PDF</a></div><iframe class="pdf-viewer" src="${pdfUrl}" title="PDF 预览"></iframe>` : `${warning}<div class="markdown">${renderMarkdown(data.content || "文档正文为空")}</div>${data.contentTruncated ? '<div class="empty-state">正文较长，当前只展示前 1.2 MB</div>' : ""}`;
-    const html = `<div class="detail-pills">${(data.tags || []).map((tag) => `<span>${esc(tag)}</span>`).join("")}<span>${data.chunkCount || 0} CHUNKS</span><span>${formatBytes(data.bytes)}</span><span>${esc(String(data.contentSource || "stored").toUpperCase())}</span></div><div class="knowledge-tabs"><button class="active" data-knowledge-tab="content">${isPdf ? "PDF 原文" : "提取正文"}</button><button data-knowledge-tab="chunks">分块</button><button data-knowledge-tab="info">原文件与信息</button></div><section class="knowledge-panel" data-knowledge-panel="content">${contentTab}</section><section class="knowledge-panel" data-knowledge-panel="chunks" hidden>${chunks}${data.loadedChunks < data.chunkCount ? `<div class="empty-state">为保证页面流畅，仅展示前 ${data.loadedChunks} 个分块</div>` : ""}</section><section class="knowledge-panel" data-knowledge-panel="info" hidden><div class="source-table">${sourceRows}</div></section>`;
+    const contentTab = isPdf ? `<div class="pdf-toolbar"><a class="secondary-button" href="${pdfUrl}" target="_blank" rel="noopener">${t("在新窗口打开 PDF")}</a></div><iframe class="pdf-viewer" src="${pdfUrl}" title="${t("PDF 预览")}"></iframe>` : `${warning}<div class="markdown">${renderMarkdown(data.content || t("文档正文为空"))}</div>${data.contentTruncated ? `<div class="empty-state">${t("正文较长，当前只展示前 1.2 MB")}</div>` : ""}`;
+    const html = `<div class="detail-pills">${(data.tags || []).map((tag) => `<span>${esc(tag)}</span>`).join("")}<span>${data.chunkCount || 0} CHUNKS</span><span>${formatBytes(data.bytes)}</span><span>${esc(String(data.contentSource || "stored").toUpperCase())}</span></div><div class="knowledge-tabs"><button class="active" data-knowledge-tab="content">${isPdf ? t("PDF 原文") : t("提取正文")}</button><button data-knowledge-tab="chunks">${t("分块")}</button><button data-knowledge-tab="info">${t("原文件与信息")}</button></div><section class="knowledge-panel" data-knowledge-panel="content">${contentTab}</section><section class="knowledge-panel" data-knowledge-panel="chunks" hidden>${chunks}${data.loadedChunks < data.chunkCount ? `<div class="empty-state">${t("为保证页面流畅，仅展示前 {0} 个分块", data.loadedChunks)}</div>` : ""}</section><section class="knowledge-panel" data-knowledge-panel="info" hidden><div class="source-table">${sourceRows}</div></section>`;
     openDrawer(data.title || documentId, "KNOWLEDGE DETAIL", html);
-  } catch (error) { openDrawer("知识库读取失败", "ERROR", `<div class="empty-state">${esc(error.message)}</div>`); }
+  } catch (error) { openDrawer(t("知识库读取失败"), "ERROR", `<div class="empty-state">${esc(error.message)}</div>`); }
 }
 
 function connectEvents() {
@@ -1658,33 +1666,33 @@ function openDrawer(title, eyebrow, html, accentVar) {
 function closeDrawer() { $("drawer-layer").hidden = true; document.body.classList.remove("drawer-open"); }
 
 async function openWorker(workerId) {
-  openDrawer("正在读取 Worker", "WORKER DETAIL", '<div class="empty-state">加载中…</div>');
+  openDrawer(t("正在读取 Worker"), "WORKER DETAIL", `<div class="empty-state">${t("加载中…")}</div>`);
   try {
     const data = await fetchJson(`/api/worker?id=${encodeURIComponent(workerId)}`);
     const artifacts = (data.runs || []).flatMap((run) => run.artifacts || []);
-    const artifactHtml = artifacts.length ? artifacts.map((item) => `<div class="artifact"><div><strong>${esc(item.name)}</strong><small>${esc(item.path)} · ${formatBytes(item.bytes)}</small></div>${item.exists ? `<a href="/api/file?path=${encodeURIComponent(item.path)}">下载</a>` : '<span class="muted-tag">文件不存在</span>'}</div>`).join("") : '<div class="empty-state">没有登记产物</div>';
-    const runsHtml = (data.runs || []).map((run, index) => `<details class="accordion" ${index === 0 ? "open" : ""}><summary><span>${esc(run.name)} · ${statusLabel(run.status)}</span><span>${esc(run.updatedAt)}</span></summary><div class="accordion-body">${run.report ? `<div class="markdown">${renderMarkdown(run.report)}</div>` : ""}<pre class="json-view">${esc(jsonText(run.result || run.progress || {}))}</pre></div></details>`).join("") || '<div class="empty-state">旧 Worker 没有独立运行目录，已使用 registry 内嵌结果。</div>';
-    const html = `<div class="detail-pills"><span>${esc(data.status)}</span><span>${esc(data.capability || "general")}</span><span>${esc(data.model)}</span><span>run ${esc(data.runIndex)}</span><span>${esc(data.updatedAt)}</span></div><section class="drawer-section"><h3>任务</h3><p>${esc(data.task || data.topic)}</p></section><section class="drawer-section"><h3>最后回复</h3><div class="markdown">${renderMarkdown(data.report || data.summary || "暂无最终回复")}</div></section><section class="drawer-section"><h3>产物</h3>${artifactHtml}</section><section class="drawer-section"><h3>运行历史</h3>${runsHtml}</section><details class="accordion"><summary><span>原始结果</span><span>JSON</span></summary><div class="accordion-body"><pre class="json-view">${esc(jsonText(data.result || {}))}</pre></div></details>`;
+    const artifactHtml = artifacts.length ? artifacts.map((item) => `<div class="artifact"><div><strong>${esc(item.name)}</strong><small>${esc(item.path)} · ${formatBytes(item.bytes)}</small></div>${item.exists ? `<a href="/api/file?path=${encodeURIComponent(item.path)}">${t("下载")}</a>` : `<span class="muted-tag">${t("文件不存在")}</span>`}</div>`).join("") : `<div class="empty-state">${t("没有登记产物")}</div>`;
+    const runsHtml = (data.runs || []).map((run, index) => `<details class="accordion" ${index === 0 ? "open" : ""}><summary><span>${esc(run.name)} · ${statusLabel(run.status)}</span><span>${esc(run.updatedAt)}</span></summary><div class="accordion-body">${run.report ? `<div class="markdown">${renderMarkdown(run.report)}</div>` : ""}<pre class="json-view">${esc(jsonText(run.result || run.progress || {}))}</pre></div></details>`).join("") || `<div class="empty-state">${t("旧 Worker 没有独立运行目录，已使用 registry 内嵌结果。")}</div>`;
+    const html = `<div class="detail-pills"><span>${esc(data.status)}</span><span>${esc(data.capability || "general")}</span><span>${esc(data.model)}</span><span>run ${esc(data.runIndex)}</span><span>${esc(data.updatedAt)}</span></div><section class="drawer-section"><h3>${t("任务")}</h3><p>${esc(data.task || data.topic)}</p></section><section class="drawer-section"><h3>${t("最后回复")}</h3><div class="markdown">${renderMarkdown(data.report || data.summary || t("暂无最终回复"))}</div></section><section class="drawer-section"><h3>${t("产物")}</h3>${artifactHtml}</section><section class="drawer-section"><h3>${t("运行历史")}</h3>${runsHtml}</section><details class="accordion"><summary><span>${t("原始结果")}</span><span>JSON</span></summary><div class="accordion-body"><pre class="json-view">${esc(jsonText(data.result || {}))}</pre></div></details>`;
     openDrawer(data.topic, "WORKER DETAIL", html);
-  } catch (error) { openDrawer("Worker 读取失败", "ERROR", `<div class="empty-state">${esc(error.message)}</div>`); }
+  } catch (error) { openDrawer(t("Worker 读取失败"), "ERROR", `<div class="empty-state">${esc(error.message)}</div>`); }
 }
 
 function memoryRecord(item) {
   if (!item || typeof item !== "object") return `<pre class="json-view">${esc(jsonText(item))}</pre>`;
-  const title = item.project || item.fact || item.capability || item.lesson || item.name || item.title || "记忆条目";
+  const title = item.project || item.fact || item.capability || item.lesson || item.name || item.title || t("记忆条目");
   const description = item.description || item.snippet || item.trigger || item.status || "";
-  const meta = [item.category, item.timestamp || item.last_seen || item.learned_at, item.confidence != null ? `置信度 ${item.confidence}` : ""].filter(Boolean).join(" · ");
+  const meta = [item.category, item.timestamp || item.last_seen || item.learned_at, item.confidence != null ? t("置信度 {0}", item.confidence) : ""].filter(Boolean).join(" · ");
   return `<div class="drawer-section"><h3>${esc(title)}</h3>${description ? `<p>${esc(description)}</p>` : ""}${meta ? `<div class="detail-pills"><span>${esc(meta)}</span></div>` : ""}</div>`;
 }
 
 function renderMemoryValue(value, depth = 0) {
   if (Array.isArray(value)) {
     const visible = value.slice(0, 80).map(memoryRecord).join("");
-    return visible + (value.length > 80 ? `<div class="empty-state">另有 ${value.length - 80} 条未展开</div>` : "");
+    return visible + (value.length > 80 ? `<div class="empty-state">${t("另有 {0} 条未展开", value.length - 80)}</div>` : "");
   }
   if (value && typeof value === "object") {
     return Object.entries(value).map(([key, child]) => {
-      const count = Array.isArray(child) ? `${child.length} 条` : child && typeof child === "object" ? `${Object.keys(child).length} 项` : "1 项";
+      const count = Array.isArray(child) ? t("{0} 条", child.length) : child && typeof child === "object" ? t("{0} 项", Object.keys(child).length) : t("1 项");
       const body = depth < 2 ? renderMemoryValue(child, depth + 1) : `<pre class="json-view">${esc(jsonText(child, 30))}</pre>`;
       return `<details class="accordion"><summary><span>${esc(key.replaceAll("_", " "))}</span><span>${count}</span></summary><div class="accordion-body">${body}</div></details>`;
     }).join("");
@@ -1707,7 +1715,7 @@ function expandBackups(button) {
 function openMemorySection(key) {
   const section = currentMemorySections.find((item) => item.key === key);
   if (!section) return;
-  openDrawer(section.label, "MEMORY SECTION", renderMemoryValue(section.items));
+  openDrawer(t(section.label), "MEMORY SECTION", renderMemoryValue(section.items));
 }
 
 function renderMemoryPage(items) {
@@ -1715,11 +1723,11 @@ function renderMemoryPage(items) {
   const select = $("memory-profile-select");
   const saved = localStorage.getItem("g4w-memory-profile");
   const current = items.some((item) => item.id === saved) ? saved : (items[0] ? items[0].id : "");
-  select.innerHTML = items.length ? items.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}${item.identity ? ` · ${esc(item.identity)}` : ""}</option>`).join("") : '<option value="">暂无 L4 画像</option>';
+  select.innerHTML = items.length ? items.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}${item.identity ? ` · ${esc(item.identity)}` : ""}</option>`).join("") : `<option value="">${t("暂无 L4 画像")}</option>`;
   select.disabled = !items.length;
   select.value = current;
   if (current && current !== currentMemoryId) loadMemoryDetail(current);
-  else if (!current) $("memory-page-body").innerHTML = '<div class="empty-state glass-card">暂无 L4 画像 —— 与 G4W 正常对话后，在微信里发一次 <code>/l4compress</code> 深压，这里就会出现账号档案。</div>';
+  else if (!current) $("memory-page-body").innerHTML = `<div class="empty-state glass-card">${t("暂无 L4 画像 —— 与 G4W 正常对话后，在微信里发一次")} <code>/l4compress</code> ${t("深压，这里就会出现账号档案。")}</div>`;
 }
 
 // ---------- G4W 程序更新（环境配置页卡片；独立挂载，不侵入原页面切换逻辑） ----------
@@ -1727,7 +1735,7 @@ function renderMemoryPage(items) {
 // 顶栏永远停在 HTML 占位符 --:--:--。这里给它一个每秒走字的本地时间。
 function tickTopbarClock() {
   const el = $("refresh-stamp");
-  if (el) el.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  if (el) el.textContent = window.g4wI18n ? window.g4wI18n.formatTime(new Date()) : new Date().toLocaleTimeString("zh-CN", { hour12: false });
 }
 tickTopbarClock();
 setInterval(tickTopbarClock, 1000);
@@ -1739,11 +1747,11 @@ async function loadUpdateStatus() {
   if (!el) return;
   try {
     const data = await fetchJson("/api/update/status");
-    el.innerHTML = `<span class="status-running">当前版本 ${esc(String(data.current || "未知"))}</span>` +
+    el.innerHTML = `<span class="status-running">${t("当前版本 {0}", esc(String(data.current || t("未知"))))}</span>` +
       (data.appliedAt ? `<span class="muted-tag">${esc(String(data.appliedAt))}</span>` : "") +
-      (data.sourceFile ? `<span class="muted-tag">来源 ${esc(String(data.sourceFile))}</span>` : "");
+      (data.sourceFile ? `<span class="muted-tag">${t("来源 {0}", esc(String(data.sourceFile)))}</span>` : "");
   } catch (e) {
-    el.innerHTML = `<span class="status-stopped">版本读取失败：${esc(String((e && e.message) || e))}</span>`;
+    el.innerHTML = `<span class="status-stopped">${t("版本读取失败：{0}", esc(String((e && e.message) || e)))}</span>`;
   }
 }
 
@@ -1752,8 +1760,8 @@ async function checkUpdate() {
   const msgEl = $("update-message");
   const btn = $("update-check");
   if (btn) btn.disabled = true;
-  if (detail) detail.innerHTML = '<div class="muted-tag">正在查询 GitHub Releases…</div>';
-  if (msgEl) msgEl.textContent = "正在查询最新版本…";
+  if (detail) detail.innerHTML = `<div class="muted-tag">${t("正在查询 GitHub Releases…")}</div>`;
+  if (msgEl) msgEl.textContent = t("正在查询最新版本…");
   try {
     const mirrorEl = $("update-mirror");
     const mirror = mirrorEl && !mirrorEl.checked ? "0" : "1";
@@ -1762,32 +1770,32 @@ async function checkUpdate() {
     if (!data.ok) {
       if (detail) detail.innerHTML = "";
       if (msgEl) {
-        msgEl.textContent = `检查失败：${data.error || "未知错误"}${data.hint ? "；" + data.hint : ""}`;
+        msgEl.textContent = t("检查失败：{0}{1}", data.error || t("未知错误"), data.hint ? "；" + data.hint : "");
       }
       return;
     }
     const assets = (data.assets || []).length
       ? (data.assets || []).map((a) => `${esc(a.name)} · ${formatBytes(a.size)}`).join("<br>")
-      : "该 Release 没有附件";
+      : t("该 Release 没有附件");
     if (detail) {
       detail.innerHTML =
-        `<div class="embedding-speedtest-row"><span>最新版本</span><b>${esc(String(data.latest || "--"))}</b></div>` +
-        `<div class="embedding-speedtest-row"><span>发布时间</span><b>${esc(String(data.publishedAt || "--"))}</b></div>` +
-        `<div class="embedding-speedtest-row"><span>附件</span><b>${assets}</b></div>`;
+        `<div class="embedding-speedtest-row"><span>${t("最新版本")}</span><b>${esc(String(data.latest || "--"))}</b></div>` +
+        `<div class="embedding-speedtest-row"><span>${t("发布时间")}</span><b>${esc(String(data.publishedAt || "--"))}</b></div>` +
+        `<div class="embedding-speedtest-row"><span>${t("附件")}</span><b>${assets}</b></div>`;
     }
     if ($("update-release")) $("update-release").dataset.url = data.notesUrl || "";
     const applyBtn = $("update-apply");
     if (applyBtn) {
       applyBtn.disabled = !data.hasUpdate;
-      applyBtn.title = data.hasUpdate ? `更新到 ${data.latest}` : "已是最新版本";
+      applyBtn.title = data.hasUpdate ? t("更新到 {0}", data.latest) : t("已是最新版本");
     }
     if (msgEl) {
       msgEl.textContent = data.hasUpdate
-        ? `发现新版本 ${data.latest}：用「打开发布页」下载补丁/整包，关闭 G4W 后运行升级脚本（runtime\\G4W-data 不受影响）。`
-        : `已是最新版本（${data.current || data.latest || "--"}）。`;
+        ? t("发现新版本 {0}：用「打开发布页」下载补丁/整包，关闭 G4W 后运行升级脚本（runtime\\G4W-data 不受影响）。", data.latest)
+        : t("已是最新版本（{0}）。", data.current || data.latest || "--");
     }
   } catch (e) {
-    if (msgEl) msgEl.textContent = "检查失败：" + String((e && e.message) || e);
+    if (msgEl) msgEl.textContent = t("检查失败：") + String((e && e.message) || e);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -1807,23 +1815,23 @@ function showUpdateProgress(on) {
 
 async function applyUpdate() {
   const btn = $("update-apply");
-  if (!confirm("确认现在更新？G4W 会短暂停止并自动重启；runtime\\G4W-data（账号/记忆/时间线）不会被改动。")) return;
+  if (!confirm(t("确认现在更新？G4W 会短暂停止并自动重启；runtime\\G4W-data（账号/记忆/时间线）不会被改动。"))) return;
   if (btn) btn.disabled = true;
   const mirrorEl = $("update-mirror");
   const mirror = mirrorEl && !mirrorEl.checked ? "0" : "1";
   showUpdateProgress(true);
-  setUpdateMessage("正在准备更新…");
+  setUpdateMessage(t("正在准备更新…"));
   try {
     const r = await fetchJson(`/api/update/apply?mirror=${mirror}`);
     if (!r.ok) {
-      setUpdateMessage((r.error || "无法开始更新") + (r.hint ? "；" + r.hint : ""));
+      setUpdateMessage((r.error || t("无法开始更新")) + (r.hint ? "；" + r.hint : ""));
       if (btn) btn.disabled = false;
       return;
     }
-    setUpdateMessage(`正在更新到 ${r.version || "新版本"}…（完成后请按 Ctrl+F5 刷新本页）`);
+    setUpdateMessage(t("正在更新到 {0}…（完成后请按 Ctrl+F5 刷新本页）", r.version || t("新版本")));
     pollUpdateProgress();
   } catch (e) {
-    setUpdateMessage("更新失败：" + String((e && e.message) || e));
+    setUpdateMessage(t("更新失败：") + String((e && e.message) || e));
     if (btn) btn.disabled = false;
   }
 }
@@ -1841,16 +1849,16 @@ function pollUpdateProgress() {
       if (s.stage === "failed") {
         clearInterval(updatePollTimer);
         updatePollTimer = null;
-        setUpdateMessage("更新失败：" + (s.message || "未知错误"));
+        setUpdateMessage(t("更新失败：") + (s.message || t("未知错误")));
         const b = $("update-apply");
         if (b) b.disabled = false;
       } else if (s.stage === "handoff") {
-        setUpdateMessage("已交给更新脚本，窗口即将重启…重启完成后按 Ctrl+F5 刷新看板。");
+        setUpdateMessage(t("已交给更新脚本，窗口即将重启…重启完成后按 Ctrl+F5 刷新看板。"));
       }
     } catch (e) {
       // 看板正在被更新脚本重启 → 轮询断开属于预期
       if (bar) bar.style.width = "100%";
-      if (txt) txt.textContent = "看板正在重启…稍后按 Ctrl+Shift+R 强刷本页";
+      if (txt) txt.textContent = t("看板正在重启…稍后按 Ctrl+Shift+R 强刷本页");
       clearInterval(updatePollTimer);
       updatePollTimer = null;
     }
@@ -1900,17 +1908,17 @@ async function loadEmbeddingConfig(force = false) {
     const statusEl = $("embedding-status");
     if (statusEl) {
       statusEl.innerHTML = status.installed
-        ? `<span class="status-running">● 已安装（${esc(status.mode || "")}${status.enabled ? " · 已启用" : " · 未启用"}）</span>`
-        : `<span class="status-stopped">○ 未安装（关键词检索可用）</span>`;
+        ? `<span class="status-running">${t("● 已安装（{0}{1}）", esc(status.mode || ""), status.enabled ? t(" · 已启用") : t(" · 未启用"))}</span>`
+        : `<span class="status-stopped">${t("○ 未安装（关键词检索可用）")}</span>`;
     }
     const network = (data.config || {}).network || "domestic";
     const net = $("embedding-network");
     if (net) net.checked = network !== "abroad";
     if (message) message.textContent = network === "domestic"
-      ? "网络偏好：国内（镜像加速）。测速选优结果自动用于安装源。"
-      : "网络偏好：国外（官方源）。测速选优结果自动用于安装源。";
+      ? t("网络偏好：国内（镜像加速）。测速选优结果自动用于安装源。")
+      : t("网络偏好：国外（官方源）。测速选优结果自动用于安装源。");
   } catch (error) {
-    if (message) message.textContent = `读取失败：${error.message}`;
+    if (message) message.textContent = t("读取失败：{0}", error.message);
   }
 }
 
@@ -1918,46 +1926,46 @@ async function runEmbeddingSpeedtest() {
   const box = $("embedding-speedtest-result");
   const message = $("embedding-message");
   if (!box) return;
-  box.innerHTML = '<div class="empty-state">正在测速（每源最多 4 秒）…</div>';
+  box.innerHTML = `<div class="empty-state">${t("正在测速（每源最多 4 秒）…")}</div>`;
   try {
     const data = await fetchJson("/api/embedding/speedtest", { method: "POST" });
     if (!data.ok) {
-      box.innerHTML = `<div class="empty-state">测速失败：${esc(data.error || "未知错误")}</div>`;
-      if (message) message.textContent = "测速失败，请稍后重试。";
+      box.innerHTML = `<div class="empty-state">${t("测速失败：{0}", esc(data.error || t("未知错误")))}</div>`;
+      if (message) message.textContent = t("测速失败，请稍后重试。");
       return;
     }
     const rows = [];
-    const kindLabel = { pip: "pip 源", torch: "torch 源", hf: "模型源" };
+    const kindLabel = { pip: t("pip 源"), torch: t("torch 源"), hf: t("模型源") };
     for (const [kind, items] of Object.entries(data.results || {})) {
-      rows.push(`<div class="speedtest-kind">${kindLabel[kind] || kind}${data.picked && data.picked[kind] ? ` · 已选：${esc(data.picked[kind])}` : ""}</div>`);
+      rows.push(`<div class="speedtest-kind">${kindLabel[kind] || kind}${data.picked && data.picked[kind] ? t(" · 已选：{0}", esc(data.picked[kind])) : ""}</div>`);
       (items || []).forEach((item) => {
         const best = data.picked && data.picked[kind] === item.url;
         const cls = best ? "speedtest-row best" : "speedtest-row";
-        const latency = item.reachable ? `${item.latency_ms} ms` : "不可达";
+        const latency = item.reachable ? `${item.latency_ms} ms` : t("不可达");
         rows.push(`<div class="${cls}"><span>${esc(item.name)}</span><code>${esc(item.url)}</code><b>${latency}${best ? " ★" : ""}</b></div>`);
       });
     }
-    box.innerHTML = rows.join("") || '<div class="empty-state">没有可测的镜像</div>';
-    if (message) message.textContent = `测速完成${data.cached ? "（使用缓存）" : ""}：已自动选择延迟最低的源。`;
+    box.innerHTML = rows.join("") || `<div class="empty-state">${t("没有可测的镜像")}</div>`;
+    if (message) message.textContent = t("测速完成{0}：已自动选择延迟最低的源。", data.cached ? t("（使用缓存）") : "");
   } catch (error) {
-    box.innerHTML = `<div class="empty-state">测速失败：${esc(error.message)}</div>`;
-    if (message) message.textContent = "测速失败，请确认已登录并重试。";
+    box.innerHTML = `<div class="empty-state">${t("测速失败：{0}", esc(error.message))}</div>`;
+    if (message) message.textContent = t("测速失败，请确认已登录并重试。");
   }
 }
 
 async function startEmbeddingInstall() {
-  if (!confirm("开始安装向量检索环境？\n\n将下载约 4-8GB（torch + 模型），耗时较长。\n安装进度可在「服务与终端」页实时查看，期间可关闭本页面。")) return;
+  if (!confirm(t("开始安装向量检索环境？\n\n将下载约 4-8GB（torch + 模型），耗时较长。\n安装进度可在「服务与终端」页实时查看，期间可关闭本页面。"))) return;
   const message = $("embedding-message");
   try {
     const data = await fetchJson("/api/embedding/install", { method: "POST" });
     if (!data.ok) {
-      if (message) message.textContent = `启动失败：${data.error || "未知错误"}`;
+      if (message) message.textContent = t("启动失败：{0}", data.error || t("未知错误"));
       return;
     }
-    if (message) message.textContent = `安装任务已启动（pid ${data.pid || "?"}）→ 点「安装日志」前往「服务与终端」页查看进度`;
+    if (message) message.textContent = t("安装任务已启动（pid {0}）→ 点「安装日志」前往「服务与终端」页查看进度", data.pid || "?");
     loadEmbeddingConfig(true);
   } catch (error) {
-    if (message) message.textContent = `启动失败：${error.message}`;
+    if (message) message.textContent = t("启动失败：{0}", error.message);
   }
 }
 
@@ -1973,9 +1981,9 @@ if (net) net.addEventListener("change", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ network }),
     });
-    if (message) message.textContent = `已切换为：${network === "domestic" ? "国内（镜像加速）" : "国外（官方源）"}；下次安装/重装时生效。`;
+    if (message) message.textContent = t("已切换为：{0}；下次安装/重装时生效。", network === "domestic" ? t("国内（镜像加速）") : t("国外（官方源）"));
   } catch (error) {
-    if (message) message.textContent = `保存失败：${error.message}`;
+    if (message) message.textContent = t("保存失败：{0}", error.message);
   }
 });
 const btnLog = $("embedding-log");
@@ -2002,7 +2010,7 @@ async function renderTodoPage(force = false) {
   try {
     data = await fetchJson("/api/todo");
   } catch (error) {
-    $("todo-page-list").innerHTML = `<div class="empty-state">读取待办失败：${esc(error.message)}</div>`;
+    $("todo-page-list").innerHTML = `<div class="empty-state">${t("读取待办失败：{0}", esc(error.message))}</div>`;
     return;
   }
   const tasks = data.tasks || {};
@@ -2023,8 +2031,8 @@ async function renderTodoPage(force = false) {
   const listEl = $("todo-page-list");
   if (!pageRows.length) {
     listEl.innerHTML = todoTab === "done"
-      ? '<div class="empty-state">还没有已办任务</div>'
-      : '<div class="empty-state">没有待办 🎉</div>';
+      ? `<div class="empty-state">${t("还没有已办任务")}</div>`
+      : `<div class="empty-state">${t("没有待办 🎉")}</div>`;
   } else {
     const bySender = {};
     pageRows.forEach(({ sender, task }) => {
@@ -2047,7 +2055,7 @@ async function renderTodoPage(force = false) {
     });
   }
   const info = $("todo-page-info");
-  if (info) info.textContent = `第 ${todoPage} / ${totalPages} 页 · 共 ${active.length} 条`;
+  if (info) info.textContent = t("第 {0} / {1} 页 · 共 {2} 条", todoPage, totalPages, active.length);
   const prevBtn = $("todo-prev");
   const nextBtn = $("todo-next");
   if (prevBtn) prevBtn.disabled = todoPage <= 1;
@@ -2059,16 +2067,16 @@ async function renderTodoPage(force = false) {
 
 function todoRow(sender, task) {
   const state = task.status === "done" ? "done" : task.classify;
-  const labels = { overdue: "⚠️ 已到期", scheduled: "⏰ 有时间", ongoing: "📌 持续", done: "✅ 已完成" };
+  const labels = { overdue: t("⚠️ 已到期"), scheduled: t("⏰ 有时间"), ongoing: t("📌 持续"), done: t("✅ 已完成") };
   const due = task.dueLabel ? ` <span class="muted">· ${esc(task.dueLabel)}</span>` : "";
-    const created = task.createdLabel ? ` <span class="muted">· 创建 ${esc(task.createdLabel)}</span>` : "";
-    const completed = task.completedLabel ? ` <span class="muted">· 完成 ${esc(task.completedLabel)}</span>` : "";
-    const overdue = task.status !== "done" && task.overdueDays > 0 ? ` <span class="muted">· 已逾期 ${esc(String(task.overdueDays))} 天</span>` : "";
+    const created = task.createdLabel ? ` <span class="muted">${t("· 创建 {0}", esc(task.createdLabel))}</span>` : "";
+    const completed = task.completedLabel ? ` <span class="muted">${t("· 完成 {0}", esc(task.completedLabel))}</span>` : "";
+    const overdue = task.status !== "done" && task.overdueDays > 0 ? ` <span class="muted">${t("· 已逾期 {0} 天", esc(String(task.overdueDays)))}</span>` : "";
   const recur = task.recurLabel ? ` <span class="muted">· ${esc(task.recurLabel)}</span>` : "";
-  const fire = task.fireIndex > 0 ? ` <span class="muted">· 已提醒 ${task.fireIndex} 次</span>` : "";
-  const del = `<button class="todo-act" data-todo-act="delete" data-sender="${esc(sender)}" data-id="${esc(task.id)}" title="删除">🗑</button>`;
+  const fire = task.fireIndex > 0 ? ` <span class="muted">${t("· 已提醒 {0} 次", task.fireIndex)}</span>` : "";
+  const del = `<button class="todo-act" data-todo-act="delete" data-sender="${esc(sender)}" data-id="${esc(task.id)}" title="${t("删除")}">🗑</button>`;
   const act = task.status === "pending"
-    ? `<button class="todo-act" data-todo-act="done" data-sender="${esc(sender)}" data-id="${esc(task.id)}" title="完成">✅</button>${del}`
+    ? `<button class="todo-act" data-todo-act="done" data-sender="${esc(sender)}" data-id="${esc(task.id)}" title="${t("完成")}">✅</button>${del}`
     : del;
   return `<div class="todo-item todo-${state}"><span class="todo-badge">${labels[state] || ""}</span><span class="todo-text">${esc(task.text)}</span><span class="todo-meta">${due}${recur}${fire}${created}${completed}${overdue}</span><span class="todo-actions">${act}</span></div>`;
 }
@@ -2105,13 +2113,13 @@ async function loadServices(force = false) {
 function serviceRow(svc) {
   const running = svc.status === "running";
   const actions = svc.managed
-    ? `<button class="service-act" data-service-start="${esc(svc.id)}" ${running ? "disabled" : ""}>启动</button><button class="service-act danger" data-service-stop="${esc(svc.id)}" ${running ? "" : "disabled"}>停止</button>`
-    : '<span class="muted-tag">看板自身</span>';
-  return `<div class="service-item" data-service-select="${esc(svc.id)}" title="点击查看日志">
+    ? `<button class="service-act" data-service-start="${esc(svc.id)}" ${running ? "disabled" : ""}>${t("启动")}</button><button class="service-act danger" data-service-stop="${esc(svc.id)}" ${running ? "" : "disabled"}>${t("停止")}</button>`
+    : `<span class="muted-tag">${t("看板自身")}</span>`;
+  return `<div class="service-item" data-service-select="${esc(svc.id)}" title="${t("点击查看日志")}">
     <div class="service-head">
       <span class="service-dot svc-${running ? "running" : "stopped"}"></span>
-      <div class="service-info"><strong>${esc(svc.name)}</strong><small>${esc(svc.desc || svc.id)}</small></div>
-      <span class="service-state ${running ? "is-running" : ""}">${running ? "运行中" : "已停止"}</span>
+      <div class="service-info"><strong>${esc(t(svc.name))}</strong><small>${esc(t(svc.desc || svc.id))}</small></div>
+      <span class="service-state ${running ? "is-running" : ""}">${running ? t("运行中") : t("已停止")}</span>
     </div>
     <div class="service-foot"><code>${esc(svc.detail || "")}</code><span class="service-actions">${actions}</span></div>
   </div>`;
@@ -2128,7 +2136,7 @@ async function renderServicesPage(force = false) {
   if (!listEl) return;
   if (!pageActive) return; // 非本页时仅刷新缓存（供总览按钮用）
   if (!services.length) {
-    listEl.innerHTML = '<div class="empty-state">暂无服务</div>';
+    listEl.innerHTML = `<div class="empty-state">${t("暂无服务")}</div>`;
     return;
   }
   const signature = JSON.stringify(services.map(({ id, status }) => [id, status]));
@@ -2141,7 +2149,7 @@ async function renderServicesPage(force = false) {
         btn.disabled = true;
         try {
           const res = await fetchJson(`/api/services?action=start&id=${encodeURIComponent(btn.dataset.serviceStart)}`);
-          showToast(res.message || `已启动${res.pid ? `（pid ${res.pid}）` : ""}`);
+          showToast(res.message || t("已启动{0}", res.pid ? `（pid ${res.pid}）` : ""));
         } catch (error) {
           showToast(error.message, true);
         }
@@ -2155,7 +2163,7 @@ async function renderServicesPage(force = false) {
         btn.disabled = true;
         try {
           const res = await fetchJson(`/api/services?action=stop&id=${encodeURIComponent(btn.dataset.serviceStop)}`);
-          showToast(res.actions && res.actions.length ? `已停止（${res.actions.length} 项操作）` : "已停止");
+          showToast(res.actions && res.actions.length ? t("已停止（{0} 项操作）", res.actions.length) : t("已停止"));
         } catch (error) {
           showToast(error.message, true);
         }
@@ -2173,10 +2181,10 @@ async function renderServicesPage(force = false) {
       stopTerminalPoll();
       terminalId = "";
       terminalCursor = 0;
-      $("terminal-title").textContent = "选择一个服务";
-      $("terminal-body").innerHTML = '<div class="empty-state">服务已移除，从左侧重新选择。</div>';
+      $("terminal-title").textContent = t("选择一个服务");
+      $("terminal-body").innerHTML = `<div class="empty-state">${t("服务已移除，从左侧重新选择。")}</div>`;
     } else {
-      $("terminal-title").textContent = `${svc.name} · ${svc.status === "running" ? "运行中" : "已停止"}`;
+      $("terminal-title").textContent = `${t(svc.name)} · ${svc.status === "running" ? t("运行中") : t("已停止")}`;
     }
   }
 }
@@ -2241,7 +2249,7 @@ function selectTerminal(sid) {
   terminalCursor = 0;
   terminalLastError = "";
   const body = $("terminal-body");
-  if (body) body.innerHTML = `<div class="empty-state">正在连接 ${esc(sid)}…</div>`;
+  if (body) body.innerHTML = `<div class="empty-state">${t("正在连接 {0}…", esc(sid))}</div>`;
   const follow = $("terminal-follow");
   if (follow) follow.classList.add("active");
   if (sid) startTerminalPoll();
@@ -2267,7 +2275,7 @@ function startWorkerMonitorPoll() {
       workerMonitorLastError = "";
       if (res.fileId && res.fileId !== workerMonitorFileId) {
         workerMonitorFileId = res.fileId;
-        appendWorkerMonitorLines([`── ${res.label || "worker"} 输出 ──`]);
+        appendWorkerMonitorLines([t("── {0} 输出 ──", res.label || "worker")]);
       }
       if (typeof res.cursor === "number") workerMonitorCursor = res.cursor;
       if (res.lines && res.lines.length) appendWorkerMonitorLines(res.lines);
@@ -2322,11 +2330,11 @@ function selectWorkerMonitor(dir, archive, id, label) {
   resetWorkerMonitorState();
   const body = $("worker-monitor-body");
   if (body) body.innerHTML = "";
-  appendWorkerMonitorLines([`── ${label || "worker"} 输出 ──`]);
+  appendWorkerMonitorLines([t("── {0} 输出 ──", label || "worker")]);
   const allBtn = $("worker-monitor-all");
   if (allBtn) allBtn.hidden = false;
   const title = $("worker-monitor-title");
-  if (title) title.textContent = `${label || "worker"} 输出`;
+  if (title) title.textContent = t("{0} 输出", label || "worker");
   if (document.querySelector('[data-page-view="workers"]')?.classList.contains("active")) startWorkerMonitorPoll();
 }
 
@@ -2337,11 +2345,11 @@ function clearWorkerMonitorFilter() {
   resetWorkerMonitorState();
   const body = $("worker-monitor-body");
   if (body) body.innerHTML = "";
-  appendWorkerMonitorLines(["── 全部 worker 输出 ──"]);
+  appendWorkerMonitorLines([t("── 全部 worker 输出 ──")]);
   const allBtn = $("worker-monitor-all");
   if (allBtn) allBtn.hidden = true;
   const title = $("worker-monitor-title");
-  if (title) title.textContent = "Worker 输出监视器";
+  if (title) title.textContent = t("Worker 输出监视器");
   if (document.querySelector('[data-page-view="workers"]')?.classList.contains("active")) startWorkerMonitorPoll();
 }
 
@@ -2351,13 +2359,13 @@ async function updateOverviewStartButton(force = false) {
   const data = await loadServices(force);
   const main = (data.services || []).find((s) => s.id === "main");
   if (!main) {
-    btn.textContent = "▶ 一键启动 G4W";
+    btn.textContent = t("▶ 一键启动 G4W");
     btn.classList.remove("running");
     btn.disabled = true;
     return;
   }
   const running = main.status === "running";
-  btn.textContent = running ? "● 运行中 · 查看日志" : "▶ 一键启动 G4W";
+  btn.textContent = running ? t("● 运行中 · 查看日志") : t("▶ 一键启动 G4W");
   btn.classList.toggle("running", running);
   btn.disabled = false;
 }
@@ -2367,15 +2375,15 @@ async function startG4W() {
   if (!btn || btn.disabled) return;
   if (btn.classList.contains("running")) { location.hash = "services"; routeTo("services"); return; }
   btn.disabled = true;
-  btn.textContent = "正在启动…";
+  btn.textContent = t("正在启动…");
   try {
     const res = await fetchJson(`/api/services?action=start&id=main`);
-    showToast(res.message || `已启动（pid ${res.pid || "?"}）`);
+    showToast(res.message || t("已启动（pid {0}）", res.pid || "?"));
     // 与 start_G4W_ga.bat 行为一致：主服务拉起后附带 model monitor（失败不影响主服务）
     try { await fetchJson(`/api/services?action=start&id=monitor`); } catch (error) { /* 忽略 */ }
   } catch (error) {
     showToast(error.message, true);
-    btn.textContent = "▶ 一键启动 G4W";
+    btn.textContent = t("▶ 一键启动 G4W");
   }
   updateOverviewStartButton(true);
 }
@@ -2383,40 +2391,40 @@ async function startG4W() {
 async function loadMemoryDetail(memoryId) {
   if (!memoryId) return;
   currentMemoryId = memoryId;
-  $("memory-page-body").innerHTML = '<div class="empty-state glass-card">正在读取记忆…</div>';
+  $("memory-page-body").innerHTML = `<div class="empty-state glass-card">${t("正在读取记忆…")}</div>`;
   try {
     renderMemoryDetail(await fetchJson(`/api/memory?id=${encodeURIComponent(memoryId)}`));
   } catch (error) {
-    $("memory-page-body").innerHTML = `<div class="empty-state glass-card">记忆读取失败：${esc(error.message)}</div>`;
+    $("memory-page-body").innerHTML = `<div class="empty-state glass-card">${t("记忆读取失败：{0}", esc(error.message))}</div>`;
   }
 }
 
 function renderMemoryDetail(data) {
   currentMemorySections = data.sections || [];
   currentMemoryData = data;
-  const sections = currentMemorySections.map((section) => `<button class="memory-section-row" data-memory-section="${esc(section.key)}"><span>${esc(section.label)}</span><span class="count">${section.count} 条 · 查看 →</span></button>`).join("");
+  const sections = currentMemorySections.map((section) => `<button class="memory-section-row" data-memory-section="${esc(section.key)}"><span>${esc(t(section.label))}</span><span class="count">${t("{0} 条 · 查看 →", section.count)}</span></button>`).join("");
   // 版本历史:默认只显示最新 12 条,其余折叠展开
   const allBackups = data.backups || [];
-  const backupItem = (item) => `<div class="artifact"><div><strong>${esc(item.name)}</strong><small>${esc(item.updatedAt)} · ${formatBytes(item.bytes)}</small></div><span class="muted-tag">历史快照</span></div>`;
+  const backupItem = (item) => `<div class="artifact"><div><strong>${esc(item.name)}</strong><small>${esc(item.updatedAt)} · ${formatBytes(item.bytes)}</small></div><span class="muted-tag">${t("历史快照")}</span></div>`;
   const backupsHtml = allBackups.length
     ? (backupsExpanded ? allBackups : allBackups.slice(0, 12)).map(backupItem).join("")
-      + (allBackups.length > 12 ? `<button class="backup-expand" onclick="expandBackups(this)">${backupsExpanded ? "收起" : `展开全部 ${allBackups.length - 12} 条历史快照`} ${backupsExpanded ? "▴" : "▾"}</button>` : "")
-    : '<div class="empty-state">没有历史版本</div>';
+      + (allBackups.length > 12 ? `<button class="backup-expand" onclick="expandBackups(this)">${backupsExpanded ? t("收起") : t("展开全部 {0} 条历史快照", allBackups.length - 12)} ${backupsExpanded ? "▴" : "▾"}</button>` : "")
+    : `<div class="empty-state">${t("没有历史版本")}</div>`;
   const total = (data.sections || []).reduce((sum, section) => sum + (section.count || 0), 0);
-  const identity = data.identity ? esc(data.identity) : "微信用户";
+  const identity = data.identity ? esc(data.identity) : t("微信用户");
   const html = `<div class="memory-main">
       <article class="memory-profile-card glass-card">
-        <div class="memory-person"><span class="memory-avatar">${esc((data.name || "记").slice(0, 1))}</span><div><h2>${esc(data.name)}</h2><small>${identity}</small></div></div>
-        <div class="memory-profile-tags">${data.botName ? `<span class="muted-tag">助手 ${esc(data.botName)}</span>` : ""}<span class="muted-tag">更新 ${esc(data.updatedAt)}</span><span class="muted-tag">${formatBytes(data.activeBytes)}</span><span class="page-badge">${total} 条记忆</span></div>
+        <div class="memory-person"><span class="memory-avatar">${esc((data.name || t("记")).slice(0, 1))}</span><div><h2>${esc(data.name)}</h2><small>${identity}</small></div></div>
+        <div class="memory-profile-tags">${data.botName ? `<span class="muted-tag">${t("助手 {0}", esc(data.botName))}</span>` : ""}<span class="muted-tag">${t("更新 {0}", esc(data.updatedAt))}</span><span class="muted-tag">${formatBytes(data.activeBytes)}</span><span class="page-badge">${t("{0} 条记忆", total)}</span></div>
       </article>
-      <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">USER PROFILE</div><h2>用户画像</h2></div><span class="muted-tag">${data.userProfilePrev ? "相对上一版 · 主题色标变更" : "总体稳定画像 · L4 持续维护"}</span></div><div class="markdown user-profile">${renderProfileDiff(data.userProfile, data.userProfilePrev)}</div></article>
-      <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">MEMORY BRIEF</div><h2>记忆简报</h2></div></div><div class="markdown memory-brief">${renderMarkdown(data.brief || "暂无记忆简报")}</div></article>
-      <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">PROFILE TIMELINE</div><h2>画像时间轴</h2></div><span class="muted-tag">点击快照查看当时的画像与变化</span></div><div id="profile-timeline" class="profile-timeline"><div class="empty-state">正在读取历史快照…</div></div></article>
-      <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">STRUCTURED MEMORY</div><h2>结构化记忆</h2></div><span class="muted-tag">点击分类展开</span></div>${sections || '<div class="empty-state">还没有结构化记忆</div>'}</article>
+      <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">USER PROFILE</div><h2>${t("用户画像")}</h2></div><span class="muted-tag">${data.userProfilePrev ? t("相对上一版 · 主题色标变更") : t("总体稳定画像 · L4 持续维护")}</span></div><div class="markdown user-profile">${renderProfileDiff(data.userProfile, data.userProfilePrev)}</div></article>
+      <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">MEMORY BRIEF</div><h2>${t("记忆简报")}</h2></div></div><div class="markdown memory-brief">${renderMarkdown(data.brief || t("暂无记忆简报"))}</div></article>
+      <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">PROFILE TIMELINE</div><h2>${t("画像时间轴")}</h2></div><span class="muted-tag">${t("点击快照查看当时的画像与变化")}</span></div><div id="profile-timeline" class="profile-timeline"><div class="empty-state">${t("正在读取历史快照…")}</div></div></article>
+      <article class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">STRUCTURED MEMORY</div><h2>${t("结构化记忆")}</h2></div><span class="muted-tag">${t("点击分类展开")}</span></div>${sections || `<div class="empty-state">${t("还没有结构化记忆")}</div>`}</article>
     </div>
     <aside class="memory-side">
-      <article class="context-card glass-card"><div class="eyebrow">MEMORY STATUS</div><h2>存储状态</h2><div class="context-row"><span>账号档案</span><strong>${memoryProfiles.length}</strong></div><div class="context-row"><span>历史版本</span><strong>${(data.backups || []).length}</strong></div><div class="context-row"><span>当前数据</span><strong>${formatBytes(data.activeBytes)}</strong></div><div class="context-row"><span>更新时间</span><strong>${esc(data.updatedAt)}</strong></div><div class="context-row"><span>来源</span><code>${esc(data.source)}</code></div></article>
-      <section class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">VERSION HISTORY</div><h2>版本历史</h2></div></div>${backupsHtml}</section>
+      <article class="context-card glass-card"><div class="eyebrow">MEMORY STATUS</div><h2>${t("存储状态")}</h2><div class="context-row"><span>${t("账号档案")}</span><strong>${memoryProfiles.length}</strong></div><div class="context-row"><span>${t("历史版本")}</span><strong>${(data.backups || []).length}</strong></div><div class="context-row"><span>${t("当前数据")}</span><strong>${formatBytes(data.activeBytes)}</strong></div><div class="context-row"><span>${t("更新时间")}</span><strong>${esc(data.updatedAt)}</strong></div><div class="context-row"><span>${t("来源")}</span><code>${esc(data.source)}</code></div></article>
+      <section class="glass-card memory-block"><div class="section-heading"><div><div class="eyebrow">VERSION HISTORY</div><h2>${t("版本历史")}</h2></div></div>${backupsHtml}</section>
     </aside>`;
   $("memory-page-body").innerHTML = html;
   loadMemoryTimeline(data.id);
@@ -2429,38 +2437,38 @@ function loadMemoryTimeline(memoryId) {
     timelinePoints = data.points || []; // 后端已按新 → 旧排序
     renderProfileTimeline(box, memoryId);
   }).catch((error) => {
-    box.innerHTML = `<div class="empty-state">时间轴加载失败：${esc(error.message)}</div>`;
+    box.innerHTML = `<div class="empty-state">${t("时间轴加载失败：{0}", esc(error.message))}</div>`;
   });
 }
 
 function renderProfileTimeline(box, memoryId) {
   const points = timelinePoints;
   if (!points.length) {
-    box.innerHTML = '<div class="empty-state">还没有历史快照 — L4 压缩后自动生成。</div>';
+    box.innerHTML = `<div class="empty-state">${t("还没有历史快照 — L4 压缩后自动生成。")}</div>`;
     return;
   }
   const first = points[0], last = points[points.length - 1];
-  box.innerHTML = `<div class="timeline-range"><span>最新 ${esc(first.updatedAt.split(" ")[0])}</span><span>${points.length} 份快照</span><span>最早 ${esc(last.updatedAt.split(" ")[0])}</span></div><div class="timeline-track">${points.map((point) => {
+  box.innerHTML = `<div class="timeline-range"><span>${t("最新 {0}", esc(first.updatedAt.split(" ")[0]))}</span><span>${t("{0} 份快照", points.length)}</span><span>${t("最早 {0}", esc(last.updatedAt.split(" ")[0]))}</span></div><div class="timeline-track">${points.map((point) => {
     const profileCount = point.counts && point.counts.user_profile != null ? point.counts.user_profile : "-";
-    return `<button class="tl-node" onclick="openBackupSnapshot('${esc(memoryId)}','${esc(point.name)}')" title="${esc(point.updatedAt)} · 画像 ${profileCount} 键 · ${formatBytes(point.bytes)}"><span class="tl-dot"></span><span class="tl-date">${esc(point.updatedAt.split(" ")[0])}</span><span class="tl-meta">${esc(point.updatedAt.split(" ")[1] || "")}</span></button>`;
+    return `<button class="tl-node" onclick="openBackupSnapshot('${esc(memoryId)}','${esc(point.name)}')" title="${t("{0} · 画像 {1} 键 · {2}", esc(point.updatedAt), profileCount, formatBytes(point.bytes))}"><span class="tl-dot"></span><span class="tl-date">${esc(point.updatedAt.split(" ")[0])}</span><span class="tl-meta">${esc(point.updatedAt.split(" ")[1] || "")}</span></button>`;
   }).join("")}</div>`;
 }
 
 function openBackupSnapshot(memoryId, name) {
-  openDrawer("正在读取快照…", "PROFILE SNAPSHOT", '<div class="empty-state">加载中…</div>');
+  openDrawer(t("正在读取快照…"), "PROFILE SNAPSHOT", `<div class="empty-state">${t("加载中…")}</div>`);
   const index = timelinePoints.findIndex((point) => point.name === name);
   const prevName = index > 0 ? timelinePoints[index - 1].name : null;
   Promise.all([
     fetchJson(`/api/memory/backup?id=${encodeURIComponent(memoryId)}&name=${encodeURIComponent(name)}`),
     prevName ? fetchJson(`/api/memory/backup?id=${encodeURIComponent(memoryId)}&name=${encodeURIComponent(prevName)}`) : Promise.resolve(null),
   ]).then(([current, prev]) => {
-    openDrawer(`${current.updatedAt} · 画像快照`, "PROFILE SNAPSHOT", renderBackupSnapshot(current, prev));
+    openDrawer(t("{0} · 画像快照", current.updatedAt), "PROFILE SNAPSHOT", renderBackupSnapshot(current, prev));
   }).catch((error) => {
-    openDrawer("快照读取失败", "ERROR", `<div class="empty-state">${esc(error.message)}</div>`);
+    openDrawer(t("快照读取失败"), "ERROR", `<div class="empty-state">${esc(error.message)}</div>`);
   });
 }
 
-const PROFILE_KEY_LABELS = { user_profile: "用户画像", ongoing_projects: "进行中项目", agent_capabilities_learned: "能力经验", memory_lessons: "记忆经验", user_facts: "用户事实", _meta: "元信息" };
+const PROFILE_KEY_LABELS = { user_profile: t("用户画像"), ongoing_projects: t("进行中项目"), agent_capabilities_learned: t("能力经验"), memory_lessons: t("记忆经验"), user_facts: t("用户事实"), _meta: t("元信息") };
 
 function diffValues(cur, prev) {
   if (Array.isArray(cur) || Array.isArray(prev)) {
@@ -2503,8 +2511,8 @@ function renderSnapList(curArr, prevArr) {
   const addedKeys = new Set(diff.added.map((value) => JSON.stringify(value)));
   const removedKeys = new Set(diff.removed.map((value) => JSON.stringify(value)));
   const parts = [];
-  if (diff.added.length) parts.push(`<div class="snap-note add">新增 ${diff.added.length} 条</div>`);
-  if (diff.removed.length) parts.push(`<div class="snap-note rem">移除 ${diff.removed.length} 条</div>`);
+  if (diff.added.length) parts.push(`<div class="snap-note add">${t("新增 {0} 条", diff.added.length)}</div>`);
+  if (diff.removed.length) parts.push(`<div class="snap-note rem">${t("移除 {0} 条", diff.removed.length)}</div>`);
   for (const item of curArr) {
     const cls = addedKeys.has(JSON.stringify(item)) ? "snap-added" : "";
     parts.push(`<div class="snap-item ${cls}">${renderSnapEntry(item)}</div>`);
@@ -2524,7 +2532,7 @@ function renderBackupSnapshot(current, prev) {
   const prevActive = prev && prev.active ? prev.active : null;
   const keys = [...new Set([...(prevActive ? Object.keys(prevActive) : []), ...Object.keys(curActive)])];
   const blocks = keys.map((key) => {
-    const label = PROFILE_KEY_LABELS[key] || key;
+    const label = t(PROFILE_KEY_LABELS[key] || key);
     const curValue = curActive[key];
     const prevValue = prevActive ? prevActive[key] : null;
     const diff = prevActive ? diffValues(curValue, prevValue) : null;
@@ -2544,35 +2552,35 @@ function renderBackupSnapshot(current, prev) {
     }
     return `<details class="accordion snap-key"><summary><span>${esc(label)}</span>${diff ? diffBadges(diff) : ""}</summary><div class="accordion-body">${body}</div></details>`;
   }).join("");
-  const pills = [`<span>${esc(current.updatedAt)}</span>`, `<span>${formatBytes(JSON.stringify(curActive).length)}</span>`, `<span>${keys.length} 个分类</span>`];
-  if (prev) pills.push(`<span>对比 ${esc(prev.updatedAt.split(" ")[0])}</span>`);
-  const briefHtml = current.brief ? `<article class="snap-brief"><div class="eyebrow">当时简报</div><div class="markdown">${renderMarkdown(current.brief)}</div></article>` : "";
+  const pills = [`<span>${esc(current.updatedAt)}</span>`, `<span>${formatBytes(JSON.stringify(curActive).length)}</span>`, `<span>${t("{0} 个分类", keys.length)}</span>`];
+  if (prev) pills.push(`<span>${t("对比 {0}", esc(prev.updatedAt.split(" ")[0]))}</span>`);
+  const briefHtml = current.brief ? `<article class="snap-brief"><div class="eyebrow">${t("当时简报")}</div><div class="markdown">${renderMarkdown(current.brief)}</div></article>` : "";
   return `<div class="detail-pills">${pills.join("")}</div>${briefHtml}<div class="snap-keys">${blocks}</div>`;
 }
 
 function selectPromptNode(node, button) {
   document.querySelectorAll(".tree-node").forEach((item) => item.classList.remove("active"));
   if (button) button.classList.add("active");
-  $("prompt-node-meta").innerHTML = [`来源 ${node.source || "--"}`, `${node.chars || 0} chars`, `≈ ${node.tokens || 0} tokens`, `SHA ${node.sha || "--"}`, node.updatedAt || "--", node.inModel ? "进入模型" : "仅 UI"].map((value) => `<span>${esc(value)}</span>`).join("");
-  $("prompt-node-content").textContent = node.content || "该节点没有可展示内容。";
+  $("prompt-node-meta").innerHTML = [t("来源 {0}", node.source || "--"), `${node.chars || 0} chars`, `≈ ${node.tokens || 0} tokens`, `SHA ${node.sha || "--"}`, node.updatedAt || "--", node.inModel ? t("进入模型") : t("仅 UI")].map((value) => `<span>${esc(value)}</span>`).join("");
+  $("prompt-node-content").textContent = node.content || t("该节点没有可展示内容。");
 }
 
 function renderPromptTree(data) {
   const nodes = [...(data.components || []), data.thinkingNode].filter(Boolean);
-  $("prompt-tree").innerHTML = nodes.map((node, index) => `<div class="tree-group"><button class="tree-node ${index === 0 ? "active" : ""}" data-prompt-node="${index}"><i>${node.kind === "generated" ? "◇" : node.kind === "code" ? "⌘" : "▧"}</i><span>${esc(node.title)}</span><small>${node.chars || 0}</small></button>${(node.children || []).length ? `<div class="tree-children">${node.children.map((child, childIndex) => `<button class="tree-node" data-prompt-node="${index}" data-prompt-child="${childIndex}"><i>└</i><span>${esc(child.title)}</span><small>${child.chars || 0}</small></button>`).join("")}</div>` : ""}</div>`).join("");
+  $("prompt-tree").innerHTML = nodes.map((node, index) => `<div class="tree-group"><button class="tree-node ${index === 0 ? "active" : ""}" data-prompt-node="${index}"><i>${node.kind === "generated" ? "◇" : node.kind === "code" ? "⌘" : "▧"}</i><span>${esc(t(node.title))}</span><small>${node.chars || 0}</small></button>${(node.children || []).length ? `<div class="tree-children">${node.children.map((child, childIndex) => `<button class="tree-node" data-prompt-node="${index}" data-prompt-child="${childIndex}"><i>└</i><span>${esc(t(child.title))}</span><small>${child.chars || 0}</small></button>`).join("")}</div>` : ""}</div>`).join("");
   if (nodes[0]) selectPromptNode(nodes[0], $("prompt-tree").querySelector(".tree-node"));
 }
 
 async function loadPrompt() {
-  $("prompt-tree").innerHTML = '<div class="empty-state">正在读取最近一次真实模型请求…</div>';
+  $("prompt-tree").innerHTML = `<div class="empty-state">${t("正在读取最近一次真实模型请求…")}</div>`;
   try {
     promptData = await fetchJson("/api/prompt");
     $("prompt-model").textContent = promptData.model || "--";
     $("prompt-time").textContent = promptData.generatedAt || "--";
     $("prompt-chars").textContent = String((promptData.final || "").length);
-    $("prompt-source").textContent = promptData.snapshotPath || "尚无 Input 快照";
-    $("prompt-final").textContent = promptData.final || "当前没有可用的真实 System Prompt 快照。请开启完整 Input 快照并完成一次对话。";
-    $("prompt-dynamic").textContent = promptData.dynamic || "当前快照没有动态检索内容。";
+    $("prompt-source").textContent = promptData.snapshotPath || t("尚无 Input 快照");
+    $("prompt-final").textContent = promptData.final || t("当前没有可用的真实 System Prompt 快照。请开启完整 Input 快照并完成一次对话。");
+    $("prompt-dynamic").textContent = promptData.dynamic || t("当前快照没有动态检索内容。");
     renderPromptTree(promptData);
   } catch (error) { $("prompt-tree").innerHTML = `<div class="empty-state">${esc(error.message)}</div>`; }
 }
@@ -2584,7 +2592,7 @@ function fillModelSelect(select, models, selectedValue, useIndex = false) {
   select.innerHTML = rows.map((item) => {
     const value = useIndex ? item.index : item.model;
     const label = item.index === "" ? item.label : `[${item.index}] ${item.label}`;
-    return `<option value="${esc(value)}">${esc(label)}${item.current && useIndex ? " · 当前" : ""}</option>`;
+    return `<option value="${esc(value)}">${esc(label)}${item.current && useIndex ? t(" · 当前") : ""}</option>`;
   }).join("");
   select.value = String(selectedValue ?? "");
   select.dataset.committedValue = select.value;
@@ -2597,20 +2605,20 @@ function applyModelData(data) {
   fillModelSelect($("setting-conductor-model"), models, current.index ?? "", true);
   fillModelSelect($("setting-worker-model"), models, data.workerModel ?? dashboardData?.configuration?.workerModel ?? "", false);
   fillModelSelect($("setting-pro-model"), models, data.proModel ?? dashboardData?.configuration?.proModel ?? "", false);
-  $("model-control-status").textContent = `${models.length} 个可用 · 主进程在线`;
+  $("model-control-status").textContent = t("{0} 个可用 · 主进程在线", models.length);
 }
 
 async function loadModels(force = false) {
   if (modelsLoading || (!force && $("setting-conductor-model").dataset.loaded === "true")) return;
   modelsLoading = true;
-  $("model-control-status").textContent = "正在读取…";
+  $("model-control-status").textContent = t("正在读取…");
   try {
     const data = await fetchJson("/api/models");
     applyModelData(data);
     $("setting-conductor-model").dataset.loaded = "true";
   } catch (error) {
     document.querySelectorAll("[data-model-target]").forEach((select) => { select.disabled = true; });
-    $("model-control-status").textContent = "主进程离线";
+    $("model-control-status").textContent = t("主进程离线");
     showToast(error.message, true);
   } finally { modelsLoading = false; }
 }
@@ -2620,10 +2628,10 @@ async function switchModel(select) {
   const previous = select.dataset.committedValue || "";
   const value = select.value;
   document.querySelectorAll("[data-model-target]").forEach((item) => { item.disabled = true; });
-  $("model-control-status").textContent = "切换并等待确认…";
+  $("model-control-status").textContent = t("切换并等待确认…");
   try {
     const result = await fetchJson("/api/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target, value }) });
-    showToast(result.message || "模型已切换");
+    showToast(result.message || t("模型已切换"));
     // 切换后首页立刻反映新模型：乐观更新本地快照并重绘，再拉服务端真值 + 一次延迟兜底
     const appliedModel = String((result && result.selected && result.selected.model) || value || "").trim();
     if (appliedModel && dashboardData && dashboardData.system) {
@@ -2637,7 +2645,7 @@ async function switchModel(select) {
   } catch (error) {
     select.value = previous;
     showToast(error.message, true);
-    $("model-control-status").textContent = "切换失败";
+    $("model-control-status").textContent = t("切换失败");
     document.querySelectorAll("[data-model-target]").forEach((item) => { item.disabled = false; });
   }
 }
@@ -2649,18 +2657,20 @@ async function saveSettings(event) {
     turnEnabled: $("setting-turn").checked, workerTurnEnabled: $("setting-worker-turn").checked, maintenanceTurnEnabled: $("setting-maintenance-turn").checked, inputCaptureEnabled: $("setting-input").checked, chunkChars: Number($("setting-chunk").value),
     maintenanceActions: Array.from(document.querySelectorAll("[data-maintenance-action]")).filter((el) => el.checked).map((el) => el.dataset.maintenanceAction),
     workspaceRoot: $("setting-workspace").value.trim(),
-    checkinEnabled: $("setting-checkin").checked, checkinMin: Number($("setting-checkin-min").value), checkinMax: Number($("setting-checkin-max").value), vectorEnabled: $("setting-vector").checked, webSearchEnabled: $("setting-web-search").checked
+    checkinEnabled: $("setting-checkin").checked, checkinMin: Number($("setting-checkin-min").value), checkinMax: Number($("setting-checkin-max").value), vectorEnabled: $("setting-vector").checked, webSearchEnabled: $("setting-web-search").checked,
+    uiLocale: $("setting-ui-lang") ? $("setting-ui-lang").value : (window.g4wI18n ? window.g4wI18n.getLang() : "zh-CN"),
+    uiTimezone: $("setting-ui-timezone") ? $("setting-ui-timezone").value : (window.g4wI18n ? window.g4wI18n.getTimezonePref() : "auto")
   };
   const button = $("settings-save");
-  button.disabled = true; button.textContent = "保存中…";
+  button.disabled = true; button.textContent = t("保存中…");
   try {
     const result = await fetchJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     settingsDirty = false;
-    $("settings-message").textContent = result.message;
-    showToast(result.message);
+    $("settings-message").textContent = t(result.message);
+    showToast(t(result.message));
     await refresh();
   } catch (error) { $("settings-message").textContent = error.message; showToast(error.message, true); }
-  finally { button.disabled = false; button.textContent = "保存设置"; }
+  finally { button.disabled = false; button.textContent = t("保存设置"); }
 }
 
 $("refresh-button").addEventListener("click", refreshNowFixed);
@@ -2677,6 +2687,59 @@ $("memory-profile-select").addEventListener("change", (event) => {
   loadMemoryDetail(event.target.value);
 });
 $("timeline-date").addEventListener("change", (event) => { timelineDate = event.target.value; renderTimeline(); });
+$("setting-ui-lang")?.addEventListener("change", (event) => {
+  if (window.g4wI18n) window.g4wI18n.setLang(event.target.value);
+  fetchJson("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      uiLocale: event.target.value,
+      uiTimezone: $("setting-ui-timezone") ? $("setting-ui-timezone").value : "auto"
+    })
+  }).catch(() => {});
+});
+$("setting-ui-timezone")?.addEventListener("change", (event) => {
+  if (window.g4wI18n) window.g4wI18n.setTimezonePref(event.target.value);
+  fetchJson("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      uiLocale: $("setting-ui-lang") ? $("setting-ui-lang").value : "zh-CN",
+      uiTimezone: event.target.value
+    })
+  }).catch(() => {});
+});
+window.addEventListener("g4w:i18n-changed", () => {
+  applyAppearance(document.documentElement.dataset.themeMode || "system", document.documentElement.dataset.palette || "wechat");
+  const page = currentPage();
+  if ($("page-name")) $("page-name").textContent = t(pageTitles[page] || "Overview");
+  document.title = `${t(pageTitles[page] || "Overview")} · G4W Control Center`;
+  tickTopbarClock();
+  if (dashboardData) render(dashboardData);
+  if (timelineData) {
+    if ($("timeline-date") && timelineData.dates) {
+      $("timeline-date").innerHTML = [...timelineData.dates].reverse().map((date) => `<option value="${date}">${date} · ${weekday(date)}</option>`).join("");
+      $("timeline-date").value = timelineDate;
+    }
+    renderTimeline();
+  }
+  if (diaryData) {
+    renderDiaryMonths();
+    renderDiaryIndex();
+  }
+  if (sopData) renderSopIndex();
+  if (personaData) {
+    personaRenderVars(personaData);
+    personaRenderList();
+    if (personaDraft) personaRenderEditor();
+  }
+  if (modelConfigData) modelConfigRender(modelConfigData);
+  if (currentMemoryData) renderMemoryDetail(currentMemoryData);
+  if (promptData) renderPromptTree(promptData);
+  servicesSignature = "";
+  renderServicesPage();
+  renderTodoPage(true);
+});
 
 // ---------- 人设（persona presets）：分节编辑 / 保存 / 注入 ----------
 let personaData = null;
@@ -2699,17 +2762,17 @@ function personaRenderVars(data) {
   if (!box) return;
   const variables = (data && data.variables) || [];
   box.innerHTML = variables.map((item) => `
-    <button type="button" class="persona-var" data-copy="${esc(item.token)}" title="点击复制带反引号的形式">
-      <code>${esc("`" + item.token + "`")}</code><small>${esc(item.label)} · ${esc(item.desc)}</small>
-    </button>`).join("") || '<span class="empty-state">没有可用的变量。</span>';
+    <button type="button" class="persona-var" data-copy="${esc(item.token)}" title="${t("点击复制带反引号的形式")}">
+      <code>${esc("`" + item.token + "`")}</code><small>${esc(t(item.label))} · ${esc(t(item.desc))}</small>
+    </button>`).join("") || `<span class="empty-state">${t("没有可用的变量。")}</span>`;
   box.querySelectorAll("[data-copy]").forEach((button) => {
     button.addEventListener("click", async () => {
       const text = "`" + button.dataset.copy + "`";
       try {
         await navigator.clipboard.writeText(text);
-        personaMessage(`已复制 ${text}`);
+        personaMessage(t("已复制 {0}", text));
       } catch (error) {
-        personaMessage(`复制失败，请手动输入 ${text}`, true);
+        personaMessage(t("复制失败，请手动输入 {0}", text), true);
       }
     });
   });
@@ -2721,9 +2784,9 @@ function personaRenderList() {
   const rows = personaData.presets || [];
   box.innerHTML = rows.map((item) => `
     <button type="button" class="persona-item ${item.id === personaEditingId ? "active" : ""}" data-id="${esc(item.id)}">
-      <strong>${esc(item.name)}${item.id === personaData.activeId ? ' <span class="tag">当前激活</span>' : ""}</strong>
-      <small>${item.builtin ? "内置" : "自定义"} · ${item.chars} 字符${item.sections ? ` · ${item.sections.length} 大节` : ""}</small>
-    </button>`).join("") || '<div class="empty-state">还没有预设。</div>';
+      <strong>${esc(item.name)}${item.id === personaData.activeId ? ` <span class="tag">${t("当前激活")}</span>` : ""}</strong>
+      <small>${t("{0} · {1} 字符{2}", item.builtin ? t("内置") : t("自定义"), item.chars, item.sections ? t(" · {0} 大节", item.sections.length) : "")}</small>
+    </button>`).join("") || `<div class="empty-state">${t("还没有预设。")}</div>`;
   box.querySelectorAll("[data-id]").forEach((button) => {
     button.addEventListener("click", () => personaSelect(button.dataset.id));
   });
@@ -2731,9 +2794,9 @@ function personaRenderList() {
   if (meta) {
     const backups = (personaData.backups || []).filter((item) => String(item.name).includes(personaEditingId));
     meta.innerHTML = [
-      `运行时文件：<code>${esc(personaData.runtimeFile || "")}</code>（${personaData.runtimeBytes || 0} 字节）`,
-      `备份：每个预设保留最近 ${personaData.backupKeep || 3} 份，当前预设已有 ${backups.length} 份`,
-      personaData.activeRegistered === false && personaData.activeId ? "注意：记录的激活预设已不存在，请重新注入。" : "",
+      `${t("运行时文件：")}<code>${esc(personaData.runtimeFile || "")}</code>${t("（{0} 字节）", personaData.runtimeBytes || 0)}`,
+      t("备份：每个预设保留最近 {0} 份，当前预设已有 {1} 份", personaData.backupKeep || 3, backups.length),
+      personaData.activeRegistered === false && personaData.activeId ? t("注意：记录的激活预设已不存在，请重新注入。") : "",
     ].filter(Boolean).join("<br>");
   }
 }
@@ -2752,31 +2815,31 @@ function personaRenderEditor() {
   const box = $("persona-sections");
   const title = $("persona-editor-title");
   if (!box || !personaDraft) return;
-  if (title) title.textContent = `编辑：${personaDraft.name}`;
+  if (title) title.textContent = t("编辑：{0}", personaDraft.name);
   const sections = personaDraft.sections || [];
   box.innerHTML = sections.map((section, index) => `
     <div class="persona-section" data-section="${index}">
       <div class="persona-section-head">
-        <span class="persona-tag">大节 ${index + 1}</span>
+        <span class="persona-tag">${t("大节 {0}", index + 1)}</span>
         <button type="button" class="ghost-button" data-act="up">↑</button>
         <button type="button" class="ghost-button" data-act="down">↓</button>
-        <button type="button" class="ghost-button" data-act="del-section">删除</button>
+        <button type="button" class="ghost-button" data-act="del-section">${t("删除")}</button>
       </div>
-      <label>大节标题<input data-field="title" value="${esc(section.title || "")}" placeholder="必填" /></label>
-      <label>大节直属正文（可空）<textarea data-field="intro" rows="2" placeholder="小节内容写在小节里">${esc(section.intro || "")}</textarea></label>
+      <label>${t("大节标题")}<input data-field="title" value="${esc(section.title || "")}" placeholder="${t("必填")}" /></label>
+      <label>${t("大节直属正文（可空）")}<textarea data-field="intro" rows="2" placeholder="${t("小节内容写在小节里")}">${esc(section.intro || "")}</textarea></label>
       ${(section.children || []).map((child, childIndex) => `
         <div class="persona-child" data-child="${childIndex}">
           <div class="persona-child-head">
-            <span class="persona-tag">小节 ${index + 1}.${childIndex + 1}</span>
+            <span class="persona-tag">${t("小节 {0}.{1}", index + 1, childIndex + 1)}</span>
             <button type="button" class="ghost-button" data-act="child-up">↑</button>
             <button type="button" class="ghost-button" data-act="child-down">↓</button>
-            <button type="button" class="ghost-button" data-act="del-child">删除</button>
+            <button type="button" class="ghost-button" data-act="del-child">${t("删除")}</button>
           </div>
-          <label>小节标题<input data-field="child-title" value="${esc(child.title || "")}" placeholder="必填" /></label>
-          <label>小节正文（markdown，支持表格/引用/列表）<textarea data-field="child-body" rows="5">${esc(child.body || "")}</textarea></label>
+          <label>${t("小节标题")}<input data-field="child-title" value="${esc(child.title || "")}" placeholder="${t("必填")}" /></label>
+          <label>${t("小节正文（markdown，支持表格/引用/列表）")}<textarea data-field="child-body" rows="5">${esc(child.body || "")}</textarea></label>
         </div>`).join("")}
-      <div class="persona-add-row"><button type="button" class="ghost-button" data-act="add-child">+ 添加小节</button></div>
-    </div>`).join("") || '<div class="empty-state">还没有大节，点下面的“+ 添加大节”。</div>';
+      <div class="persona-add-row"><button type="button" class="ghost-button" data-act="add-child">${t("+ 添加小节")}</button></div>
+    </div>`).join("") || `<div class="empty-state">${t("还没有大节，点下面的“+ 添加大节”。")}</div>`;
   personaUpdatePreview();
 }
 
@@ -2804,10 +2867,10 @@ function personaCollect() {
 function personaMarkdown() {
   if (!personaDraft) return "";
   return (personaDraft.sections || []).map((section) => {
-    const parts = [`## ${section.title || "未命名大节"}`];
+    const parts = [`## ${section.title || t("未命名大节")}`];
     if (String(section.intro || "").trim()) parts.push(String(section.intro).trim());
     (section.children || []).forEach((child) => {
-      parts.push(`### ${child.title || "未命名小节"}`);
+      parts.push(`### ${child.title || t("未命名小节")}`);
       if (String(child.body || "").trim()) parts.push(String(child.body).trim());
     });
     return parts.join("\n\n");
@@ -2832,8 +2895,8 @@ async function loadPersona() {
     }
     personaRenderList();
     if (personaEditingId) personaSelect(personaEditingId);
-    else $("persona-sections").innerHTML = '<div class="empty-state">还没有预设。</div>';
-    if (badge) badge.textContent = `${rows.length} 个预设`;
+    else $("persona-sections").innerHTML = `<div class="empty-state">${t("还没有预设。")}</div>`;
+    if (badge) badge.textContent = t("{0} 个预设", rows.length);
   } catch (error) {
     if (badge) badge.textContent = "ERROR";
     const box = $("persona-sections");
@@ -2842,7 +2905,7 @@ async function loadPersona() {
 }
 
 async function personaSend(path, payload, okMessage) {
-  personaMessage("处理中…");
+  personaMessage(t("处理中…"));
   try {
     const result = await fetchJson(`/api/persona/${path}`, {
       method: "POST",
@@ -2852,7 +2915,7 @@ async function personaSend(path, payload, okMessage) {
     personaData = result;
     personaRenderVars(personaData);
     personaRenderList();
-    personaMessage(okMessage || "完成");
+    personaMessage(okMessage || t("完成"));
     return result;
   } catch (error) {
     personaMessage(error.message, true);
@@ -2863,21 +2926,21 @@ async function personaSend(path, payload, okMessage) {
 async function personaSave() {
   if (!personaDraft) return;
   personaCollect();
-  const result = await personaSend("save", { id: personaDraft.id, name: personaDraft.name, sections: personaDraft.sections }, "已保存");
+  const result = await personaSend("save", { id: personaDraft.id, name: personaDraft.name, sections: personaDraft.sections }, t("已保存"));
   if (!result) return;
   const item = (result.presets || []).find((row) => row.id === personaDraft.id);
   if (item) personaDraft.sections = personaClone(item.sections);
   personaRenderEditor();
   const warnings = (result.preset && result.preset.warnings) || [];
   if (warnings.length) personaMessage(warnings.join(" "), true);
-  else if (result.preset && result.preset.runtimeUpdated) personaMessage("已保存，并同步到运行时人设（下一条消息生效）");
+  else if (result.preset && result.preset.runtimeUpdated) personaMessage(t("已保存，并同步到运行时人设（下一条消息生效）"));
 }
 
 async function personaInject() {
   if (!personaDraft) return;
   const button = $("persona-inject");
-  if (button) { button.disabled = true; button.textContent = "注入中…"; }
-  personaMessage("正在激活…");
+  if (button) { button.disabled = true; button.textContent = t("注入中…"); }
+  personaMessage(t("正在激活…"));
   try {
     // 第一步：激活并投递 reread（立刻返回，避免前端 10s 超时）
     const result = await fetchJson("/api/persona/activate", {
@@ -2889,17 +2952,17 @@ async function personaInject() {
     personaRenderList();
     promptData = null;                     // 提示词页的「微信人格」节点是现读文件的 → 下次进入自动刷新
     if (currentPage() === "prompt") loadPrompt();
-    personaMessage(result.note || "已激活");
+    personaMessage(result.note || t("已激活"));
     if (!result.injectId) return;
     // 第二步：轮询 reread 结果（会跑一次真实模型轮次，可能几十秒）
-    if (button) button.textContent = "重读中…";
+    if (button) button.textContent = t("重读中…");
     for (let attempt = 0; attempt < 80; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
       let status = null;
       try {
         status = await fetchJson(`/api/persona/inject-status?id=${encodeURIComponent(result.injectId)}`);
       } catch (error) {
-        personaMessage(`注入状态查询失败：${error.message}`, true);
+        personaMessage(t("注入状态查询失败：{0}", error.message), true);
         return;
       }
       if (status && status.done) {
@@ -2907,41 +2970,41 @@ async function personaInject() {
         return;
       }
     }
-    personaMessage("注入仍在进行（当前会话重读较慢）。人设已生效，下一条消息会使用新内容。", true);
+    personaMessage(t("注入仍在进行（当前会话重读较慢）。人设已生效，下一条消息会使用新内容。"), true);
   } catch (error) {
     personaMessage(error.message, true);
   } finally {
-    if (button) { button.disabled = false; button.textContent = "注入"; }
+    if (button) { button.disabled = false; button.textContent = t("注入"); }
   }
 }
 
 async function personaCreate() {
-  const name = window.prompt("新预设名称", "新人设");
+  const name = window.prompt(t("新预设名称"), t("新人设"));
   if (!name) return;
-  const result = await personaSend("create", { name }, `已创建「${name}」`);
+  const result = await personaSend("create", { name }, t("已创建「{0}」", name));
   if (result && result.createdId) personaSelect(result.createdId);
 }
 
 async function personaCopy() {
   if (!personaDraft) return;
-  const name = window.prompt("复制为（新预设名称）", `${personaDraft.name} 副本`);
+  const name = window.prompt(t("复制为（新预设名称）"), t("{0} 副本", personaDraft.name));
   if (!name) return;
-  const result = await personaSend("create", { name, sourceId: personaDraft.id }, `已复制为「${name}」`);
+  const result = await personaSend("create", { name, sourceId: personaDraft.id }, t("已复制为「{0}」", name));
   if (result && result.createdId) personaSelect(result.createdId);
 }
 
 async function personaRename() {
   if (!personaDraft) return;
-  const name = window.prompt("新的显示名称", personaDraft.name);
+  const name = window.prompt(t("新的显示名称"), personaDraft.name);
   if (!name) return;
-  const result = await personaSend("rename", { id: personaDraft.id, name }, "已改名");
+  const result = await personaSend("rename", { id: personaDraft.id, name }, t("已改名"));
   if (result) personaSelect(personaDraft.id);
 }
 
 async function personaDelete() {
   if (!personaDraft) return;
-  if (!window.confirm(`删除预设「${personaDraft.name}」？此操作不可撤销（内置预设不能删除）。`)) return;
-  const result = await personaSend("delete", { id: personaDraft.id }, "已删除");
+  if (!window.confirm(t("删除预设「{0}」？此操作不可撤销（内置预设不能删除）。", personaDraft.name))) return;
+  const result = await personaSend("delete", { id: personaDraft.id }, t("已删除"));
   if (result) {
     personaEditingId = "";
     personaDraft = null;
@@ -2951,16 +3014,16 @@ async function personaDelete() {
 
 async function personaRestore() {
   if (!personaDraft) return;
-  if (!window.confirm(`用包内默认模板覆盖「${personaDraft.name}」？当前内容会先备份。`)) return;
-  const result = await personaSend("restore", { id: personaDraft.id }, "已恢复包内模板");
+  if (!window.confirm(t("用包内默认模板覆盖「{0}」？当前内容会先备份。", personaDraft.name))) return;
+  const result = await personaSend("restore", { id: personaDraft.id }, t("已恢复包内模板"));
   if (result) personaSelect(personaDraft.id);
 }
 
 async function personaImport() {
-  const name = ($("persona-io-name").value || "").trim() || "导入人设";
+  const name = ($("persona-io-name").value || "").trim() || t("导入人设");
   const markdown = $("persona-io-text").value || "";
-  if (!markdown.trim()) { personaMessage("请先把 md 粘贴到下面的文本框。", true); return; }
-  const result = await personaSend("import", { name, markdown }, `已导入「${name}」`);
+  if (!markdown.trim()) { personaMessage(t("请先把 md 粘贴到下面的文本框。"), true); return; }
+  const result = await personaSend("import", { name, markdown }, t("已导入「{0}」", name));
   if (!result) return;
   if (result.id) personaSelect(result.id);
   const warnings = result.parseWarnings || [];
@@ -2972,15 +3035,15 @@ async function personaExport() {
   try {
     const result = await fetchJson(`/api/persona/export?id=${encodeURIComponent(personaDraft.id)}`);
     $("persona-io-text").value = result.markdown || "";
-    personaMessage(`已把「${personaDraft.name}」导出到下方文本框（可全选复制）`);
+    personaMessage(t("已把「{0}」导出到下方文本框（可全选复制）", personaDraft.name));
   } catch (error) {
     personaMessage(error.message, true);
   }
 }
 
 async function personaImportRuntime() {
-  const name = ($("persona-io-name").value || "").trim() || "当前人设";
-  const result = await personaSend("import-runtime", { name }, `已把当前运行时人设导入为「${name}」`);
+  const name = ($("persona-io-name").value || "").trim() || t("当前人设");
+  const result = await personaSend("import-runtime", { name }, t("已把当前运行时人设导入为「{0}」", name));
   if (result && result.id) personaSelect(result.id);
 }
 
@@ -3002,7 +3065,7 @@ function personaBindEditor() {
     if (action === "up" && index > 0) [sections[index - 1], sections[index]] = [sections[index], sections[index - 1]];
     else if (action === "down" && index >= 0 && index < sections.length - 1) [sections[index + 1], sections[index]] = [sections[index], sections[index + 1]];
     else if (action === "del-section" && index >= 0) sections.splice(index, 1);
-    else if (action === "add-child" && index >= 0) children.push({ title: "新小节", body: "" });
+    else if (action === "add-child" && index >= 0) children.push({ title: t("新小节"), body: "" });
     else if (action === "del-child" && childIndex >= 0) children.splice(childIndex, 1);
     else if (action === "child-up" && childIndex > 0) [children[childIndex - 1], children[childIndex]] = [children[childIndex], children[childIndex - 1]];
     else if (action === "child-down" && childIndex >= 0 && childIndex < children.length - 1) [children[childIndex + 1], children[childIndex]] = [children[childIndex], children[childIndex + 1]];
@@ -3015,7 +3078,7 @@ $("persona-add-section")?.addEventListener("click", () => {
   if (!personaDraft) return;
   personaCollect();
   personaDraft.sections = personaDraft.sections || [];
-  personaDraft.sections.push({ title: "新大节", intro: "", children: [] });
+  personaDraft.sections.push({ title: t("新大节"), intro: "", children: [] });
   personaRenderEditor();
 });
 $("persona-save")?.addEventListener("click", personaSave);
@@ -3057,7 +3120,7 @@ async function loadModelConfig() {
   try {
     modelConfigRender(await fetchJson("/api/model-config"));
   } catch (error) {
-    modelMessage(`读取失败：${error.message}`, true);
+    modelMessage(t("读取失败：{0}", error.message), true);
   }
 }
 
@@ -3082,10 +3145,10 @@ function testLine(providerId, model) {
   const info = modelTestResults[testKey(providerId, model)];
   if (!info) return "";
   if (info.ok) {
-    const reply = info.reply ? ` · 回复 “${esc(info.reply)}”` : "";
+    const reply = info.reply ? t(" · 回复 “{0}”", esc(info.reply)) : "";
     return `<span class="model-test ok">✓ ${esc(String(info.latencyMs ?? "?"))} ms${reply}</span>`;
   }
-  const detail = String(info.error || "失败");
+  const detail = String(info.error || t("失败"));
   return `<span class="model-test err" title="${esc(detail)}">✗ ${esc(detail)}</span>`;
 }
 
@@ -3099,7 +3162,7 @@ function openModelModal({ providerId, providerName, model, addable }) {
   $("model-modal-title").textContent = model;
   $("model-modal-base").textContent = `${providerName || providerId} · ${providerId}`;
   const add = $("model-modal-add");
-  if (add) { add.hidden = !modelModalState.addable; add.disabled = false; add.textContent = "添加为可用模型"; }
+  if (add) { add.hidden = !modelModalState.addable; add.disabled = false; add.textContent = t("添加为可用模型"); }
   const res = $("model-modal-result");
   if (res) { res.hidden = true; res.textContent = ""; res.classList.remove("ok", "err"); res.removeAttribute("title"); }
   box.hidden = false;
@@ -3118,15 +3181,15 @@ async function modelModalTest() {
   if (!res) return;
   res.hidden = false;
   res.classList.remove("ok", "err");
-  res.textContent = `正在测试 ${model}…`;
+  res.textContent = t("正在测试 {0}…", model);
   const result = await modelTestRaw(providerId, model);
   modelTestResults[testKey(providerId, model)] = result;
   if (result.ok) {
     res.classList.add("ok");
-    res.textContent = `✓ 可用 · ${result.latencyMs ?? "?"} ms` + (result.reply ? `\n回复：${result.reply}` : "");
+    res.textContent = t("✓ 可用 · {0} ms", result.latencyMs ?? "?") + (result.reply ? t("\n回复：{0}", result.reply) : "");
   } else {
     res.classList.add("err");
-    res.textContent = `✗ 失败\n${result.error || "未知错误"}`;
+    res.textContent = t("✗ 失败\n{0}", result.error || t("未知错误"));
   }
   res.title = res.textContent;
 }
@@ -3135,12 +3198,12 @@ async function modelModalAdd() {
   if (!modelModalState || !modelModalState.addable) return;
   const { providerId, model } = modelModalState;
   const button = $("model-modal-add");
-  if (button) { button.disabled = true; button.textContent = "添加中…"; }
+  if (button) { button.disabled = true; button.textContent = t("添加中…"); }
   const state = await modelConfigPost("model/add", { providerId, model });
-  if (button) { button.disabled = false; button.textContent = "添加为可用模型"; }
+  if (button) { button.disabled = false; button.textContent = t("添加为可用模型"); }
   if (!state) return;
   modelConfigRender(state);
-  modelMessage(`已添加 ${model}；GA 按文件时间自动重载，无需重启。`, false);
+  modelMessage(t("已添加 {0}；GA 按文件时间自动重载，无需重启。", model), false);
   if (typeof loadModels === "function") { try { loadModels(); } catch (_) {} }
   closeModelModal();
 }
@@ -3153,22 +3216,22 @@ function providerIdForBase(apibase) {
 function modelConfigRender(data) {
   modelConfigData = data;
   const providerScope = $("provider-config-scope");
-  if (providerScope) providerScope.textContent = `${(data.providers || []).length} 个供应商`;
+  if (providerScope) providerScope.textContent = t("{0} 个供应商", (data.providers || []).length);
   const list = $("provider-config-list");
   if (list) {
     list.innerHTML = (data.providers || []).map((item) => `
       <div class="model-row">
         <div class="model-row-main"><strong>${esc(item.name || item.apibase)}</strong>
           <span>${esc(item.apibase)}</span>
-          <span class="tag">${item.hasKey ? "Key " + esc(item.keyMask) : "缺 Key"}</span></div>
+          <span class="tag">${item.hasKey ? "Key " + esc(item.keyMask) : t("缺 Key")}</span></div>
         <div class="model-row-actions">
-          <button type="button" class="ghost-button" data-test-provider="${esc(item.id)}">测试</button>
-          <button type="button" class="ghost-button danger" data-delete-provider="${esc(item.id)}">删除</button>
+          <button type="button" class="ghost-button" data-test-provider="${esc(item.id)}">${t("测试")}</button>
+          <button type="button" class="ghost-button danger" data-delete-provider="${esc(item.id)}">${t("删除")}</button>
         </div>
-      </div>`).join("") || '<span class="muted-tag">还没有供应商：下面填接口地址 + Key，再点「添加 / 更新供应商」</span>';
+      </div>`).join("") || `<span class="muted-tag">${t("还没有供应商：下面填接口地址 + Key，再点「添加 / 更新供应商」")}</span>`;
   }
   const scope = $("model-config-scope");
-  if (scope) scope.textContent = `${(data.models || []).length} 个可用模型`;
+  if (scope) scope.textContent = t("{0} 个可用模型", (data.models || []).length);
   const models = $("model-config-models");
   if (models) {
     models.innerHTML = (data.models || []).map((item) => `
@@ -3176,17 +3239,17 @@ function modelConfigRender(data) {
         <div class="model-row-main"><strong>${esc(item.name || item.model || item.var)}</strong>
           <span>${esc(item.apibase || "—")}</span></div>
         <div class="model-row-actions">
-          <button type="button" class="ghost-button" data-test-model="${esc(item.model || item.name)}" data-test-base="${esc(item.apibase || "")}">测试</button>
-          <button type="button" class="ghost-button danger" data-delete-model="${esc(item.var)}">删除</button>
+          <button type="button" class="ghost-button" data-test-model="${esc(item.model || item.name)}" data-test-base="${esc(item.apibase || "")}">${t("测试")}</button>
+          <button type="button" class="ghost-button danger" data-delete-model="${esc(item.var)}">${t("删除")}</button>
         </div>
         ${testLine(providerIdForBase(item.apibase || ""), item.model || item.name)}
-      </div>`).join("") || '<span class="muted-tag">还没有可用模型：先选供应商「拉取模型列表」，再勾选添加</span>';
+      </div>`).join("") || `<span class="muted-tag">${t("还没有可用模型：先选供应商「拉取模型列表」，再勾选添加")}</span>`;
   }
   const select = $("model-fetch-provider");
   if (select) {
     const providers = data.providers || [];
     select.innerHTML = providers.map((item) => `<option value="${esc(item.id)}">${esc(item.name || item.apibase)}</option>`).join("")
-      || '<option value="">（先添加供应商）</option>';
+      || `<option value="">${t("（先添加供应商）")}</option>`;
     if (modelFetchState.providerId && providers.some((item) => item.id === modelFetchState.providerId)) {
       select.value = modelFetchState.providerId;
     }
@@ -3194,7 +3257,7 @@ function modelConfigRender(data) {
   const anthropic = $("model-config-anthropic");
   if (anthropic) anthropic.textContent = data.anthropicHint || "";
   if (data.parseError) modelMessage(data.parseError, true);
-  else if (data.skipped) modelMessage("首次向导里跳过了填 Key —— 在「供应商配置」里加一家就能用了。");
+  else if (data.skipped) modelMessage(t("首次向导里跳过了填 Key —— 在「供应商配置」里加一家就能用了。"));
   modelConfigRenderFetch();
 }
 
@@ -3209,17 +3272,17 @@ function modelConfigRenderFetch() {
     return `
       <div class="model-fetch-item">
         <label><input type="checkbox" value="${esc(name)}" ${added ? "checked disabled" : ""}>
-          <span>${esc(name)}${added ? "（已添加）" : ""}</span></label>
+          <span>${esc(name)}${added ? t("（已添加）") : ""}</span></label>
         <span class="model-fetch-actions">
-          <button type="button" class="ghost-button" data-modal-model="${esc(name)}" data-modal-addable="${added ? "0" : "1"}">${added ? "详情" : "添加…"}</button>
+          <button type="button" class="ghost-button" data-modal-model="${esc(name)}" data-modal-addable="${added ? "0" : "1"}">${added ? t("详情") : t("添加…")}</button>
         </span>
       </div>`;
   }).join("");
   box.innerHTML = `
-    <div class="model-fetch-head"><strong>${esc(state.providerName || state.providerId)}：${state.models.length} 个模型</strong>
-      <button type="button" class="primary-button" id="model-fetch-add">把勾选的添加为可用模型</button>
-      <button type="button" class="ghost-button" id="model-fetch-close">收起</button></div>
-    <div class="model-fetch-grid">${rows || '<span class="muted-tag">该供应商没有返回模型列表</span>'}</div>`;
+    <div class="model-fetch-head"><strong>${t("{0}：{1} 个模型", esc(state.providerName || state.providerId), state.models.length)}</strong>
+      <button type="button" class="primary-button" id="model-fetch-add">${t("把勾选的添加为可用模型")}</button>
+      <button type="button" class="ghost-button" id="model-fetch-close">${t("收起")}</button></div>
+    <div class="model-fetch-grid">${rows || `<span class="muted-tag">${t("该供应商没有返回模型列表")}</span>`}</div>`;
   $("model-fetch-add")?.addEventListener("click", modelConfigAddChecked);
   box.querySelectorAll("[data-modal-model]").forEach((node) => {
     node.addEventListener("click", () => openModelModal({
@@ -3239,40 +3302,40 @@ async function modelConfigProviderSave() {
   const name = $("model-provider-name").value.trim();
   const apibase = $("model-provider-base").value.trim();
   const apikey = $("model-provider-key").value.trim();
-  if (!apibase) { providerMessage("请先填接口地址", true); return; }
+  if (!apibase) { providerMessage(t("请先填接口地址"), true); return; }
   const result = await modelConfigPost("provider/add", { name, apibase, apikey }, providerMessage);
   if (!result) return;
   $("model-provider-key").value = "";
   modelConfigRender(result);
-  providerMessage("供应商已保存（只写本机）。点它的「测试」可拉一次模型列表。");
+  providerMessage(t("供应商已保存（只写本机）。点它的「测试」可拉一次模型列表。"));
 }
 
 async function modelConfigProviderDelete(id) {
-  if (!confirm(`删除供应商 ${id}？（已添加的可用模型不受影响）`)) return;
+  if (!confirm(t("删除供应商 {0}？（已添加的可用模型不受影响）", id))) return;
   const result = await modelConfigPost("provider/delete", { id }, providerMessage);
-  if (result) { modelConfigRender(result); providerMessage("供应商已删除。"); }
+  if (result) { modelConfigRender(result); providerMessage(t("供应商已删除。")); }
 }
 
 async function modelConfigProviderTest(providerId) {
-  providerMessage("正在测试该供应商…");
+  providerMessage(t("正在测试该供应商…"));
   const result = await modelConfigPost("models/fetch", { providerId }, providerMessage);
   if (!result) return;
-  if (!result.ok) { providerMessage(`测试失败：${result.error || "未知错误"}`, true); return; }
-  providerMessage(`连通正常：返回 ${(result.models || []).length} 个模型。`);
+  if (!result.ok) { providerMessage(t("测试失败：{0}", result.error || t("未知错误")), true); return; }
+  providerMessage(t("连通正常：返回 {0} 个模型。", (result.models || []).length));
 }
 
 async function modelConfigFetchRun() {
   const select = $("model-fetch-provider");
   const providerId = select ? select.value : "";
-  if (!providerId) { modelMessage("请先添加并选择一个供应商", true); return; }
+  if (!providerId) { modelMessage(t("请先添加并选择一个供应商"), true); return; }
   const providerName = select.options[select.selectedIndex]?.text || "";
-  modelMessage("正在拉取模型列表…");
+  modelMessage(t("正在拉取模型列表…"));
   const result = await modelConfigPost("models/fetch", { providerId });
   if (!result) return;
-  if (!result.ok) { modelMessage(`拉取失败：${result.error || "未知错误"}`, true); return; }
+  if (!result.ok) { modelMessage(t("拉取失败：{0}", result.error || t("未知错误")), true); return; }
   modelFetchState = { providerId: result.providerId || providerId, providerName, models: result.models || [] };
   modelConfigRenderFetch();
-  modelMessage(`拉取到 ${(result.models || []).length} 个模型：可以逐个「测试」，或勾选后添加。`);
+  modelMessage(t("拉取到 {0} 个模型：可以逐个「测试」，或勾选后添加。", (result.models || []).length));
 }
 
 async function modelTestRaw(providerId, model) {
@@ -3288,20 +3351,20 @@ async function modelTestRaw(providerId, model) {
 }
 
 async function modelConfigTestModel(providerId, model) {
-  if (!providerId || !model) { modelMessage("缺少供应商或模型", true); return; }
-  modelMessage(`正在测试 ${model}…`);
+  if (!providerId || !model) { modelMessage(t("缺少供应商或模型"), true); return; }
+  modelMessage(t("正在测试 {0}…", model));
   const result = await modelTestRaw(providerId, model);
   modelTestResults[testKey(providerId, model)] = result;
   modelMessage(result.ok
-    ? `${model} 可用（${result.latencyMs} ms${result.reply ? "，回复：" + result.reply : ""}）`
-    : `${model} 测试失败：${result.error || "未知错误"}`, !result.ok);
+    ? t("{0} 可用（{1} ms{2}）", model, result.latencyMs, result.reply ? t("，回复：") + result.reply : "")
+    : t("{0} 测试失败：{1}", model, result.error || t("未知错误")), !result.ok);
   modelConfigRender(modelConfigData);
 }
 
 async function modelConfigTestAll() {
   const models = (modelConfigData || {}).models || [];
-  if (!models.length) { modelMessage("还没有可用模型", true); return; }
-  modelMessage(`正在依次测试 ${models.length} 个可用模型…`);
+  if (!models.length) { modelMessage(t("还没有可用模型"), true); return; }
+  modelMessage(t("正在依次测试 {0} 个可用模型…", models.length));
   let okCount = 0;
   for (const item of models) {
     const provider = ((modelConfigData || {}).providers || []).find((row) => row.apibase === item.apibase);
@@ -3313,7 +3376,7 @@ async function modelConfigTestAll() {
     if (result.ok) okCount += 1;
   }
   modelConfigRender(modelConfigData);
-  modelMessage(`测试完成：${okCount}/${models.length} 可用（每行下方显示耗时或错误）`, okCount !== models.length);
+  modelMessage(t("测试完成：{0}/{1} 可用（每行下方显示耗时或错误）", okCount, models.length), okCount !== models.length);
 }
 
 async function modelConfigAddOne(model) {
@@ -3321,28 +3384,28 @@ async function modelConfigAddOne(model) {
   const state = await modelConfigPost("model/add", { providerId, model });
   if (!state) return;
   modelConfigRender(state);
-  modelMessage(`已添加 ${model}；GA 按文件时间自动重载，无需重启。`, false);
+  modelMessage(t("已添加 {0}；GA 按文件时间自动重载，无需重启。", model), false);
   if (typeof loadModels === "function") { try { loadModels(); } catch (_) {} }
 }
 
 async function modelConfigAddChecked() {
   const box = $("model-config-fetched");
   const picked = Array.from(box.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map((node) => node.value);
-  if (!picked.length) { modelMessage("请先勾选至少一个模型", true); return; }
+  if (!picked.length) { modelMessage(t("请先勾选至少一个模型"), true); return; }
   let state = null;
   for (const model of picked) {
     state = await modelConfigPost("model/add", { providerId: modelFetchState.providerId, model });
     if (!state) return;
   }
   modelConfigRender(state);
-  modelMessage(`已添加 ${picked.length} 个模型；GA 按文件时间自动重载，无需重启。`);
+  modelMessage(t("已添加 {0} 个模型；GA 按文件时间自动重载，无需重启。", picked.length));
   if (typeof loadModels === "function") { try { loadModels(); } catch (_) {} }
 }
 
 async function modelConfigModelDelete(variable) {
-  if (!confirm(`删除可用模型 ${variable}？（会从 mykey.py 移除该配置，原文件自动备份）`)) return;
+  if (!confirm(t("删除可用模型 {0}？（会从 mykey.py 移除该配置，原文件自动备份）", variable))) return;
   const result = await modelConfigPost("model/delete", { var: variable });
-  if (result) { modelConfigRender(result); modelMessage("已删除该模型配置。"); }
+  if (result) { modelConfigRender(result); modelMessage(t("已删除该模型配置。")); }
 }
 
 $("provider-config-list")?.addEventListener("click", (event) => {
@@ -3419,9 +3482,9 @@ $("sop-scope")?.addEventListener("change", (event) => {
   currentSopPath = "";
   sopData = null;
   sopExpanded = new Set();
-  if ($("sop-title")) $("sop-title").textContent = "选择一份 SOP";
+  if ($("sop-title")) $("sop-title").textContent = t("选择一份 SOP");
   if ($("sop-meta")) $("sop-meta").innerHTML = "";
-  if ($("sop-content")) $("sop-content").innerHTML = '<div class="empty-state">从左侧目录展开并选择文件。</div>';
+  if ($("sop-content")) $("sop-content").innerHTML = `<div class="empty-state">${t("从左侧目录展开并选择文件。")}</div>`;
   loadSopIndex(true);
 });
 $("sop-search")?.addEventListener("input", () => {
@@ -3432,7 +3495,7 @@ $("sop-next")?.addEventListener("click", () => moveSop(1));
 $("knowledge-search").addEventListener("input", (event) => { knowledgeQuery = event.target.value; renderKnowledgeCatalog(dashboardData?.knowledge?.items || []); });
 $("knowledge-tag").addEventListener("change", (event) => { knowledgeTag = event.target.value; renderKnowledgeCatalog(dashboardData?.knowledge?.items || []); });
 $("settings-form").addEventListener("submit", saveSettings);
-$("settings-form").addEventListener("input", (event) => { if (event.target.closest("[data-model-target]")) return; settingsDirty = true; $("settings-message").textContent = "有未保存的修改"; });
+$("settings-form").addEventListener("input", (event) => { if (event.target.closest("[data-model-target]") || event.target.id === "setting-ui-lang" || event.target.id === "setting-ui-timezone") return; settingsDirty = true; $("settings-message").textContent = t("有未保存的修改"); });
 document.querySelectorAll("[data-model-target]").forEach((select) => select.addEventListener("change", () => switchModel(select)));
 $("prompt-refresh").addEventListener("click", loadPrompt);
 $("overview-start").addEventListener("click", startG4W);
@@ -3540,7 +3603,7 @@ if ("BroadcastChannel" in window) {
   tabChannel.onmessage = () => {
     if (tabWarned) return;
     tabWarned = true;
-    showToast("检测到看板已在其他标签页打开：每个标签页都占一条 SSE 长连接，多开会耗尽浏览器连接配额导致请求超时，建议只保留一个标签页", true);
+    showToast(t("检测到看板已在其他标签页打开：每个标签页都占一条 SSE 长连接，多开会耗尽浏览器连接配额导致请求超时，建议只保留一个标签页"), true);
   };
   tabChannel.postMessage("tab-open");
 }
@@ -3569,7 +3632,7 @@ function ensureTerminalPauseHint() {
   hint.id = "terminal-pause-hint";
   hint.className = "terminal-pause-hint";
   hint.hidden = true;
-  hint.textContent = "已暂停刷新（选中中）";
+  hint.textContent = t("已暂停刷新（选中中）");
   header.appendChild(hint);
 }
 
