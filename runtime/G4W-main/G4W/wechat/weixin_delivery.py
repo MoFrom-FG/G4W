@@ -227,7 +227,7 @@ def apply_delivery_budget(
     # everything remaining is aggregated into bubble 9, and only spills into
     # bubble 10 when the 3800-character API limit requires it.
     head = normalized[:live_remaining]
-    separator = "\n\n" if preserve_markdown else "\n"
+    separator = "\n\n"  # 第 9 条汇总用双换行，保留段落感
     tail = separator.join(normalized[live_remaining:])
     tail_chunks = [chunk for chunk in split_utf8(tail, MAX_WEIXIN_CHUNK) if chunk]
     remaining_slots = max(0, total_remaining - len(head))
@@ -265,7 +265,7 @@ def pack_final_burst(
 ) -> tuple[list[str], str]:
     normalized = normalize_delivery_chunks(chunks, preserve_markdown)
     remaining_slots = max(0, int(max_messages) - max(0, int(sent_count or 0)))
-    separator = "\n\n" if preserve_markdown else "\n"
+    separator = "\n\n"  # 第 9 条汇总用双换行，保留段落感
     if not remaining_slots:
         return [], separator.join(normalized)
     # Finalization is not itself a reason to collapse the whole answer.

@@ -527,6 +527,7 @@ class WeixinChannel:
             state.setdefault("heldChunks", []).extend(held_chunks)
         delivered = []
         delivered_chunks = []
+        failed_chunks = []
         for index, chunk in enumerate(send_chunks):
             compact_chunk = str(chunk or "") if preserve_markdown else strip_sentence_tail_chinese_full_stops(chunk)
             compact_chunk = compact_chunk or "Completed."
@@ -534,7 +535,35 @@ class WeixinChannel:
                 f"pycb-{uuid.uuid5(uuid.NAMESPACE_URL, f'{delivery_id}:{index}')}"
                 if delivery_id else f"pycb-{uuid.uuid4()}"
             )
-            _post(account["baseUrl"], "ilink/bot/sendmessage", account["token"], {"msg": {"from_user_id": "", "to_user_id": sender_id, "client_id": client_id, "message_type": 2, "message_state": 2, "item_list": [{"type": 1, "text_item": {"text": compact_chunk}}], "context_token": token}}, timeout=5)
+            payload = {
+                "msg": {
+                    "from_user_id": "", "to_user_id": sender_id, "client_id": client_id,
+                    "message_type": 2, "message_state": 2,
+                    "item_list": [{"type": 1, "text_item": {"text": compact_chunk}}],
+                    "context_token": token,
+                }
+            }
+            # 网络抖动（Clash 掐 TLS 时常见 SSL EOF / 连接被关）不应该让整轮剩余气泡全部丢失：
+            # 单条最多重试 3 次，仍失败就把这条和后面所有未发送的内容整体转为 deferred，等下次补发。
+            sent_ok = False
+            last_error = ""
+            for attempt in range(3):
+                try:
+                    _post(account["baseUrl"], "ilink/bot/sendmessage", account["token"], payload, timeout=10)
+                    sent_ok = True
+                    break
+                except Exception as error:
+                    last_error = f"{type(error).__name__}: {error}"
+                    if attempt < 2:
+                        time.sleep(0.5 if attempt == 0 else 1.5)
+            if not sent_ok:
+                print(
+                    "[G4W] sendmessage failed at bubble %d/%d after 3 attempts -> deferring %d remaining chunk(s): %s"
+                    % (index + 1, len(send_chunks), len(send_chunks) - index, last_error[:160])
+                )
+                failed_chunks.append(compact_chunk)
+                failed_chunks.extend(str(item) for item in send_chunks[index + 1:] if str(item or "").strip())
+                break
             delivered.append(compact_chunk)
             delivered_chunks.append({
                 "bubble": sent_count + index + 1,
@@ -544,6 +573,10 @@ class WeixinChannel:
             })
             time.sleep(0.35)
         state["sentCount"] = sent_count + len(delivered)
+        if failed_chunks:
+            remainder = "\n\n".join(failed_chunks)
+            deferred_text = (deferred_text + "\n\n" + remainder).strip() if deferred_text else remainder
+            state["heldChunks"] = []
         held_text = join_delivery_chunks(state.get("heldChunks") or [], bool(state.get("preserveMarkdown")))
         if round_final:
             self.delivery_states.pop(budget_key, None)
@@ -551,6 +584,7 @@ class WeixinChannel:
             "deliveredText": ("\n\n" if preserve_markdown else "\n").join(delivered),
             "deliveredChunks": delivered_chunks,
             "deferredText": deferred_text,
+            "failedBubbles": failed_chunks,
             "heldText": "" if round_final else held_text,
             "deliveredCount": len(delivered),
             "preserveMarkdown": preserve_markdown,

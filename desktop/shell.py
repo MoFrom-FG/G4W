@@ -163,6 +163,24 @@ def stop_backend(force_port: bool = True):
         _log(f"stop_backend: done pids={killed}")
 
 
+def stop_main_service():
+    """托盘「退出」时把微信主服务 / 监视器一并停掉（退出 = 全部退出）。
+
+    直接复用包内 tools/stop_G4W_ga.bat quiet：它会按 pid 文件停主服务、
+    停 model monitor，并清理 Embedding 僵尸进程。
+    """
+    script = os.path.join(ROOT, "tools", "stop_G4W_ga.bat")
+    if not os.path.isfile(script):
+        _log("stop_main_service: stop_G4W_ga.bat not found, skip")
+        return
+    try:
+        subprocess.run(["cmd", "/c", script, "quiet"], capture_output=True, timeout=60,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        _log("stop_main_service: stop_G4W_ga.bat quiet done")
+    except Exception as exc:
+        _log(f"stop_main_service: {type(exc).__name__}: {exc}")
+
+
 def _base_env() -> dict:
     """G4W 子进程标准环境（与 ensure_backend 一致）。"""
     env = os.environ.copy()
@@ -840,7 +858,11 @@ def main():
     def quit_all():
         global quitting
         quitting = True
-        # 先停后端服务，再拆托盘/窗口，避免窗口已关而 18180 仍在监听
+        # 退出 = 全部退出：先停微信主服务 / 监视器，再停看板，最后拆托盘与窗口
+        try:
+            stop_main_service()
+        except Exception as exc:
+            _log(f"quit_all stop_main_service: {type(exc).__name__}: {exc}")
         try:
             stop_backend(force_port=True)
         except Exception as exc:
