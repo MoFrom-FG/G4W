@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/g4w-logo.png" alt="G4W · 记忆回环" width="240" />
+</p>
+
 # G4W
 
 > 把微信变成你的 AI 工作入口：能长期记住、主动提醒、后台执行，并把结果送回聊天窗口。
