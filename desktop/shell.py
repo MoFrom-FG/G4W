@@ -345,6 +345,33 @@ class WizardApi:
         except Exception:
             return {"ok": False, "error": (proc.stdout or "")[-300:]}
 
+    def _call_setup(self, func: str, payload: dict) -> dict:
+        """子进程调用 G4W.dashboard.setup_wizard 函数（服务商列表 / 连通性探测）。
+
+        向导页是 file:// 源，不能同源 fetch 看板接口；而 setup_wizard 顶部是相对导入，
+        必须作为包内模块在 G4W_HOME 下运行 —— 与 _call_initializer 同款子进程手法。
+        """
+        code = (
+            "import sys,json;"
+            "from G4W.dashboard.setup_wizard import %s as f;"
+            "print(json.dumps(f(**json.load(sys.stdin)),ensure_ascii=False))"
+        ) % func
+        try:
+            proc = subprocess.run(
+                [PYTHON, "-B", "-c", code],
+                input=json.dumps(payload, ensure_ascii=False),
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=90, env=_base_env(), cwd=G4W_HOME,
+            )
+        except Exception as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        if proc.returncode != 0:
+            return {"ok": False, "error": (proc.stderr or proc.stdout or "")[-400:]}
+        try:
+            return json.loads(proc.stdout.strip().splitlines()[-1])
+        except Exception:
+            return {"ok": False, "error": (proc.stdout or "")[-300:]}
+
     def check(self) -> dict:
         try:
             r = wizard_status()
@@ -412,9 +439,34 @@ class WizardApi:
         return {"ok": ok, "finished": finished, "log": "\n".join(lines)}
 
     # ---- ② API Key ----
-    def save_key(self, api_key: str) -> dict:
-        r = self._call_initializer("configure_ga_key",
-                                   {"api_key": api_key, "replace_existing": True})
+    def providers(self) -> dict:
+        """向导第②步的服务商下拉（内置预设 + Anthropic 协议提示）。"""
+        r = self._call_setup("providers", {})
+        if not r.get("ok"):
+            _log(f"api providers -> err={str(r.get('error'))[:120]}")
+        return r
+
+    def probe(self, apibase: str, apikey: str, model: str = "") -> dict:
+        """填完 Key 立即探测连通性；失败原样返回上游错误，不抛异常。"""
+        r = self._call_setup("probe", {
+            "apibase": apibase or "",
+            "apikey": apikey or "",
+            "model": model or "",
+        })
+        _log(f"api probe -> ok={r.get('ok')} err={str(r.get('error'))[:120] if not r.get('ok') else ''}")
+        return r
+
+    def save_key(self, api_key: str, provider: str = "", apibase: str = "",
+                 conductor_model: str = "", worker_model: str = "") -> dict:
+        r = self._call_initializer("configure_ga_key", {
+            "api_key": api_key,
+            "replace_existing": True,
+            # 缺省空串 = 旧行为（走包内 DeepSeek 模板），保证老调用不变
+            "provider": provider or "",
+            "apibase": apibase or "",
+            "conductor_model": conductor_model or "",
+            "worker_model": worker_model or "",
+        })
         _log(f"api save_key -> ok={r.get('ok')} err={str(r.get('error'))[:120] if not r.get('ok') else ''}")
         return r
 

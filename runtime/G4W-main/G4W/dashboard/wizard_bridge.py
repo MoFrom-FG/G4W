@@ -33,7 +33,16 @@ SHIM = """<script>
         return { lines: lines, done: ok, ok: ok };
       });
     },
-    save_key: function (key) { return post('/api/setup/key', { api_key: key }); },
+    providers: function () { return get('/api/setup/providers'); },
+    probe: function (apibase, apikey, model) {
+      return post('/api/setup/probe', { apibase: apibase, apikey: apikey, model: model || '' });
+    },
+    save_key: function (key, provider, apibase, conductorModel, workerModel) {
+      return post('/api/setup/key', {
+        api_key: key, provider: provider || '', apibase: apibase || '',
+        conductor_model: conductorModel || '', worker_model: workerModel || ''
+      });
+    },
     save_env: function (values) { return post('/api/setup/env', { values: values }); },
     login_start: function () { return post('/api/setup/login/start', {}); },
     login_status: function () { return get('/api/setup/login/status'); },

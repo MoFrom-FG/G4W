@@ -41,6 +41,11 @@ button { padding:9px 20px; border:0; border-radius:9px; font-size:13px; cursor:p
 .row .grow { flex:1; }
 .msg { font-size:12px; min-height:18px; margin-top:10px; }
 .msg.ok { color:var(--ok); } .msg.err { color:var(--err); } .msg.info { color:var(--muted); }
+.field-note { color:var(--muted); font-size:11px; margin-top:5px; line-height:1.5; }
+.check-row { display:flex; align-items:center; gap:8px; margin-top:10px; }
+.check-row input[type=checkbox] { width:auto; margin:0; }
+.check-row label { margin:0; }
+select:disabled, input:read-only { opacity:.75; }
 .log { background:#0a0e13; border:1px solid var(--line); border-radius:9px; padding:10px 12px;
   height:170px; overflow-y:auto; font:11px/1.55 Consolas,monospace; color:var(--soft); white-space:pre-wrap; }
 .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:11px; margin-left:8px; }
@@ -80,12 +85,20 @@ button { padding:9px 20px; border:0; border-radius:9px; font-size:13px; cursor:p
   <div class="card hidden" data-card="key">
     <h2>配置模型 API Key</h2>
     <div class="desc">密钥只保存在本机 <code>runtime\app\mykey.py</code>，不会上传。<b>不强制 DeepSeek</b>——任何 OpenAI 兼容的服务都能用（通义 / Kimi / 火山 / 中转站…），也可以<b>先跳过</b>，装好之后在控制中心「环境配置 → 模型配置」里再配置其他模型。</div>
-    <label>API Key（DeepSeek 在 platform.deepseek.com 获取；其他服务商填其提供的 Key）</label>
+    <label>服务商</label>
+    <select id="provider-select"></select>
+    <div class="field-note hidden" id="provider-desc"></div>
+    <label>API 地址（Base URL）</label>
+    <input id="provider-apibase" placeholder="https://..." autocomplete="off">
+    <div class="field-note hidden" id="anthropic-hint"></div>
+    <label>API Key</label>
     <input id="key-input" type="password" placeholder="sk-..." autocomplete="off">
+    <div class="field-note" id="key-hint">在 platform.deepseek.com 获取</div>
     <div class="row">
-      <div class="msg info grow" id="key-msg">填写后保存，或点右侧“先跳过”</div>
+      <div class="msg info grow" id="key-msg">填写后点「验证并继续」</div>
+      <button class="btn-ghost hidden" id="key-continue-anyway">仍要继续（稍后在看板配）</button>
       <button class="btn-ghost" id="key-skip">先跳过，稍后在看板配置</button>
-      <button class="btn-primary" id="key-save">保存</button>
+      <button class="btn-primary" id="key-save">验证并继续</button>
     </div>
   </div>
 
@@ -101,11 +114,17 @@ button { padding:9px 20px; border:0; border-radius:9px; font-size:13px; cursor:p
     <select id="env-gender"><option value="male">male</option><option value="female">female</option><option value="neutral">neutral</option></select>
     <label>机器人名字</label>
     <input id="env-bot" placeholder="例如：小助手">
-    <label>默认模型</label>
-    <select id="env-model">
-      <option value="deepseek-v4-flash">deepseek-v4-flash（快）</option>
-      <option value="deepseek-v4-pro">deepseek-v4-pro（强）</option>
-    </select>
+    <div id="model-block">
+      <label>conductor 模型（主对话 / 调度）</label>
+      <select id="env-conductor-model"></select>
+      <label>worker 模型（后台执行）</label>
+      <select id="env-worker-model"></select>
+      <div class="check-row">
+        <input id="env-follow-conductor" type="checkbox" checked>
+        <label for="env-follow-conductor">跟随 conductor</label>
+      </div>
+    </div>
+    <div class="field-note hidden" id="model-skip-hint">已跳过 API Key：模型稍后在看板「模型配置」里选择，此处不写入。</div>
     <div class="row">
       <div class="msg info grow" id="env-msg">填写后保存</div>
       <button class="btn-primary" id="env-save">保存</button>
@@ -222,37 +241,204 @@ async function pollPrepare() {
   } catch (e) { /* 单次轮询失败忽略，下一轮继续 */ }
 }
 
-// ② API Key
+// ② API Key：服务商预设 + 立即验证（probe）
+// 与桌面壳页同一套字段名与流程；差异仅在传输层（桥 vs 同源 fetch），见 setupProviders / setupProbe。
+const PROVIDER_FALLBACK = [
+  { id: 'deepseek', name: 'DeepSeek（官方）', apibase: 'https://api.deepseek.com', models: ['deepseek-v4-flash', 'deepseek-v4-pro'], key_hint: '在 platform.deepseek.com 获取', desc: '官方直连，国内可访问' },
+  { id: 'openai', name: 'OpenAI（官方）', apibase: 'https://api.openai.com/v1', models: ['gpt-4o', 'gpt-4o-mini'], key_hint: '在 platform.openai.com 获取', desc: '需要可访问海外的网络' },
+  { id: 'moonshot', name: 'Moonshot / Kimi', apibase: 'https://api.moonshot.cn/v1', models: ['kimi-k2-0905-preview'], key_hint: '在 platform.moonshot.cn 获取', desc: '' },
+  { id: 'qwen', name: '通义千问（兼容模式）', apibase: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen-max', 'qwen-plus'], key_hint: '在 dashscope.console.aliyun.com 获取', desc: '' },
+  { id: 'custom', name: '其它 / 自填 Base URL', apibase: '', models: [], key_hint: '填该服务商提供的 API Key', desc: '任何 OpenAI 兼容接口都行：中转站、火山、自建网关…' },
+];
+let providerList = PROVIDER_FALLBACK.slice();
+let anthropicHint = '';
+let probedModels = [];
+let keySkipped = false;
+let providersLoaded = false;
+
+// providers / probe：优先走 pywebview 桥（桌面壳 / 看板 SHIM 都提供）；桥里没有时退回同源 HTTP。
+function postJSON(path, body) {
+  return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}) }).then((r) => r.json());
+}
+function bridgeHas(method) {
+  return !!(window.pywebview && window.pywebview.api && typeof window.pywebview.api[method] === 'function');
+}
+async function setupProviders() {
+  if (bridgeHas('providers')) return await apiCall('providers');
+  return await postJSON('/api/setup/providers', {});
+}
+async function setupProbe(apibase, apikey, model) {
+  if (bridgeHas('probe')) return await apiCall('probe', apibase, apikey, model || '');
+  return await postJSON('/api/setup/probe', { apibase: apibase, apikey: apikey, model: model || '' });
+}
+
+function currentProvider() {
+  const id = $('provider-select').value;
+  for (let i = 0; i < providerList.length; i++) if (providerList[i].id === id) return providerList[i];
+  return providerList[0] || null;
+}
+function onProviderChange() {
+  const p = currentProvider();
+  if (!p) return;
+  const base = $('provider-apibase');
+  const custom = p.id === 'custom';
+  base.value = p.apibase || '';
+  base.readOnly = !custom;          // custom 才允许手填 Base URL，其它只读展示
+  const desc = $('provider-desc');
+  if (p.desc) { desc.textContent = p.desc; desc.classList.remove('hidden'); }
+  else { desc.textContent = ''; desc.classList.add('hidden'); }
+  $('key-hint').textContent = p.key_hint || '填该服务商提供的 API Key';
+  const ah = $('anthropic-hint');
+  if (anthropicHint) { ah.textContent = anthropicHint; ah.classList.remove('hidden'); }
+  else { ah.textContent = ''; ah.classList.add('hidden'); }
+  probedModels = [];
+}
+function renderProviders() {
+  const sel = $('provider-select');
+  sel.innerHTML = '';
+  providerList.forEach((p) => {
+    const o = document.createElement('option');
+    o.value = p.id; o.textContent = p.name || p.id;
+    sel.appendChild(o);
+  });
+  sel.value = providerList.some((p) => p.id === 'deepseek') ? 'deepseek' : ((providerList[0] && providerList[0].id) || '');
+  onProviderChange();
+}
+async function loadProviders() {
+  if (providersLoaded) return;
+  providersLoaded = true;
+  try {
+    const r = await setupProviders();
+    if (r && r.ok && Array.isArray(r.providers) && r.providers.length) {
+      providerList = r.providers;
+      anthropicHint = r.anthropicHint || '';
+    }
+  } catch (e) { /* 无桥也无同源服务：保持内置预设，不打扰用户 */ }
+  renderProviders();
+}
+function showContinueAnyway(on) {
+  const b = $('key-continue-anyway');
+  if (b) b.classList.toggle('hidden', !on);
+}
+function modelCandidates() {
+  const p = currentProvider();
+  return probedModels.length ? probedModels : ((p && p.models) || []);
+}
 async function keySave() {
   const key = $('key-input').value.trim();
   if (!key) { msg($('key-msg'), '请输入 API Key', 'err'); return; }
+  const p = currentProvider();
+  const provider = p ? p.id : '';
+  const apibase = ($('provider-apibase').value || '').trim();
+  if (provider === 'custom' && !apibase) { msg($('key-msg'), '请填写 API 地址（Base URL）', 'err'); return; }
   const btn = $('key-save'); btn.disabled = true;
-  msg($('key-msg'), '保存中…', 'info');
+  showContinueAnyway(false);
+  msg($('key-msg'), '正在验证 Key…', 'info');
   try {
-    const r = await apiCall('save_key', key);
-    if (r.ok) {
+    const pr = await setupProbe(apibase, key, '');
+    if (pr && pr.ok) {
+      probedModels = Array.isArray(pr.models) ? pr.models : [];
+      msg($('key-msg'), '验证通过 ✓（' + (pr.modelCount || probedModels.length || 0) + ' 个模型 · ' + (pr.mode || 'models') + '）', 'ok');
+    } else {
+      const err = (pr && pr.error) || '上游没有返回原因';
+      msg($('key-msg'), '验证失败：' + err, 'err');
+      showErr('模型服务验证失败：' + err);
+      showContinueAnyway(true);          // 停在②，可重试，或选择继续
+      btn.disabled = false;
+      return;
+    }
+  } catch (e) {
+    const reason = String(e && e.message ? e.message : e);
+    msg($('key-msg'), '验证失败：' + reason, 'err');
+    showContinueAnyway(true);
+    btn.disabled = false;
+    return;
+  }
+  msg($('key-msg'), '正在保存…', 'info');
+  const cands = modelCandidates();
+  const model0 = cands.length ? cands[0] : '';
+  try {
+    const r = await apiCall('save_key', key, provider, apibase, model0, model0);
+    if (r && r.ok) {
       msg($('key-msg'), '已保存 ✓', 'ok');
-      setTimeout(() => showCard('env'), 500);
-    } else { msg($('key-msg'), r.error || '保存失败', 'err'); }
+      keySkipped = false;
+      fillModelOptions(cands);
+      setTimeout(() => enterEnv(), 400);
+    } else { msg($('key-msg'), (r && r.error) || '保存失败', 'err'); }
   } catch (e) { msg($('key-msg'), String(e), 'err'); }
   btn.disabled = false;
 }
+renderProviders();
 
 // ③ 环境配置
+// 模型下拉：conductor / worker 两个；worker 默认跟随 conductor（勾选框勾上时禁用并实时同步）
+function fillModelOptions(models) {
+  const list = (models && models.length) ? models : modelCandidates();
+  const c = $('env-conductor-model'), w = $('env-worker-model');
+  const prevC = c.value, prevW = w.value;
+  [c, w].forEach((sel) => {
+    sel.innerHTML = '';
+    list.forEach((m) => {
+      const o = document.createElement('option');
+      o.value = m; o.textContent = m;
+      sel.appendChild(o);
+    });
+  });
+  if (prevC && list.indexOf(prevC) >= 0) c.value = prevC;
+  if (prevW && list.indexOf(prevW) >= 0) w.value = prevW;
+  syncFollowConductor();
+}
+function syncFollowConductor() {
+  const follow = $('env-follow-conductor').checked;
+  const w = $('env-worker-model'), c = $('env-conductor-model');
+  if (follow) w.value = c.value;
+  w.disabled = follow;
+}
+// 进入第③步：按「是否跳过 Key」切换模型区显示
+function enterEnv() {
+  const block = $('model-block'), hint = $('model-skip-hint');
+  block.classList.toggle('hidden', keySkipped);
+  hint.classList.toggle('hidden', !keySkipped);
+  if (!keySkipped) fillModelOptions(probedModels);
+  showCard('env');
+}
 async function envSave() {
   const values = {
     G4W_USER_NAME: $('env-name').value.trim(),
     G4W_USER_IDENTITY: $('env-identity').value.trim(),
     G4W_USER_GENDER: $('env-gender').value,
     G4W_BOT_NAME: $('env-bot').value.trim(),
-    G4W_CONDUCTOR_MODEL: $('env-model').value,
-    G4W_WORKER_MODEL: $('env-model').value,
   };
+  if (!keySkipped) {   // 跳过 Key 时不写三个模型键（G4W_CONDUCTOR_MODEL / G4W_WORKER_MODEL / G4W_PRO_MODEL）
+    const conductor = $('env-conductor-model').value;
+    const worker = $('env-follow-conductor').checked ? conductor : $('env-worker-model').value;
+    if (conductor) values.G4W_CONDUCTOR_MODEL = conductor;
+    if (worker) values.G4W_WORKER_MODEL = worker;
+  }
   if (!values.G4W_USER_NAME || !values.G4W_BOT_NAME) {
     msg($('env-msg'), '名字和机器人名字必填', 'err'); return;
   }
   const btn = $('env-save'); btn.disabled = true;
   msg($('env-msg'), '保存中…', 'info');
+  // ③ 选的模型必须写回 mykey.py：save_key 会按 conductor/worker 重建 native_oai_config_main / _lite。
+  // 只写 .env 的话模型目录里没有这两个名字，运行时会静默回退到块里的旧模型。
+  const wKey = $('key-input').value.trim();
+  const wProv = currentProvider();
+  const wProvider = wProv ? wProv.id : '';
+  const wBase = ($('provider-apibase').value || '').trim();
+  if (!keySkipped && wKey && wProvider) {
+    try {
+      const kr = await apiCall('save_key', wKey, wProvider, wBase, values.G4W_CONDUCTOR_MODEL || '', values.G4W_WORKER_MODEL || '');
+      if (!kr || !kr.ok) {
+        msg($('env-msg'), (kr && kr.error) || '写回模型失败', 'err');
+        btn.disabled = false; return;
+      }
+    } catch (e) {
+      msg($('env-msg'), String(e), 'err');
+      btn.disabled = false; return;
+    }
+  }
   try {
     const r = await apiCall('save_env', values);
     if (r.ok) {
@@ -320,7 +506,8 @@ async function keySkip() {
     const r = await response.json();
     if (r.ok) {
       msg($('key-msg'), '已跳过：之后在控制中心「环境配置 → 模型配置」里配置即可 ✓', 'ok');
-      setTimeout(() => showCard('env'), 600);
+      keySkipped = true;
+      setTimeout(() => enterEnv(), 600);
     } else { msg($('key-msg'), r.error || '跳过失败', 'err'); }
   } catch (e) { msg($('key-msg'), String(e), 'err'); }
   btn.disabled = false;
@@ -330,6 +517,11 @@ async function keySkip() {
 $('prepare-start').addEventListener('click', prepareStart);
 $('key-save').addEventListener('click', keySave);
 $('key-skip').addEventListener('click', keySkip);
+// 「仍要继续（稍后在看板配）」：probe 失败后的次要入口 —— 跳过 Key 并进③
+$('key-continue-anyway').addEventListener('click', keySkip);
+$('provider-select').addEventListener('change', onProviderChange);
+$('env-follow-conductor').addEventListener('change', syncFollowConductor);
+$('env-conductor-model').addEventListener('change', syncFollowConductor);
 $('env-save').addEventListener('click', envSave);
 $('login-refresh').addEventListener('click', loginRefresh);
 
@@ -344,6 +536,7 @@ function initWizard() {
     return;
   }
   initDone = true;
+  loadProviders();
   checkAll();
 }
 window.addEventListener('pywebviewready', initWizard);
@@ -366,6 +559,7 @@ async function checkAll() {
     const s = await apiCallT('check', 10000);
     hideErr(); checkTries = 0;
     if (s.prepare.ok) setStep('prepare', 'done');
+    keySkipped = !!(s.key && s.key.skipped);   // 已跳过 Key：第③步隐藏模型区、不写三个模型键
     if (s.key.ok) setStep('key', 'done');
     if (s.env.ok) setStep('env', 'done');
     if (s.login.ok) { setStep('login', 'done'); }
@@ -373,7 +567,7 @@ async function checkAll() {
     // 跳到第一个未完成步骤
     if (!s.prepare.ok) showCard('prepare');
     else if (!s.key.ok) showCard('key');
-    else if (!s.env.ok) showCard('env');
+    else if (!s.env.ok) enterEnv();
     else showCard('login');
     if (!s.prepare.ok) { $('prepare-start').textContent = '开始准备'; $('prepare-msg').textContent = '点击开始创建环境'; }
     if (s.key.preset) $('key-input').value = s.key.preset;
@@ -382,7 +576,7 @@ async function checkAll() {
       $('env-identity').value = s.env.preset.G4W_USER_IDENTITY || '';
       $('env-gender').value = s.env.preset.G4W_USER_GENDER || 'neutral';
       $('env-bot').value = s.env.preset.G4W_BOT_NAME || '';
-      $('env-model').value = s.env.preset.G4W_CONDUCTOR_MODEL || 'deepseek-v4-flash';
+      fillModelOptions([s.env.preset.G4W_CONDUCTOR_MODEL || 'deepseek-v4-flash']);
     }
     if (!s.login.ok && s.env.ok && s.key.ok && s.prepare.ok) loginRefresh();
   } catch (e) {
@@ -393,6 +587,7 @@ async function checkAll() {
     if (checkTries < 5) setTimeout(checkAll, 5000);
   }
 }
+loadProviders();   // 先拉服务商预设，再自检（拉不到就用内置预设）
 checkAll();
 </script>
 </body>

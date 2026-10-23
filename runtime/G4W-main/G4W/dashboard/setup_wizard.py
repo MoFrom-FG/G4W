@@ -117,14 +117,56 @@ def start_prepare() -> dict:
     return {"ok": True, "running": True}
 
 
-def save_key(api_key: str) -> dict:
+def providers() -> dict:
+    """向导第②步的服务商下拉：内置预设 + Anthropic 协议提示。"""
+    from ..core import model_config
+
+    rows = []
+    for item in model_config.PROVIDER_PRESETS:
+        rows.append({
+            "id": item.get("id", ""),
+            "name": item.get("name", ""),
+            "apibase": item.get("apibase", ""),
+            "models": list(item.get("models") or []),
+            "api_mode": item.get("api_mode", ""),
+            "reasoning_effort": item.get("reasoning_effort", ""),
+            "key_hint": item.get("key_hint", ""),
+            "desc": item.get("desc", ""),
+        })
+    return {"ok": True, "providers": rows, "anthropicHint": model_config.ANTHROPIC_HINT}
+
+
+def probe(apibase: str, apikey: str, model: str = "") -> dict:
+    """探测服务商连通性（填完 Key 立即探测）；失败原样返回上游错误，不抛异常。"""
+    from ..core import model_config
+
+    try:
+        return model_config.probe(apibase, apikey, model)
+    except Exception as error:  # noqa: BLE001
+        return {"ok": False, "error": str(error)}
+
+
+def save_key(
+    api_key: str,
+    provider: str = "",
+    apibase: str = "",
+    conductor_model: str = "",
+    worker_model: str = "",
+) -> dict:
     api_key = (api_key or "").strip()
     if not api_key:
         return {"ok": False, "error": "API Key 不能为空"}
     from ..cli.initializer import configure_ga_key
 
     try:
-        result = configure_ga_key(api_key, replace_existing=True)
+        result = configure_ga_key(
+            api_key,
+            replace_existing=True,
+            provider=provider,
+            apibase=apibase,
+            conductor_model=conductor_model,
+            worker_model=worker_model,
+        )
     except Exception as error:
         return {"ok": False, "error": str(error)}
     if isinstance(result, dict):
@@ -235,17 +277,32 @@ def _render_inline_page() -> bytes:
         "<div class='card'><h2>② 配置模型 API Key</h2>"
         "<p class='sub'>不强制 DeepSeek：任何 OpenAI 兼容的服务都能用（通义 / Kimi / 火山 / 中转站…）。"
         "也可以先跳过，装好后在控制中心「环境配置 → 模型配置」里再配置。</p>"
-        "<label>API Key（DeepSeek 在 platform.deepseek.com 获取；其他服务商填其提供的 Key）</label>"
+        "<style>.hidden{display:none!important}.field-note{color:#9aa3b2;font-size:12px;margin-top:5px;line-height:1.5}"
+        ".check-row{display:flex;align-items:center;gap:8px;margin-top:10px}"
+        ".check-row input[type=checkbox]{width:auto;margin:0}.check-row label{margin:0}"
+        "select:disabled,input[readonly]{opacity:.75}</style>"
+        "<label>服务商</label><select id='provider-select'></select>"
+        "<div class='field-note hidden' id='provider-desc'></div>"
+        "<label>API 地址（Base URL）</label><input id='provider-apibase' autocomplete='off' placeholder='https://...'>"
+        "<div class='field-note hidden' id='anthropic-hint'></div>"
+        "<label>API Key</label>"
         "<input id='key' type='password' autocomplete='off' placeholder='sk-...'>"
-        "<button id='btn-key'>保存并继续</button>"
-        "<button id='btn-key-skip' style='margin-left:8px'>先跳过，稍后在看板配置</button>"
+        "<div class='field-note' id='key-hint'>在 platform.deepseek.com 获取</div>"
+        "<button id='btn-key'>验证并继续</button>"
+        "<button id='btn-key-continue' class='ghost hidden' style='margin-left:8px'>仍要继续（稍后在看板配）</button>"
+        "<button id='btn-key-skip' class='ghost' style='margin-left:8px'>先跳过，稍后在看板配置</button>"
         "<div class='msg' id='msg-key'></div></div>"
         "<div class='card'><h2>③ 环境配置</h2>"
         "<label>你的名字</label><input id='env-name' placeholder='必填'>"
         "<label>日常称呼</label><input id='env-identity'>"
         "<label>性别</label><select id='env-gender'><option value='male'>male</option><option value='female'>female</option><option value='neutral'>neutral</option></select>"
         "<label>机器人名字</label><input id='env-bot' placeholder='必填'>"
-        "<label>默认模型</label><select id='env-model'><option value='deepseek-v4-flash'>deepseek-v4-flash（快）</option><option value='deepseek-v4-pro'>deepseek-v4-pro（强）</option></select>"
+        "<div id='model-block'><label>conductor 模型（主对话 / 调度）</label><select id='env-conductor-model'></select>"
+        "<label>worker 模型（后台执行）</label><select id='env-worker-model'></select>"
+        "<div class='check-row'><input id='env-follow-conductor' type='checkbox' checked>"
+        "<label for='env-follow-conductor'>跟随 conductor</label></div></div>"
+        "<div class='field-note hidden' id='model-skip-hint'>已跳过 API Key：模型稍后在看板「模型配置」里选择，此处不写入。</div>"
+        "<select id='env-model' style='display:none'></select>"
         "<button id='btn-env'>保存并继续</button><div class='msg' id='msg-env'></div></div>"
         "<div class='card'><h2>④ 微信扫码登录</h2>"
         "<p class='sub'>使用专门用于 G4W 的微信账号扫码；与 Windows 版同一账号会互踢。</p>"
@@ -253,6 +310,15 @@ def _render_inline_page() -> bytes:
         "<div id='qr-box'></div><div class='msg' id='msg-login'></div></div>"
         "<p class='foot'>已完成四步？<a href='/' style='color:#5b9dff'>刷新进入看板</a></p>"
         "<script>" + SCRIPT + "</script>"
+        "<script>"
+        "(function(){function el(id){return document.getElementById(id);}function post(path,body){return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(function(r){return r.json();});}function setMsg(id,text,kind){var n=el(id);n.textContent=text||'';n.className='msg'+(kind?' '+kind:'');}var PROVIDER_FALLBACK=[{id:'deepseek',name:'DeepSeek（官方）',apibase:'https://api.deepseek.com',models:['deepseek-v4-flash','deepseek-v4-pro'],key_hint:'在 platform.deepseek.com 获取',desc:'官方直连，国内可访问'},{id:'openai',name:'OpenAI（官方）',apibase:'https://api.openai.com/v1',models:['gpt-4o','gpt-4o-mini'],key_hint:'在 platform.openai.com 获取',desc:'需要可访问海外的网络'},{id:'moonshot',name:'Moonshot / Kimi',apibase:'https://api.moonshot.cn/v1',models:['kimi-k2-0905-preview'],key_hint:'在 platform.moonshot.cn 获取',desc:''},{id:'qwen',name:'通义千问（兼容模式）',apibase:'https://dashscope.a"
+        "liyuncs.com/compatible-mode/v1',models:['qwen-max','qwen-plus'],key_hint:'在 dashscope.console.aliyun.com 获取',desc:''},{id:'custom',name:'其它 / 自填 Base URL',apibase:'',models:[],key_hint:'填该服务商提供的 API Key',desc:'任何 OpenAI 兼容接口都行：中转站、火山、自建网关…'}];var providerList=PROVIDER_FALLBACK.slice();var anthropicHint='';var probedModels=[];var keySkipped=false;function currentProvider(){var id=el('provider-select').value;for(var i=0;i<providerList.length;i++){if(providerList[i].id===id){return providerList[i];}}return providerList[0]||null;}function onProviderChange(){var p=currentProvider();if(!p){return;}var base=el('provider-apibase');var custom=(p.id==='custom');base.value=p.apibase||'';base.readOnly=!custom;var d=el('provider-desc');if(p.desc){d.textContent=p.desc;d.classList.remove('hidden');}else{d.textContent='';d.classList.add('hidden');}el('key-hint').textContent=p.key_hint||'填该服务商提供的 API Key"
+        "';var ah=el('anthropic-hint');if(anthropicHint){ah.textContent=anthropicHint;ah.classList.remove('hidden');}else{ah.textContent='';ah.classList.add('hidden');}probedModels=[];}function renderProviders(){var sel=el('provider-select');sel.innerHTML='';for(var i=0;i<providerList.length;i++){var p=providerList[i];var o=document.createElement('option');o.value=p.id;o.textContent=p.name||p.id;sel.appendChild(o);}var want='';for(var j=0;j<providerList.length;j++){if(providerList[j].id==='deepseek'){want='deepseek';}}if(!want&&providerList[0]){want=providerList[0].id;}sel.value=want;onProviderChange();}function loadProviders(){return post('/api/setup/providers',{}).then(function(r){if(r&&r.ok&&r.providers&&r.providers.length){providerList=r.providers;anthropicHint=r.anthropicHint||'';}}).catch(function(){}).then(function(){renderProviders();});}function fillModelOptions(models){var list=(models&"
+        "&models.length)?models:((currentProvider()||{}).models||[]);var c=el('env-conductor-model'),w=el('env-worker-model');var pc=c.value,pw=w.value;[c,w].forEach(function(sel){sel.innerHTML='';for(var i=0;i<list.length;i++){var o=document.createElement('option');o.value=list[i];o.textContent=list[i];sel.appendChild(o);}});if(pc&&list.indexOf(pc)>=0){c.value=pc;}if(pw&&list.indexOf(pw)>=0){w.value=pw;}syncFollow();}function syncFollow(){var follow=el('env-follow-conductor').checked;var c=el('env-conductor-model'),w=el('env-worker-model');if(follow){w.value=c.value;}w.disabled=follow;}function showContinue(on){var b=el('btn-key-continue');if(b){if(on){b.classList.remove('hidden');}else{b.classList.add('hidden');}}}function applySkipState(){var b=el('model-block'),h=el('model-skip-hint');if(!b||!h){return;}b.classList.toggle('hidden',keySkipped);h.classList.toggle('hidden',!keySkipped);if(!keySk"
+        "ipped){fillModelOptions(probedModels);}}function refreshSkip(){return fetch('/api/setup/status').then(function(r){return r.json();}).then(function(s){keySkipped=!!(s.key&&s.key.skipped);applySkipState();return s;}).catch(function(){});}el('provider-select').onchange=onProviderChange;el('env-follow-conductor').onchange=syncFollow;el('env-conductor-model').onchange=syncFollow;el('btn-key').onclick=function(){var v=el('key').value.trim();if(!v){setMsg('msg-key','请输入 API Key','err');return;}var p=currentProvider();var provider=p?p.id:'';var apibase=(el('provider-apibase').value||'').trim();if(provider==='custom'&&!apibase){setMsg('msg-key','请填写 API 地址（Base URL）','err');return;}var btn=el('btn-key');btn.disabled=true;showContinue(false);setMsg('msg-key','正在验证 Key…','');post('/api/setup/probe',{apibase:apibase,apikey:v,model:''}).then(function(pr){if(!(pr&&pr.ok)){var err=(pr&&pr.error)||'上游没有"
+        "返回原因';setMsg('msg-key','验证失败：'+err,'err');showContinue(true);btn.disabled=false;return null;}probedModels=(pr.models&&pr.models.length)?pr.models:[];setMsg('msg-key','验证通过 ✓（'+(pr.modelCount||probedModels.length||0)+' 个模型 · '+(pr.mode||'models')+'）','ok');var cands=probedModels.length?probedModels:((p&&p.models)||[]);var m0=cands.length?cands[0]:'';return post('/api/setup/key',{api_key:v,provider:provider,apibase:apibase,conductor_model:m0,worker_model:m0}).then(function(r){if(r&&r.ok){setMsg('msg-key','已保存 ✓','ok');keySkipped=false;fillModelOptions(cands);}else{setMsg('msg-key',(r&&r.error)||'保存失败','err');}});}).catch(function(e){setMsg('msg-key','验证失败：'+(e&&e.message?e.message:e),'err');showContinue(true);}).then(function(){btn.disabled=false;});};function skipKey(){setMsg('msg-key','正在跳过…','');return post('/api/setup/key/skip',{}).then(function(r){if(r&&r.ok){setMsg('msg-key','已跳过：稍后在"
+        "看板「环境配置 → 模型配置」里配置 ✓','ok');keySkipped=true;applySkipState();}else{setMsg('msg-key',(r&&r.error)||'跳过失败','err');}});}el('btn-key-skip').onclick=skipKey;el('btn-key-continue').onclick=skipKey;el('btn-env').onclick=function(){var values={G4W_USER_NAME:el('env-name').value.trim(),G4W_USER_IDENTITY:el('env-identity').value.trim(),G4W_USER_GENDER:el('env-gender').value,G4W_BOT_NAME:el('env-bot').value.trim()};var c='',w='';if(!keySkipped){c=el('env-conductor-model').value;w=el('env-follow-conductor').checked?c:el('env-worker-model').value;if(c){values.G4W_CONDUCTOR_MODEL=c;}if(w){values.G4W_WORKER_MODEL=w;}}setMsg('msg-env','保存中…','');var wk=el('key').value.trim();var wp=currentProvider();var wpv=wp?wp.id:'';var wb=(el('provider-apibase').value||'').trim();var pre=Promise.resolve(null);if(!keySkipped&&wk&&wpv){pre=post('/api/setup/key',{api_key:wk,provider:wpv,apibase:wb,conductor_model:c||'',worker_model:w||''}).then(function(kr){if(!(kr&&kr.ok)){throw new Error((kr&&kr.error)||'写回模型失败');}return kr;});}pre.then(function(){return post('/api/setup/env',{values:values});}).then(function(r){if(r&&r.ok){setMsg('msg-env','已保存','ok');}else{setMsg('msg-env',(r&&r.error)||'保存失败','err');}}).catch(function(e){setMsg('msg-env',(e&&e.message)?e.message:String(e),'err');});};renderProviders();loadProviders().then(refreshSkip);})();"
+        "</script>"
     )
     return _page_shell(body)
 
@@ -306,9 +372,24 @@ def handle_post(handler, path: str) -> bool:
     try:
         if path == "/api/setup/prepare":
             handler._send_json(start_prepare())
+        elif path == "/api/setup/providers":
+            handler._send_json(providers())
+        elif path == "/api/setup/probe":
+            payload = handler._read_json_body()
+            handler._send_json(probe(
+                payload.get("apibase", ""),
+                payload.get("apikey", ""),
+                payload.get("model", ""),
+            ))
         elif path == "/api/setup/key":
             payload = handler._read_json_body()
-            handler._send_json(save_key(payload.get("api_key", "")))
+            handler._send_json(save_key(
+                payload.get("api_key", ""),
+                provider=payload.get("provider", ""),
+                apibase=payload.get("apibase", ""),
+                conductor_model=payload.get("conductor_model", ""),
+                worker_model=payload.get("worker_model", ""),
+            ))
         elif path == "/api/setup/env":
             payload = handler._read_json_body()
             handler._send_json(save_env(payload.get("values") or {}))

@@ -87,10 +87,87 @@ def prepare_portable() -> dict:
     }
 
 
-def configure_ga_key(api_key: str, *, replace_existing: bool = False) -> dict:
+# 自定义服务商（PROVIDER_PRESETS 里 models 为空）且调用方没给模型名时的兜底，
+# 保证生成的 mykey.py 一定有非空 model 字段（用户随后可在看板「模型配置」里改）。
+DEFAULT_CUSTOM_MODEL = "gpt-4o-mini"
+
+
+def _preset_by_id(provider: str) -> dict:
+    from ..core.model_config import PROVIDER_PRESETS
+
+    for item in PROVIDER_PRESETS:
+        if item.get("id") == provider:
+            return item
+    raise ValueError("未知服务商: " + provider)
+
+
+def _render_provider_mykey(preset: dict, key: str, base: str, conductor: str, worker: str) -> str:
+    """按 GA 的 native_oai_config_* 契约渲染两个块（键序与包内模板一致）。"""
+    effort = str(preset.get("reasoning_effort") or "high")
+    mode = str(preset.get("api_mode") or "chat_completions")
+
+    def block(var: str, model: str) -> str:
+        return (
+            f"{var} = {{\n"
+            f"    'name': {model!r},\n"
+            f"    'apikey': {key!r},\n"
+            f"    'apibase': {base!r},\n"
+            f"    'model': {model!r},\n"
+            f"    'api_mode': {mode!r},\n"
+            f"    'reasoning_effort': {effort!r},\n"
+            f"    'stream': True,\n"
+            f"}}\n"
+        )
+
+    header = (
+        f"# G4W for GA: {preset.get('name') or preset.get('id')} "
+        f"({preset.get('id')}) — written by the G4W setup wizard.\n"
+    )
+    return header + "\n" + block("native_oai_config_main", conductor) + "\n" + block("native_oai_config_lite", worker)
+
+
+def _configure_provider_key(key: str, provider: str, apibase: str, conductor_model: str, worker_model: str) -> dict:
+    preset = _preset_by_id(provider)
+    if provider == "custom":
+        base = str(apibase or "").strip().rstrip("/")
+        if not base:
+            raise ValueError("自定义服务商需要填写 apibase")
+    else:
+        base = str(preset.get("apibase") or "").strip().rstrip("/")
+    models = [str(item).strip() for item in (preset.get("models") or []) if str(item).strip()]
+    conductor = str(conductor_model or "").strip() or (models[0] if models else DEFAULT_CUSTOM_MODEL)
+    worker = str(worker_model or "").strip() or (models[1] if len(models) > 1 else conductor)
+    content = _render_provider_mykey(preset, key, base, conductor, worker)
+    compile(content, str(MYKEY_FILE), "exec")
+    backup = _backup(MYKEY_FILE) if MYKEY_FILE.is_file() else None
+    _atomic_write(MYKEY_FILE, content)
+    return {
+        "ok": True,
+        "changed": True,
+        "mykeyFile": str(MYKEY_FILE),
+        "backupFile": str(backup) if backup else "",
+        "models": [conductor, worker],
+        "provider": provider,
+        "apibase": base,
+    }
+
+
+def configure_ga_key(
+    api_key: str,
+    *,
+    replace_existing: bool = False,
+    provider: str = "",
+    apibase: str = "",
+    conductor_model: str = "",
+    worker_model: str = "",
+) -> dict:
     key = str(api_key or "").strip()
     if not key:
         raise ValueError("API Key cannot be empty")
+    provider_id = str(provider or "").strip()
+    if provider_id:
+        # 走供应商预设渲染：不读 KEY_TEMPLATE，因此不受「恰好两个空 apikey」约束
+        return _configure_provider_key(key, provider_id, apibase, conductor_model, worker_model)
     if not KEY_TEMPLATE.is_file():
         raise FileNotFoundError(f"G4W GA key template is missing: {KEY_TEMPLATE}")
     if MYKEY_FILE.is_file() and not replace_existing:
@@ -173,7 +250,7 @@ def _render_env(values: dict[str, str], unknown: dict[str, str]) -> str:
         "# Models",
         f"G4W_CONDUCTOR_MODEL={values['G4W_CONDUCTOR_MODEL']}",
         f"G4W_WORKER_MODEL={values['G4W_WORKER_MODEL']}",
-        "G4W_PRO_MODEL=deepseek-v4-pro",
+        f"G4W_PRO_MODEL={values['G4W_PRO_MODEL']}",
         "",
         "# Timeline",
         "G4W_TIMELINE_LOCALE=zh-CN",
@@ -228,9 +305,15 @@ def configure_env(values: dict[str, str]) -> dict:
         "G4W_CHECKIN_MAX_INTERVAL_MS": existing.get("G4W_CHECKIN_MAX_INTERVAL_MS", "5400000"),
         "G4W_VECTOR_INDEX_DIR": existing.get("G4W_VECTOR_INDEX_DIR", "${G4W_WORKSPACE_ROOT}/runtime/G4W-vector-index/memory"),
     }
-    if merged["G4W_CONDUCTOR_MODEL"] not in MODEL_CHOICES.values():
+    # pro 模型默认跟随 conductor；显式传入 G4W_PRO_MODEL 时以传入值为准（旧行为是写死 deepseek-v4-pro）
+    merged["G4W_PRO_MODEL"] = (
+        _clean_value(values.get("G4W_PRO_MODEL", existing.get("G4W_PRO_MODEL", "")), "Pro 模型")
+        or merged["G4W_CONDUCTOR_MODEL"]
+    )
+    # 模型名不再限定 DeepSeek 两个值：任意 OpenAI 兼容服务商的模型名都应能写入
+    if not str(merged["G4W_CONDUCTOR_MODEL"]).strip():
         raise ValueError("Unsupported Conductor model")
-    if merged["G4W_WORKER_MODEL"] not in MODEL_CHOICES.values():
+    if not str(merged["G4W_WORKER_MODEL"]).strip():
         raise ValueError("Unsupported Worker model")
     if merged["G4W_TIMELINE_UI_THEME"] not in THEME_CHOICES.values():
         raise ValueError("Unsupported Timeline theme")
@@ -248,7 +331,7 @@ def configure_env(values: dict[str, str]) -> dict:
         "sharedMemoryRoot": merged["G4W_SHARED_MEMORY_ROOT"],
         "conductorModel": merged["G4W_CONDUCTOR_MODEL"],
         "workerModel": merged["G4W_WORKER_MODEL"],
-        "proModel": "deepseek-v4-pro",
+        "proModel": merged["G4W_PRO_MODEL"],
         "timelineLocale": "zh-CN",
         "timelineTheme": merged["G4W_TIMELINE_UI_THEME"],
         "checkinMinutes": [int(merged["G4W_CHECKIN_MIN_INTERVAL_MS"]) // 60000, int(merged["G4W_CHECKIN_MAX_INTERVAL_MS"]) // 60000],
