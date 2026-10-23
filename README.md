@@ -10,7 +10,9 @@ G4W（Generic Agent for WeChat）运行在 Windows 电脑上，通过微信提�
 
 当前发布底座：[GenericAgent](https://github.com/lsdefine/GenericAgent) main@2026-10-14（核心） + [Desktop Portable 0.2.0](https://github.com/lsdefine/GenericAgent/releases#release-desktop-portable-v0.2.0)（桌面壳）。
 
-当前版本：**3.1.6**（2026-10）· [📦 下载 Windows 便携包](https://github.com/MoFrom-FG/G4W/releases/latest) · [各版本更新说明](https://github.com/MoFrom-FG/G4W/releases)
+当前版本：**3.2.0**（2026-10）· [📦 下载 Windows 便携包](https://github.com/MoFrom-FG/G4W/releases/latest) · [各版本更新说明](https://github.com/MoFrom-FG/G4W/releases)
+
+3.2.0 主要更新：**首次向导可自选服务商与模型**（内置 9 家预设，也可手填 base，填完 Key 立刻探测，失败当场报错并可重试）、**日记每天都会有一个标题**（conductor 写当天第一篇时先给昨天补一行 `# 标题`，看板列表不再只显示时刻）、**看板支持简体 / 繁體 / English 三语与任意时区**、README 新增「自定义服务与终端」「对话记录是纯 Markdown」两节。
 
 3.1.6 主要更新：**微信分气泡改为显式控制**（conductor 在正文写 <split/>，未写则按标点兜底）、**终端日志支持 cmd 式选中复制**（选中期间不刷新不滚动）、**切换模型后首页即时刷新**、**待办显示创建/完成时间与逾期天数**；同时提供**首个 Linux 便携包**（自带 CPython + 离线 wheel）。
 
@@ -24,10 +26,10 @@ WeChat功能逻辑参考：[Cyberboss](https://github.com/WenXiaoWendy/cyberboss
 
 | 平台 | 包 | 上手 |
 |---|---|---|
-| Windows x64 | `G4W-3.1.6-win-x64.zip` | 解压 → 双击 `G4W.exe` → 浏览器向导四步 |
-| Linux x64（推荐） | `G4W-3.1.6-linux-x64.tar.gz` | 解压 → `bash install.sh` → `./G4W`（自带 CPython + 离线 wheel，不依赖外网） |
-| Linux x64（精简） | `G4W-3.1.6-linux-x64-slim.tar.gz` | 需要宿主 `python3.12`；其余相同 |
-| 老版本升级 | `G4W-patch-<版本>-to-3.1.6.zip` | 增量补丁，保留 `G4W-data` 与密钥，不必重下整包 |
+| Windows x64 | `G4W-3.2.0-win-x64.zip` | 解压 → 双击 `G4W.exe` → 浏览器向导四步 |
+| Linux x64（推荐） | `G4W-3.2.0-linux-x64.tar.gz` | 解压 → `bash install.sh` → `./G4W`（自带 CPython + 离线 wheel，不依赖外网） |
+| Linux x64（精简） | `G4W-3.2.0-linux-x64-slim.tar.gz` | 需要宿主 `python3.12`；其余相同 |
+| 老版本升级 | `G4W-patch-<版本>-to-3.2.0.zip` | 增量补丁，保留 `G4W-data` 与密钥，不必重下整包 |
 
 Linux 完整说明（含 WSL、systemd 服务化、排错）见 [tools/linux/README-Linux.md](tools/linux/README-Linux.md)。
 
@@ -62,7 +64,7 @@ Linux 完整说明（含 WSL、systemd 服务化、排错）见 [tools/linux/REA
 
 完整产品介绍见 [G4W使用说明.md](G4W使用说明.md)。
 
-**完整手册**：[G4W使用手册-3.1.6.md](G4W使用手册-3.1.6.md) —— 37 节、含目录、八个场景实战、看板 13 页逐页说明、运维与排错。
+**完整手册**：[G4W使用手册.md](G4W使用手册.md) —— 37 节、含目录、八个场景实战、看板 13 页逐页说明、运维与排错。
 
 ## 能力展示
 
@@ -137,7 +139,7 @@ Linux 完整说明（含 WSL、systemd 服务化、排错）见 [tools/linux/REA
 - **人设**：多套人设预设的分节编辑、保存 / 注入、Markdown 导入导出
 - **时间轴 / 日记**：按天分布与统计、事件分类着色
 - **知识库**：文档列表、PDF/TXT/Markdown/DOCX 预览与检索
-- **服务与终端**：服务启停（含模型输出监视器）+ 实时日志终端
+- **服务与终端**：服务启停（含模型输出监视器）+ 实时日志终端；服务清单可自己往里加（见下方「自定义服务与终端」）
 - **Worker**：后台任务列表 + 模型输出监视器（每条记录可查看输出原文）
 - **环境配置**：供应商配置 + 模型配置（拉取 / 测试 / 添加 / 删除模型）、`conductor` / `worker` / `pro` 模型选择、网络偏好与向量检索安装、G4W 程序更新
 - **外观**：微信绿 / Neko 粉 / 简洁蓝预设主题 + 自定义主题编辑器
@@ -166,6 +168,50 @@ Linux 完整说明（含 WSL、systemd 服务化、排错）见 [tools/linux/REA
 </table>
 
 <sub>界面截图用于展示布局和能力，实际内容由用户自己的运行数据生成。</sub>
+
+### 自定义服务与终端
+
+「服务与终端」页里的每一项都由注册表 `runtime\G4W-data\dashboard-services.json` 驱动：内置条目（主服务 / 模型输出监视器 / 向量 Embedding / 时间线 / 看板）由程序维护，**你自己添加的条目不会被覆盖**。想把自己常驻的东西（另一个模型网关、自建脚本、某个本地服务）也放进来看板和 G4W 一起管，直接往 `services` 里加一条、刷新页面即可：
+
+```json
+{
+  "services": {
+    "my-gateway": {
+      "name": "我的模型网关",
+      "desc": "本地 8317 中转",
+      "command": ["D:\\tools\\gateway\\.venv\\Scripts\\python.exe", "-u", "app.py"],
+      "cwd": "D:\\tools\\gateway",
+      "logs": ["D:\\tools\\gateway\\gateway.log"],
+      "health": { "kind": "port", "value": "127.0.0.1:8317" },
+      "managed": true
+    }
+  }
+}
+```
+
+- `command` 必须是**数组**（第一个元素是可执行文件，其余是参数），不要写成一整行字符串
+- `cwd` 必填，否则子进程会落在看板自己的工作目录
+- `health.kind` 三选一：`port`（值写 `127.0.0.1:端口`）、`pidfile`（值写 pid 文件路径）、`cmdline`（值写命令行里能唯一识别的特征串）—— 它决定看板上「运行中 / 已停止」判断依据
+- `logs` 里的文件就是该服务的实时终端内容；终端支持 cmd 式拖选复制（选中期间不刷新、不自动滚动），方便直接抄报错
+- `managed: true` 表示由看板负责启停；写成 `false` 就只观察状态、不接管进程
+
+### 对话记录是纯 Markdown
+
+G4W 把每天的微信对话按日期落成**普通 markdown 文件**，不是数据库、也不是专有格式：
+
+- 位置：`runtime\G4W-data\memory\conversations\<你的微信账号>\transcripts\<年>\<月>\<日期>.md`
+- 文件头是 `# G4W WeChat Transcript`、`sender:`、`date:`，之后每条消息一行时间戳加角色，正文接在后面：
+
+```markdown
+[2026-10-23 00:58:59 Asia/Shanghai] Assistant: 三点四十了，还没睡？
+<!-- G4W:message_id=... -->
+```
+
+- 那些 `<!-- G4W:... -->` 是给索引用的 HTML 注释，渲染时不可见、也不会干扰阅读，删掉不影响使用
+- **纯净**：只记录你实际收到和发出的消息，不掺工具调用、不掺模型内部推理、不掺系统提示词
+- 因为是纯文本，可以直接 `grep` 检索、按目录拷走备份、或整包丢进 Obsidian / Logseq 当 vault 打开
+- 同目录下还有 `summaries\`（当天分块摘要、日记、长期洞察）、`assistant-replies\`（回复原文）、`workers\`（后台任务输出），都是同一个原则：**明文、按日期、随时可读**
+- 这些记录只存在你自己的电脑上，不在发布包内（见下方「数据与隐私」）
 
 ### 自定义主题
 
