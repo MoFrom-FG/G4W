@@ -11,6 +11,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,6 +27,7 @@ from ..memory.maintenance_menu import ACTION_CATALOG, MaintenanceMenuStore
 from ..core.config import Config
 from ..core.dashboard_control import DashboardControlMailbox
 from ..core.storage import JsonStore, safe_segment
+from ..core.ui_prefs import read_ui_prefs, write_ui_prefs
 from ..knowledge.ingest import extract_text, validate_extracted_text
 from ..memory.checkin import CheckinService
 from ..memory.instructions import render_instruction_template, update_env_file
@@ -38,7 +40,7 @@ from ..core.model_config import (ANTHROPIC_HINT, LITE_VAR, MAIN_VAR, PROVIDER_PR
                                  save_config as save_mykey_config, test_model)
 from ..memory.vector.vector_config import load_config as load_vector_config
 from ..memory.vector.vector_config import set_vector_enabled
-from ..core.platform_adapt import detached_kwargs, kill_tree, pid_alive, pids_listening_on, portable_python, service_launch_kwargs, service_python, venv_python, venv_site_packages
+from ..core.platform_adapt import IS_WINDOWS, detached_kwargs, kill_tree, pid_alive, pids_listening_on, portable_python, service_launch_kwargs, service_python, venv_python, venv_site_packages
 from . import setup_wizard
 
 
@@ -577,30 +579,53 @@ class DashboardState:
             staged.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(dst) as zf:
                 zf.extractall(staged)
-            ps1 = None
+            # 补丁包根目录 = 含 update-manifest.json 的那一层（helper 与 payload 同级）。
+            patch_root = None
             for base, _dirs, names in _os.walk(staged):
-                if "apply-update.ps1" in names and "update-manifest.json" in names:
-                    ps1 = Path(base) / "apply-update.ps1"
+                if "update-manifest.json" in names:
+                    patch_root = Path(base)
                     break
-            if ps1 is None:
-                self._set_stage("failed", 0, "补丁包结构异常（缺少 apply-update.ps1 / update-manifest.json）")
+            if patch_root is None:
+                self._set_stage("failed", 0, "补丁包结构异常（缺少 update-manifest.json）")
                 return
+
+            # Windows 走 apply-update.ps1（成熟路径）；POSIX 走 apply_update.py。
+            # 这条分支以前是硬编码 powershell 的 —— Linux 上必然报
+            # FileNotFoundError: 'powershell'，等于「一键更新」在 Linux 从未可用。
+            if IS_WINDOWS:
+                helper = patch_root / "apply-update.ps1"
+                missing_hint = "缺少 apply-update.ps1"
+            else:
+                helper = patch_root / "apply_update.py"
+                missing_hint = "缺少 apply_update.py（该补丁不支持 Linux 一键更新，请下载整包手动覆盖）"
+            if not helper.is_file():
+                self._set_stage("failed", 0, "补丁包结构异常（缺少 update-manifest.json / %s）" % missing_hint)
+                return
+
             self._set_stage("handoff", 80, "停服并应用更新…")
-            cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps1),
-                   "-Root", str(root), "-AutoStart", "-ForceStop",
-                   "-WaitPid", str(pid), "-WaitSeconds", "60"]
-            # 注意：这里**不用** DETACHED_PROCESS。实测（本机 + 部分沙箱/安全软件）
-            # DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP 的子进程根本不会执行，
-            # 而 CREATE_NO_WINDOW 正常；后者同样没有控制台窗口，且不会被安全软件拦。
-            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             helper_log = work / "helper-console.log"
             handle = open(helper_log, "w", encoding="utf-8", errors="replace")
-            proc = subprocess.Popen(cmd, cwd=str(staged), creationflags=flags,
-                                    stdout=handle, stderr=handle, stdin=subprocess.DEVNULL)
+            if IS_WINDOWS:
+                cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(helper),
+                       "-Root", str(root), "-AutoStart", "-ForceStop",
+                       "-WaitPid", str(pid), "-WaitSeconds", "60"]
+                # 注意：这里**不用** DETACHED_PROCESS。实测（本机 + 部分沙箱/安全软件）
+                # DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP 的子进程根本不会执行，
+                # 而 CREATE_NO_WINDOW 正常；后者同样没有控制台窗口，且不会被安全软件拦。
+                popen_kwargs = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+            else:
+                # POSIX：安装器自己会先等看板进程退出再动手，新会话保证父进程被杀后它仍活着。
+                cmd = [sys.executable, str(helper),
+                       "--root", str(root), "--patch-dir", str(patch_root),
+                       "--wait-pid", str(pid), "--wait-seconds", "60", "--restart"]
+                popen_kwargs = detached_kwargs()
+            proc = subprocess.Popen(cmd, cwd=str(patch_root), stdout=handle, stderr=handle,
+                                    stdin=subprocess.DEVNULL, **popen_kwargs)
             DashboardState._UPDATE_STATE["_helper_log_handle"] = handle   # 持有句柄，避免被 GC 关闭
             DashboardState._UPDATE_STATE["log"] = (
                 list(DashboardState._UPDATE_STATE.get("log") or [])
-                + [f"helper: {ps1}", f"helper pid={proc.pid}", f"helper args: -AutoStart -ForceStop -WaitPid {pid}"]
+                + [f"helper: {helper}", f"helper pid={proc.pid}",
+                   f"helper args: {' '.join(cmd[1:])}"]
             )[-40:]
             # 这里**故意不退出**：helper 会以 -ForceStop 结束本进程（以及主服务/监控）。
             # 这样就不依赖“子进程在父进程退出后仍然存活”——某些环境（带 Job Object 的
@@ -852,6 +877,7 @@ class DashboardState:
         greeting = GreetingStore(state_dir / "memory" / "dashboard-greeting.json").render(
             address=config.user_identity or config.user_name or "你",
         )
+        ui_prefs = read_ui_prefs(state_dir)
         return {
             "updatedAt": time.time(),
             "nextCheckinAt": next_checkin_at,
@@ -859,6 +885,7 @@ class DashboardState:
                 "name": config.bot_name or "G4W",
                 "user": config.user_name or "本地用户",
                 "greeting": greeting,
+                "ui": {"locale": ui_prefs["locale"], "timezone": ui_prefs["timezone"]},
                 "status": "online" if _pid_alive(pid) else "standby",
                 "corePid": pid,
                 "model": config.conductor_model,
@@ -1383,7 +1410,11 @@ class DashboardState:
             plain = re.sub(r"\s+", " ", plain).strip()
             entries.append({
                 "date": path.stem,
-                "title": next((line[3:].strip() for line in content.splitlines() if line.startswith("## ")), "当日日记"),
+                "title": (
+                    next((line[2:].strip() for line in content.splitlines() if line.startswith("# ")), "")
+                    or next((line[3:].strip() for line in content.splitlines() if line.startswith("## ")), "")
+                    or "当日日记"
+                ),
                 "excerpt": plain[:180],
                 "sections": sum(1 for line in content.splitlines() if line.startswith("## ")),
                 "bytes": path.stat().st_size,
@@ -2526,6 +2557,7 @@ class DashboardState:
         checkins = CheckinService(config.state_dir / "checkin-config.json")
         checkin = checkins.status(binding_key) if binding_key else {}
         chunk = _read_json(config.state_dir / "weixin-config.json", {"minChunkChars": 10})
+        ui_prefs = read_ui_prefs(config.state_dir)
         return {
             "envFile": str(config.env_file),
             "stateDir": str(config.state_dir),
@@ -2561,6 +2593,8 @@ class DashboardState:
             "webSearchEnabled": config.web_search_enabled,
             "vectorEnabled": bool(load_vector_config().get("enabled")),
             "theme": self.read_custom_theme(),
+            "uiLocale": ui_prefs["locale"],
+            "uiTimezone": ui_prefs["timezone"],
         }
 
     def read_custom_theme(self) -> dict:
@@ -2709,6 +2743,13 @@ class DashboardState:
             if not 1 <= value <= 3800:
                 raise ValueError("微信分片阈值必须在 1–3800 之间")
             JsonStore(config.state_dir / "weixin-config.json", {"minChunkChars": 10}).write({"minChunkChars": value})
+
+        if {"uiLocale", "uiTimezone"} & set(updates):
+            # 看板 UI 偏好(语言/时区)独立落盘,只改传过来的键,不需要重启
+            write_ui_prefs(config.state_dir, {
+                "locale": updates.get("uiLocale"),
+                "timezone": updates.get("uiTimezone"),
+            })
 
         checkin_fields = {"checkinEnabled", "checkinMin", "checkinMax"}
         if checkin_fields.intersection(updates):

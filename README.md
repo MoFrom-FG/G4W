@@ -10,7 +10,9 @@ G4W（Generic Agent for WeChat）运行在 Windows 电脑上，通过微信提�
 
 当前发布底座：[GenericAgent](https://github.com/lsdefine/GenericAgent) main@2026-10-14（核心） + [Desktop Portable 0.2.0](https://github.com/lsdefine/GenericAgent/releases#release-desktop-portable-v0.2.0)（桌面壳）。
 
-当前版本：**3.2.0**（2026-10）· [📦 下载 Windows 便携包](https://github.com/MoFrom-FG/G4W/releases/latest) · [各版本更新说明](https://github.com/MoFrom-FG/G4W/releases)
+当前版本：**3.2.1**（2026-10）· [📦 下载 Windows 便携包](https://github.com/MoFrom-FG/G4W/releases/latest) · [各版本更新说明](https://github.com/MoFrom-FG/G4W/releases)
+
+3.2.1 主要更新：**修复 Linux 上「一键更新」必然失败**。更新器此前硬编码调用 PowerShell（Windows 专用），Linux 上没有这个命令，更新在「停服并应用更新」这一步直接报 `FileNotFoundError: 'powershell'`；现在 Linux 走跨平台 Python 安装器，并在重启前等待端口从 TIME_WAIT 释放（看板关掉了地址复用，否则会 `Address already in use`）。Windows 路径不变。
 
 3.2.0 主要更新：**首次向导可自选服务商与模型**（内置 9 家预设，也可手填 base，填完 Key 立刻探测，失败当场报错并可重试）、**日记每天都会有一个标题**（conductor 写当天第一篇时先给昨天补一行 `# 标题`，看板列表不再只显示时刻）、**看板支持简体 / 繁體 / English 三语与任意时区**、README 新增「自定义服务与终端」「对话记录是纯 Markdown」两节。
 
@@ -26,10 +28,10 @@ WeChat功能逻辑参考：[Cyberboss](https://github.com/WenXiaoWendy/cyberboss
 
 | 平台 | 包 | 上手 |
 |---|---|---|
-| Windows x64 | `G4W-3.2.0-win-x64.zip` | 解压 → 双击 `G4W.exe` → 浏览器向导四步 |
-| Linux x64（推荐） | `G4W-3.2.0-linux-x64.tar.gz` | 解压 → `bash install.sh` → `./G4W`（自带 CPython + 离线 wheel，不依赖外网） |
-| Linux x64（精简） | `G4W-3.2.0-linux-x64-slim.tar.gz` | 需要宿主 `python3.12`；其余相同 |
-| 老版本升级 | `G4W-patch-<版本>-to-3.2.0.zip` | 增量补丁，保留 `G4W-data` 与密钥，不必重下整包 |
+| Windows x64 | `G4W-3.2.1-win-x64.zip` | 解压 → 双击 `G4W.exe` → 浏览器向导四步 |
+| Linux x64（推荐） | `G4W-3.2.1-linux-x64.tar.gz` | 解压 → `bash install.sh` → `./G4W`（自带 CPython + 离线 wheel，不依赖外网） |
+| Linux x64（精简） | `G4W-3.2.1-linux-x64-slim.tar.gz` | 需要宿主 `python3.12`；其余相同 |
+| 老版本升级 | `G4W-patch-<版本>-to-3.2.1.zip` | 增量补丁，保留 `G4W-data` 与密钥，不必重下整包 |
 
 Linux 完整说明（含 WSL、systemd 服务化、排错）见 [tools/linux/README-Linux.md](tools/linux/README-Linux.md)。
 

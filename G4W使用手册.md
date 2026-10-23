@@ -1,6 +1,6 @@
-# G4W 3.2.0 · 完全使用手册
+# G4W 3.2.1 · 完全使用手册
 
-> 适用版本：**3.2.0**（Windows / Linux）
+> 适用版本：**3.2.1**（Windows / Linux）
 >
 > 本版新增：向导自选服务商与模型（§8）、日记每日标题（§17）、看板三语与任意时区（§23）。
 > 手册定位：从「第一次听说」到「长期稳定跑在服务器上」。
@@ -131,7 +131,7 @@ G4W（Generic Agent for WeChat）是**跑在你自己电脑或服务器上的个
 
 ### 路径 A（99% 的人走这条）：G4W.exe 首次向导
 
-1. 下载 `G4W-3.2.0-win-x64.zip`，**完整解压**（例如 `D:\G4W`）——不要在压缩包里直接双击
+1. 下载 `G4W-3.2.1-win-x64.zip`，**完整解压**（例如 `D:\G4W`）——不要在压缩包里直接双击
 2. 双击根目录 `G4W.exe`
 3. 浏览器自动打开向导，按第 8 节四步走完
 4. 完成后自动进入看板
@@ -149,15 +149,15 @@ G4W（Generic Agent for WeChat）是**跑在你自己电脑或服务器上的个
 
 ### 路径 C：从旧版本升级
 
-下载 `G4W-patch-<你的版本>-to-3.2.0.zip`，运行包内 `apply.cmd`。补丁**不会**动 `runtime\G4W-data`、`runtime\app\mykey.py`、`runtime\G4W-main\.env`。
+下载 `G4W-patch-<你的版本>-to-3.2.1.zip`，Windows 运行包内 `apply.cmd`；Linux 用看板「一键更新」，或 `python3 apply_update.py --root <安装根> --restart`。补丁**不会**动 `runtime\G4W-data`、`runtime\app\mykey.py`、`runtime\G4W-main\.env`。
 
 ## 7. Linux：三种安装路径
 
 ### 路径 A：全量包（推荐，自带运行时）
 
 ```bash
-tar -xzf G4W-3.2.0-linux-x64.tar.gz
-cd G4W-3.2.0-linux-x64
+tar -xzf G4W-3.2.1-linux-x64.tar.gz
+cd G4W-3.2.1-linux-x64
 bash install.sh     # 一次性装好，用包内离线 wheel，不需要外网
 ./G4W               # 没有环境会自动开向导；装好则直接进看板
 ```
@@ -165,8 +165,8 @@ bash install.sh     # 一次性装好，用包内离线 wheel，不需要外网
 ### 路径 B：slim 包（宿主已有 python3.12）
 
 ```bash
-tar -xzf G4W-3.2.0-linux-x64-slim.tar.gz
-cd G4W-3.2.0-linux-x64-slim
+tar -xzf G4W-3.2.1-linux-x64-slim.tar.gz
+cd G4W-3.2.1-linux-x64-slim
 bash install.sh && ./G4W
 ```
 
@@ -181,7 +181,7 @@ journalctl --user -u g4w-main.service -f
 不走 systemd 时，手动后台启动必须**脱离 SSH 会话**，否则断开即被回收：
 
 ```bash
-setsid nohup bash -c 'cd ~/G4W-3.2.0-linux-x64 && exec ./G4W' >~/g4w.log 2>&1 </dev/null &
+setsid nohup bash -c 'cd ~/G4W-3.2.1-linux-x64 && exec ./G4W' >~/g4w.log 2>&1 </dev/null &
 ```
 
 ## 8. 向导四步逐屏说明
@@ -684,7 +684,7 @@ check-in 是区间内**随机**，不是定时闹钟——这是刻意的，避�
 ### 37.1 目录结构
 
 ```
-G4W-3.2.0-win-x64/（Linux 同理：G4W-3.2.0-linux-x64/）
+G4W-3.2.1-win-x64/（Linux 同理：G4W-3.2.1-linux-x64/）
 ├── G4W.exe / G4W          # 入口（向导 / 托盘 / 看板）
 ├── install.sh             # Linux 一次性安装
 ├── README.md              # 快速开始
@@ -713,7 +713,7 @@ G4W-3.2.0-win-x64/（Linux 同理：G4W-3.2.0-linux-x64/）
 
 > 改 .env 后需重启服务。看板「环境配置」页改的是同一批配置。
 
-### 37.3 版本脉络（3.0 → 3.2.0）
+### 37.3 版本脉络（3.0 → 3.2.1）
 
 | 版本 | 关键变化 |
 |---|---|
@@ -724,7 +724,8 @@ G4W-3.2.0-win-x64/（Linux 同理：G4W-3.2.0-linux-x64/）
 | 3.1.5 | GA 底座换代（main + 桌面壳 0.2.0）、维护轮默认静默 + `<notify/>`、看板问候语、维护动作菜单 |
 | 3.1.6 | **`<split/>` 显式分气泡**、终端 cmd 式选中复制、切模型首页即时刷新、待办时间与逾期、**首个 Linux 便携包** |
 | **3.2.0** | **首次向导自选服务商与模型**（9 家预设 + 填 Key 实时探测 + conductor/worker 双下拉）、**日记每日标题**、**看板三语 + 任意时区**、README 新增自定义服务与终端 / 纯 Markdown 对话记录、PyInstaller spec 入库可复现打包 |
+| **3.2.1** | 修复 **Linux 一键更新必然失败**（更新器只调 PowerShell → Linux 走跨平台 Python 安装器），重启前等端口 TIME_WAIT 释放 |
 
 ---
 
-> 手册版本：3.2.0 · 如发现与界面不符，以界面与实际行为为准；欢迎在 issue 里指出。
+> 手册版本：3.2.1 · 如发现与界面不符，以界面与实际行为为准；欢迎在 issue 里指出。
