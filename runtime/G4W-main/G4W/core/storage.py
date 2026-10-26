@@ -3,6 +3,8 @@ import os
 import threading
 import time
 import uuid
+import errno
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -12,11 +14,96 @@ def safe_segment(value: str, fallback: str = "unknown") -> str:
     return normalized.strip("_")[:160] or fallback
 
 
+class _StoreLock:
+    """Reentrant per-path lock, including independent service processes."""
+
+    def __init__(self, path: Path):
+        self.path = path.with_name(path.name + ".lock")
+        self._thread_lock = threading.RLock()
+        self._depth = 0
+        self._handle = None
+
+    def __enter__(self):
+        self._thread_lock.acquire()
+        try:
+            if self._depth == 0:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                handle = self.path.open("a+b")
+                deadline = time.monotonic() + 30
+                try:
+                    while True:
+                        try:
+                            handle.seek(0)
+                            if os.name == "nt":
+                                import msvcrt
+                                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                            else:
+                                import fcntl
+                                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            break
+                        except OSError as error:
+                            if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                                raise
+                            if time.monotonic() >= deadline:
+                                raise TimeoutError(f"State lock timed out: {self.path}") from error
+                            time.sleep(0.01)
+                except BaseException:
+                    handle.close()
+                    raise
+                self._handle = handle
+            self._depth += 1
+            return self
+        except BaseException:
+            self._thread_lock.release()
+            raise
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            self._depth -= 1
+            if self._depth == 0:
+                handle, self._handle = self._handle, None
+                try:
+                    handle.seek(0)
+                    if os.name == "nt":
+                        import msvcrt
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                finally:
+                    handle.close()
+                # Never unlink the lock file: waiters must share the same inode.
+        finally:
+            self._thread_lock.release()
+
+
+_STORE_LOCKS = weakref.WeakValueDictionary()
+_STORE_LOCKS_GUARD = threading.Lock()
+
+
+def _store_lock(path: Path) -> _StoreLock:
+    key = (os.getpid(), os.path.normcase(str(path.resolve())))
+    with _STORE_LOCKS_GUARD:
+        lock = _STORE_LOCKS.get(key)
+        if lock is None:
+            lock = _StoreLock(path.resolve())
+            _STORE_LOCKS[key] = lock
+        return lock
+
+
+def _trim_history(items: list[dict], terminal: set[str]) -> list[dict]:
+    if len(items) <= 2000:
+        return items
+    history = [item for item in items if item.get("status") in terminal]
+    keep = {id(item) for item in history[-1500:]}
+    return [item for item in items if item.get("status") not in terminal or id(item) in keep]
+
+
 class JsonStore:
     def __init__(self, path: Path, default: Any):
         self.path = Path(path)
         self.default = default
-        self.lock = threading.RLock()
+        self.lock = _store_lock(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def read(self) -> Any:
@@ -116,8 +203,7 @@ class EventStore:
                     item["attempts"] = int(item.get("attempts", 0)) + 1
                     item["updatedAt"] = time.time()
                     break
-            if len(state.get("events", [])) > 2000:
-                state["events"] = state["events"][-1500:]
+            state["events"] = _trim_history(state.get("events", []), {"done", "cancelled"})
         self.store.update(apply)
 
     def patch(self, event_id: str, *, payload: dict | None = None, **values) -> dict | None:
@@ -401,8 +487,7 @@ class OutboxStore:
                     if isinstance(result, dict):
                         item["delivery"] = json.loads(json.dumps(result, ensure_ascii=False, default=str))
                     break
-            if len(state.get("messages", [])) > 2000:
-                state["messages"] = state["messages"][-1500:]
+            state["messages"] = _trim_history(state.get("messages", []), {"sent", "cancelled", "deferred"})
         self.store.update(apply)
 
     def mark_retry(self, message_id: str, error: str) -> None:

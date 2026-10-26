@@ -151,6 +151,13 @@ class WizardHandler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             return {}
 
+    _send_json = _send_json_message
+    _read_json_body = _read_body
+
+    def _authorize_setup(self) -> bool:
+        from .dashboard.setup_wizard import authorize_setup
+        return authorize_setup(self)
+
     def _payload(self) -> dict:
         from .core.setup_state import setup_status
 
@@ -178,6 +185,13 @@ class WizardHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
         port = int(getattr(self.server, "wizard_port", 18180))
+        if path.startswith("/api/setup/") or path in ("/", "/setup", "/index.html"):
+            if not self._authorize_setup():
+                return
+        if path == "/api/setup/providers":
+            from .dashboard.setup_wizard import providers
+            self._send_json_message(providers())
+            return
         if path == "/api/setup/status":
             payload = self._payload()
             handoff = self._maybe_handoff(port)
@@ -205,6 +219,8 @@ class WizardHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
         port = int(getattr(self.server, "wizard_port", 18180))
+        if path.startswith("/api/setup/") and not self._authorize_setup():
+            return
         try:
             if path == "/api/setup/prepare":
                 self._send_json_message(start_prepare())
@@ -212,7 +228,24 @@ class WizardHandler(BaseHTTPRequestHandler):
             if path == "/api/setup/key":
                 from .dashboard.setup_wizard import save_key
 
-                self._send_json_message(save_key(self._read_body().get("api_key", "")))
+                payload = self._read_body()
+                self._send_json_message(save_key(
+                    payload.get("api_key", ""),
+                    provider=payload.get("provider", ""),
+                    apibase=payload.get("apibase", ""),
+                    conductor_model=payload.get("conductor_model", ""),
+                    worker_model=payload.get("worker_model", ""),
+                ))
+                return
+            if path in ("/api/setup/providers", "/api/setup/probe"):
+                from .dashboard import setup_wizard
+                if path.endswith("/providers"):
+                    self._send_json_message(setup_wizard.providers())
+                else:
+                    payload = self._read_body()
+                    self._send_json_message(setup_wizard.probe(
+                        payload.get("apibase", ""), payload.get("apikey", ""), payload.get("model", ""),
+                    ))
                 return
             if path == "/api/setup/key/skip":
                 from .dashboard.setup_wizard import skip_key

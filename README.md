@@ -10,7 +10,9 @@ G4W（Generic Agent for WeChat）运行在 Windows 电脑上，通过微信提�
 
 当前发布底座：[GenericAgent](https://github.com/lsdefine/GenericAgent) main@2026-10-14（核心） + [Desktop Portable 0.2.0](https://github.com/lsdefine/GenericAgent/releases#release-desktop-portable-v0.2.0)（桌面壳）。
 
-当前版本：**3.2.3**（2026-10）· [📦 下载 Windows 便携包](https://github.com/MoFrom-FG/G4W/releases/latest) · [各版本更新说明](https://github.com/MoFrom-FG/G4W/releases)
+当前版本：**3.2.4**（2026-10）· [📦 下载 Windows 便携包](https://github.com/MoFrom-FG/G4W/releases/latest) · [各版本更新说明](https://github.com/MoFrom-FG/G4W/releases)
+
+3.2.4 主要更新：**长期记忆会自己长起来了**。以前 L4 深压只在手动 `/l4compress` 时才跑，自动链路因为「没有初始标记就不自举」永远跳过——所以聊多久看板「长期记忆」都是空的。现在首次自动整理会把全部历史一次性 bootstrap，之后按「新增 15 条消息」或「距上次整理满 3 天」自动触发（4 小时冷却，快通道按 20% 抽样以免过频）；看板「长期记忆」页新增「上次整理 / 待处理 N 条 / 立即整理」。同时带上跨进程状态文件锁与待办写入原子化（看板与主服务同时写状态不再互相覆盖）、向导与看板的 i18n 加固。
 
 3.2.3 主要更新：**修好 Linux / 群晖上「一键更新后微信主服务不回来」**。更新助手停服时会把看板、`G4W start`、`G4W monitor` 一起停掉，但重启只拉起看板启动器（它只起看板）——于是升级完机器人静默离线。现在助手会按原命令行把主服务与 monitor 一并拉回，微信侧离线时间从「永不返回」降到约 1 秒。
 
@@ -32,10 +34,10 @@ WeChat功能逻辑参考：[Cyberboss](https://github.com/WenXiaoWendy/cyberboss
 
 | 平台 | 包 | 上手 |
 |---|---|---|
-| Windows x64 | `G4W-3.2.3-win-x64.zip` | 解压 → 双击 `G4W.exe` → 浏览器向导四步 |
-| Linux x64（推荐） | `G4W-3.2.3-linux-x64.tar.gz` | 解压 → `bash install.sh` → `./G4W`（自带 CPython + 离线 wheel，不依赖外网） |
-| Linux x64（精简） | `G4W-3.2.3-linux-x64-slim.tar.gz` | 需要宿主 `python3.12`；其余相同 |
-| 老版本升级 | `G4W-patch-<版本>-to-3.2.3.zip` | 增量补丁（3.2.0 / 3.2.1 / 3.2.2 起），保留 `G4W-data` 与密钥，不必重下整包。3.1.x 请用整包覆盖 |
+| Windows x64 | `G4W-3.2.4-win-x64.zip` | 解压 → 双击 `G4W.exe` → 浏览器向导四步 |
+| Linux x64（推荐） | `G4W-3.2.4-linux-x64.tar.gz` | 解压 → `bash install.sh` → `./G4W`（自带 CPython + 离线 wheel，不依赖外网） |
+| Linux x64（精简） | `G4W-3.2.4-linux-x64-slim.tar.gz` | 需要宿主 `python3.12`；其余相同 |
+| 老版本升级 | `G4W-patch-<版本>-to-3.2.4.zip` | 增量补丁（3.2.0 / 3.2.1 / 3.2.2 / 3.2.3 起），保留 `G4W-data` 与密钥，不必重下整包。3.1.x 请用整包覆盖 |
 
 Linux 完整说明（含 WSL、systemd 服务化、排错）见 [tools/linux/README-Linux.md](tools/linux/README-Linux.md)。
 

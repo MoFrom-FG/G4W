@@ -21,15 +21,18 @@ import re
 import shutil
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 DEFAULT_USER_ID = "default"
-DEFAULT_MIN_NEW_USER_MESSAGES = 30
-DEFAULT_MIN_NEW_TRANSCRIPT_FILES = 2
+DEFAULT_MIN_NEW_USER_MESSAGES = 15
+# 0 = gate disabled. The idle-days lane owns low-frequency users; requiring
+# ">= 2 new transcripts" fired on any 2-day gap and contradicted the 3-day lane.
+DEFAULT_MIN_NEW_TRANSCRIPT_FILES = 0
 DEFAULT_COOLDOWN_HOURS = 4.0
+DEFAULT_IDLE_DAYS = 3
 DEFAULT_SAMPLE_RATE = 0.2
 MAX_MEMORY_BRIEF_CHARS = 600
 REQUIRED_CANDIDATE_FILES = [
@@ -308,6 +311,60 @@ def messages_after(messages: Iterable[UserMessage], last_processed: Optional[str
     if not last_processed:
         return []
     return [message for message in messages if message.timestamp > last_processed]
+
+
+def pending_user_messages(markers: Dict[str, Any], messages: Iterable[UserMessage]) -> List[UserMessage]:
+    """Messages not consumed by a finalized L4 run yet.
+
+    A marker file that exists without last_processed_timestamp (auto bootstrap only
+    initialized it, the worker has not finalized yet) means nothing was consumed.
+    """
+    items = list(messages)
+    last_processed = markers.get("last_processed_timestamp")
+    if not last_processed:
+        return items
+    return messages_after(items, last_processed)
+
+
+def parse_iso(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def last_run_at(markers: Dict[str, Any]) -> str:
+    """ISO time of the newest completed L4 run (falls back to marker init time)."""
+    fallback = (markers.get("_meta") or {}).get("initialized_at") if isinstance(markers.get("_meta"), dict) else ""
+    return str(markers.get("last_l2_at") or fallback or "")
+
+
+def elapsed_seconds(value: Any, now: Optional[datetime] = None) -> Optional[float]:
+    stamp = parse_iso(value)
+    if stamp is None:
+        return None
+    return ((now or datetime.now()) - stamp).total_seconds()
+
+
+def pipeline_running(root: Path, user_id: str) -> bool:
+    """True while the deterministic prepare phase holds the L4 lock."""
+    return lock_path(root, user_id).is_file()
+
+
+def pending_transcript_files(pending: Iterable[UserMessage]) -> List[str]:
+    return sorted({message.source_transcript for message in pending})
+
+
+def bootstrap_window(messages: List[UserMessage], now: Optional[datetime] = None) -> Tuple[str, str]:
+    """Bootstrap range: earliest user message date -> today (inclusive)."""
+    today = (now or datetime.now()).strftime("%Y-%m-%d")
+    dates = sorted({message.date for message in messages if message.date})
+    if not dates:
+        return today, today
+    start = dates[0]
+    return start, max(start, today)
 
 
 def group_by_date(messages: Iterable[UserMessage]) -> Dict[str, List[UserMessage]]:
@@ -1385,33 +1442,86 @@ def auto_check(
     cooldown_hours: float,
     sample_rate: float,
     min_transcript_files: int = DEFAULT_MIN_NEW_TRANSCRIPT_FILES,
+    idle_days: int = DEFAULT_IDLE_DAYS,
 ) -> Dict[str, Any]:
+    """Auto trigger with zero user action.
+
+    Lane 0 (bootstrap): no incremental_markers.json but history exists -> run a
+    bootstrap over earliest message date .. today (deterministic L2 + LLM mining).
+    Lane A (fast): new user messages >= min_messages; sampled by sample_rate.
+    Lane B (slow): last run >= idle_days ago and >= 1 new message; deterministic.
+    """
     preflight(root, user_id)
+    all_messages = collect_user_messages(root, user_id)
+    if pipeline_running(root, user_id):
+        return {"status": "skipped", "reason": "already running", "mode": "none", "pending_user_messages": 0}
+
     if not markers_path(root, user_id).is_file():
-        return {"status": "skipped", "reason": "marker missing; auto never bootstraps"}
+        if not all_messages:
+            return {
+                "status": "skipped",
+                "reason": "no user messages in transcripts",
+                "mode": "none",
+                "pending_user_messages": 0,
+            }
+        start, end = bootstrap_window(all_messages)
+        result = prepare_run(root, user_id, trigger_mode="bootstrap", start=start, end=end, dry_run=False)
+        if result.get("status") != "prepared":
+            return {**result, "mode": "bootstrap", "reason": str(result.get("reason") or "bootstrap not prepared")}
+        # Initialize markers so the idle lane has a baseline before the worker finalizes.
+        save_initial_markers(root, user_id)
+        return {
+            **result,
+            "mode": "bootstrap",
+            "reason": f"bootstrap: marker missing, history {start}..{end} ({len(all_messages)} user messages)",
+            "pending_user_messages": len(all_messages),
+        }
+
     markers = load_markers(root, user_id)
-    pending = messages_after(collect_user_messages(root, user_id), markers.get("last_processed_timestamp"))
-    pending_files = sorted({message.source_transcript for message in pending})
-    min_files = max(1, int(min_transcript_files))
-    if len(pending) < min_messages and len(pending_files) < min_files:
+    pending = pending_user_messages(markers, all_messages)
+    pending_files = pending_transcript_files(pending)
+    min_files = max(0, int(min_transcript_files))
+    idle_required = max(0, int(idle_days))
+    ago = elapsed_seconds(last_run_at(markers))
+    days_ago = int(max(0.0, ago) // 86400) if ago is not None else None
+    idle_hit = bool(pending) and idle_required > 0 and (ago is None or days_ago >= idle_required)
+    fast_hit = len(pending) >= min_messages or (min_files > 0 and len(pending_files) >= min_files)
+    if not idle_hit and not fast_hit:
+        days_text = "?" if days_ago is None else str(days_ago)
         return {
             "status": "skipped",
-            "reason": f"new user messages {len(pending)} < {min_messages} and transcript files {len(pending_files)} < {min_files}",
+            "reason": f"below threshold: {len(pending)}/{min_messages} messages, {days_text}/{idle_required} days",
+            "mode": "none",
             "pending_user_messages": len(pending),
             "pending_transcript_files": len(pending_files),
         }
-    last_l2 = markers.get("last_l2_at")
-    if last_l2:
-        try:
-            if datetime.now() - datetime.fromisoformat(last_l2) < timedelta(hours=cooldown_hours):
-                return {"status": "skipped", "reason": f"cooldown {cooldown_hours}h", "pending_user_messages": len(pending)}
-        except ValueError:
-            pass
-    if random.random() >= sample_rate:
+    if ago is not None and ago < cooldown_hours * 3600.0:
+        return {
+            "status": "skipped",
+            "reason": f"cooldown {cooldown_hours}h",
+            "mode": "none",
+            "pending_user_messages": len(pending),
+            "cooldown_remaining_seconds": int(cooldown_hours * 3600.0 - ago),
+        }
+    # Sampling only guards the message-count fast lane; the idle lane is deterministic
+    # so low-frequency users are never sampled away forever.
+    if fast_hit and not idle_hit and random.random() >= sample_rate:
         markers["last_poll_at"] = now_iso()
         atomic_write_json(markers_path(root, user_id), markers)
-        return {"status": "skipped", "reason": f"sample miss rate={sample_rate}", "pending_user_messages": len(pending)}
-    return prepare_run(root, user_id, trigger_mode="auto", dry_run=False)
+        return {
+            "status": "skipped",
+            "reason": f"sample miss rate={sample_rate}",
+            "mode": "none",
+            "pending_user_messages": len(pending),
+        }
+    reason = (
+        f"idle {days_ago}d with {len(pending)} new user messages"
+        if idle_hit else f"{len(pending)} new user messages >= {min_messages}"
+    )
+    result = prepare_run(root, user_id, trigger_mode="deep", dry_run=False)
+    if result.get("status") != "prepared":
+        return {**result, "mode": "deep", "reason": str(result.get("reason") or "deep not prepared")}
+    return {**result, "mode": "deep", "reason": reason, "pending_user_messages": len(pending)}
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -1425,6 +1535,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--to-date", dest="to_date", default="")
     parser.add_argument("--min-new-user-messages", type=int, default=DEFAULT_MIN_NEW_USER_MESSAGES)
     parser.add_argument("--cooldown-hours", type=float, default=DEFAULT_COOLDOWN_HOURS)
+    parser.add_argument("--idle-days", type=int, default=DEFAULT_IDLE_DAYS)
     parser.add_argument("--sample-rate", type=float, default=DEFAULT_SAMPLE_RATE)
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--force", action="store_true", help="Compatibility flag; does not enable full-history scans.")
@@ -1448,7 +1559,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif args.mode == "bootstrap":
             result = prepare_run(root, args.user_id, trigger_mode="bootstrap", start=args.from_date, end=args.to_date, dry_run=False)
         elif args.mode == "auto":
-            result = auto_check(root, args.user_id, args.min_new_user_messages, args.cooldown_hours, args.sample_rate)
+            result = auto_check(
+                root, args.user_id, args.min_new_user_messages,
+                args.cooldown_hours, args.sample_rate, idle_days=args.idle_days,
+            )
         else:
             result = prepare_run(root, args.user_id, trigger_mode="deep", dry_run=False)
     except Exception as exc:

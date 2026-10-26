@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import copy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -221,7 +222,7 @@ def _extract_prompt_section(text: str, marker: str) -> str:
 
 
 class DashboardAuth:
-    """Password auth for the dashboard (ga-admin style PBKDF2), sessions in memory.
+    """Password auth for the dashboard, with credential-bound persisted sessions.
 
     First visit shows a "set password" screen (auth file absent).  Credentials
     live in ``<state_dir>/dashboard-auth.json`` (username, salt, hash,
@@ -235,11 +236,18 @@ class DashboardAuth:
 
     def __init__(self, state_dir: Path):
         self.path = Path(state_dir) / self._AUTH_FILE
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._sessions: dict[str, float] = {}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # 会话持久化:重启 dashboard 后已登录的浏览器 cookie 仍然有效
+        self._session_credential = self._credential_key()
         self._sessions = self._load_sessions()
+        if self.is_initialized():
+            self._save_sessions()
+
+    def _credential_key(self) -> str:
+        value = _read_json(self.path, {})
+        return str(value.get("hash") or "") if isinstance(value, dict) else ""
 
     def _sessions_path(self) -> Path:
         return self.path.parent / self._SESSIONS_FILE
@@ -249,14 +257,30 @@ class DashboardAuth:
             raw = json.loads(self._sessions_path().read_text(encoding="utf-8"))
         except Exception:
             return {}
+        if not isinstance(raw, dict):
+            return {}
+        if "sessions" in raw:
+            if raw.get("credential") != self._credential_key():
+                return {}
+            raw = raw["sessions"]
+        if not isinstance(raw, dict):
+            return {}
         now = time.time()
-        return {str(k): float(v) for k, v in raw.items() if float(v) > now}
+        sessions = {}
+        for key, value in raw.items():
+            try:
+                expiry = float(value)
+                if expiry > now:
+                    sessions[str(key)] = expiry
+            except (TypeError, ValueError):
+                continue
+        return sessions
 
     def _save_sessions(self) -> None:
-        try:
-            self._sessions_path().write_text(json.dumps(self._sessions, ensure_ascii=False), encoding="utf-8")
-        except OSError:
-            pass
+        _write_json(self._sessions_path(), {
+            "credential": self._session_credential,
+            "sessions": self._sessions,
+        })
 
     def is_initialized(self) -> bool:
         return self.path.is_file()
@@ -273,20 +297,13 @@ class DashboardAuth:
             if len(password) < 8:
                 raise ValueError("密码至少 8 位")
             salt = secrets.token_bytes(16)
-            self.path.write_text(
-                json.dumps(
-                    {
-                        "username": username,
-                        "salt": base64.b64encode(salt).decode(),
-                        "hash": base64.b64encode(self._derive(password, salt)).decode(),
-                        "iterations": self._ITERATIONS,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-        # create_session 也要拿 _lock;放锁外避免死锁
+            _write_json(self.path, {
+                "username": username,
+                "salt": base64.b64encode(salt).decode(),
+                "hash": base64.b64encode(self._derive(password, salt)).decode(),
+                "iterations": self._ITERATIONS,
+            })
+            self._session_credential = self._credential_key()
         return self.create_session()
 
     def _derive(self, password: str, salt: bytes) -> bytes:
@@ -315,11 +332,22 @@ class DashboardAuth:
             self._save_sessions()
         return token
 
+    def login(self, username: str, password: str) -> str:
+        with self._lock:
+            if not self.verify(username, password):
+                raise ValueError("用户名或密码错误")
+            return self.create_session()
+
     def check(self, token: str) -> bool:
         if not token:
             return False
         now = time.time()
         with self._lock:
+            credential = self._credential_key()
+            if not credential or credential != self._session_credential:
+                self._sessions.clear()
+                self._session_credential = credential
+                return False
             expiry = self._sessions.get(token)
             if expiry is None:
                 # 磁盘上有但内存没有(极端情况:文件被外部改动后本进程未重启)
@@ -341,20 +369,28 @@ class DashboardAuth:
             self._save_sessions()
 
     def change_password(self, username: str, old: str, new: str) -> dict:
-        if not self.verify(username, old):
-            raise ValueError("旧密码不正确")
         new = str(new or "")
         if len(new) < 8:
             raise ValueError("新密码至少 8 位")
-        salt = secrets.token_bytes(16)
-        data = {
-            "username": str(username or "").strip(),
-            "salt": base64.b64encode(salt).decode(),
-            "hash": base64.b64encode(self._derive(new, salt)).decode(),
-            "iterations": self._ITERATIONS,
-        }
-        self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._lock:
+            if not self.verify(username, old):
+                raise ValueError("旧密码不正确")
+            salt = secrets.token_bytes(16)
+            data = {
+                "username": str(username or "").strip(),
+                "salt": base64.b64encode(salt).decode(),
+                "hash": base64.b64encode(self._derive(new, salt)).decode(),
+                "iterations": self._ITERATIONS,
+            }
+            _write_json(self.path, data)
+            self._session_credential = self._credential_key()
+            self.revoke_all()
         return {"ok": True, "message": "密码已更新"}
+
+    def revoke_all(self) -> None:
+        with self._lock:
+            self._sessions.clear()
+            self._save_sessions()
 
 
 _EMBED_MIRRORS_MODULE = None
@@ -379,6 +415,44 @@ def _embed_mirrors_module():
 class DashboardState:
     def __init__(self, config: Config):
         self.config = config
+        self._cache_lock = threading.RLock()
+        self._file_cache = {}
+        self._stream_snapshot = None
+        self._stream_snapshot_at = 0.0
+        self._l4_status_cache = {}
+
+    def _cached_file(self, path: Path, reader):
+        try:
+            stat = path.stat()
+            signature = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+        except OSError:
+            signature = None
+        key = str(path)
+        with self._cache_lock:
+            cached = self._file_cache.get(key)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+            value = reader(path)
+            if len(self._file_cache) >= 256:
+                self._file_cache.clear()
+            self._file_cache[key] = (signature, value)
+            return value
+
+    def stream_snapshot(self) -> dict:
+        with self._cache_lock:
+            now = time.monotonic()
+            if self._stream_snapshot is None or now - self._stream_snapshot_at >= 0.75:
+                self._stream_snapshot = self.snapshot()
+                self._stream_snapshot_at = time.monotonic()
+            return self._stream_snapshot
+
+    @staticmethod
+    def _count_chunks(path: Path) -> int:
+        try:
+            with path.open(encoding="utf-8") as handle:
+                return sum(1 for line in handle if line.strip())
+        except OSError:
+            return 0
 
     def _fresh_config(self) -> Config:
         self.config = Config.load()
@@ -443,7 +517,7 @@ class DashboardState:
             brief = insight / "memory_brief.md"
             if not active.is_file() and not brief.is_file():
                 continue
-            data = _read_json(active, {}) if active.is_file() else {}
+            data = self._cached_file(active, lambda path: _read_json(path, {}))
             counts = {
                 "profile": len(data.get("user_profile", {})) if isinstance(data.get("user_profile"), dict) else 0,
                 "projects": len(data.get("ongoing_projects", [])) if isinstance(data.get("ongoing_projects"), list) else 0,
@@ -454,7 +528,7 @@ class DashboardState:
             backups_root = conversation / "summaries" / ".backups"
             backups = list(backups_root.glob("*/history_insight/active_knowledge.json")) if backups_root.is_dir() else []
             profile = names.get(conversation.name, {})
-            brief_text = _read_text(brief).strip()
+            brief_text = self._cached_file(brief, _read_text).strip()
             # 显示名兜底：profiles.json 没记录时用 .env 里的身份（单人使用语义正确），
             # 再退到会话目录名，避免页面只显示一串 sender id。
             display_name = str(profile.get("userName") or config.user_name or conversation.name)
@@ -469,6 +543,7 @@ class DashboardState:
                 "counts": counts,
                 "backupCount": len(backups),
                 "activeBytes": active.stat().st_size if active.is_file() else 0,
+                "l4": self._l4_status(conversation.name),
             })
         items.sort(key=lambda item: item["updatedTimestamp"], reverse=True)
         return items
@@ -560,19 +635,27 @@ class DashboardState:
                 self._set_stage("failed", 0, "下载失败（检查网络或镜像设置）")
                 return
             self._set_stage("verify", 60, "校验 sha256…")
-            if sha_asset and sha_asset.get("url"):
-                sha_path = dl / (name + ".sha256")
-                if self._download_asset(str(sha_asset["url"]), sha_path, mirror, 60, 63):
-                    want = sha_path.read_text(encoding="utf-8", errors="replace").split()[0].strip().upper()
-                    h = hashlib.sha256()
-                    with open(dst, "rb") as fh:
-                        for c in iter(lambda: fh.read(1 << 20), b""):
-                            h.update(c)
-                    got = h.hexdigest().upper()
-                    if got != want:
-                        self._set_stage("failed", 0, "sha256 校验不通过，已放弃更新")
-                        return
-                    DashboardState._UPDATE_STATE["sha256"] = got
+            if not sha_asset or not sha_asset.get("url"):
+                self._set_stage("failed", 0, "缺少 sha256 校验附件，已放弃更新")
+                return
+            sha_path = dl / (name + ".sha256")
+            if not self._download_asset(str(sha_asset["url"]), sha_path, mirror, 60, 63):
+                self._set_stage("failed", 0, "sha256 校验附件下载失败，已放弃更新")
+                return
+            tokens = sha_path.read_text(encoding="utf-8-sig").split()
+            want = tokens[0].upper() if tokens else ""
+            if not re.fullmatch(r"[0-9A-F]{64}", want):
+                self._set_stage("failed", 0, "sha256 校验附件格式异常，已放弃更新")
+                return
+            h = hashlib.sha256()
+            with open(dst, "rb") as fh:
+                for c in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(c)
+            got = h.hexdigest().upper()
+            if got != want:
+                self._set_stage("failed", 0, "sha256 校验不通过，已放弃更新")
+                return
+            DashboardState._UPDATE_STATE["sha256"] = got
             self._set_stage("extract", 68, "解压补丁…")
             staged = work / "staged" / str(DashboardState._UPDATE_STATE.get("version") or "new")
             _sh.rmtree(staged, ignore_errors=True)
@@ -786,7 +869,7 @@ class DashboardState:
         state_dir = config.state_dir
         workers, _ = self._workers(config)
 
-        event_state = _read_json(state_dir / "events.json", {"events": []})
+        event_state = self._cached_file(state_dir / "events.json", lambda path: _read_json(path, {"events": []}))
         raw_events = event_state.get("events", []) if isinstance(event_state, dict) else []
         raw_events = [item for item in raw_events if isinstance(item, dict)]
         raw_events.sort(key=lambda item: float(item.get("createdAt") or 0), reverse=True)
@@ -829,7 +912,7 @@ class DashboardState:
         events.sort(key=lambda item: item["createdAt"], reverse=True)
 
         knowledge_root = state_dir / "knowledge"
-        manifest = _read_json(knowledge_root / "manifest.json", {"documents": {}})
+        manifest = self._cached_file(knowledge_root / "manifest.json", lambda path: _read_json(path, {"documents": {}}))
         documents = manifest.get("documents", {}) if isinstance(manifest, dict) else {}
         knowledge_items = []
         for document in documents.values() if isinstance(documents, dict) else []:
@@ -843,10 +926,7 @@ class DashboardState:
                 "updatedAt": _short_date(document.get("updated_at") or document.get("created_at")),
             })
         knowledge_items.sort(key=lambda item: item["updatedAt"], reverse=True)
-        try:
-            chunks = sum(1 for line in (knowledge_root / "chunks.jsonl").read_text(encoding="utf-8").splitlines() if line.strip())
-        except OSError:
-            chunks = 0
+        chunks = self._cached_file(knowledge_root / "chunks.jsonl", self._count_chunks)
 
         try:
             pid = int(config.pid_file.read_text(encoding="utf-8").strip())
@@ -922,6 +1002,129 @@ class DashboardState:
             "configuration": self.settings(config),
         }
 
+    # ---------- L4 长期记忆整理（长期记忆页 →「立即整理」）----------
+    # 真正的整理服务在 memory/maintenance.py（L4MaintenanceService）。本文件只是调用方：
+    # 方法暂不存在、签名不同、或调用抛异常时一律降级（status 返回 {}、触发返回 ok=False），
+    # 绝不让看板 500 —— 后端与前端可以分开发和分上线。
+    _L4_STATUS_TTL = 5.0
+
+    def _l4_service(self):
+        """按当前 Config 构造 L4MaintenanceService；不可用返回 None（绝不抛）。"""
+        try:
+            from ..memory.maintenance import L4MaintenanceService
+
+            config = self._fresh_config()
+            return L4MaintenanceService(
+                config.state_dir,
+                getattr(config, "l4_min_new_user_turns", 30),
+                getattr(config, "l4_min_new_transcript_files", 2),
+                getattr(config, "l4_cooldown_seconds", 14400),
+                getattr(config, "l4_sample_rate", 0.2),
+                idle_days=int(getattr(config, "l4_idle_days", 3)),
+            )
+        except Exception:
+            return None
+
+    @staticmethod
+    def _l4_normalize_status(raw, idle_days_fallback: int = 3) -> dict:
+        """把后端 status 归一到契约键名（两套字段名并存，缺失给安全默认）。"""
+        if not isinstance(raw, dict) or not raw:
+            return {}
+
+        def pick(*names, default=None):
+            for name in names:
+                value = raw.get(name)
+                if value not in (None, ""):
+                    return value
+            return default
+
+        def to_int(value, fallback: int = 0) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return fallback
+
+        coordinator = raw.get("coordinator") if isinstance(raw.get("coordinator"), dict) else {}
+        threshold = raw.get("threshold") if isinstance(raw.get("threshold"), dict) else {}
+        ago = pick("lastRunAgoSeconds", default=None)
+        return {
+            "hasMarkers": bool(pick("hasMarkers", "marker_exists", default=False)),
+            "bootstrapped": bool(pick("bootstrapped", "marker_exists", default=False)),
+            "lastRunAt": str(pick("lastRunAt", "last_processed_timestamp", default="") or ""),
+            "lastRunAgoSeconds": to_int(ago, None) if isinstance(ago, (int, float)) else None,
+            "pendingMessages": to_int(pick("pendingMessages", "pending_user_messages", default=0)),
+            "pendingFiles": to_int(pick("pendingFiles", "pending_files", "pending_transcript_files", default=0)),
+            "cooldownRemainingSeconds": to_int(pick("cooldownRemainingSeconds", "cooldown_remaining_seconds", default=0)),
+            "running": bool(pick("running", default=False) or coordinator.get("pending")),
+            "threshold": {
+                "minMessages": to_int(threshold.get("minMessages") or threshold.get("min_messages") or 15),
+                "idleDays": to_int(threshold.get("idleDays") or threshold.get("idle_days") or idle_days_fallback),
+            },
+        }
+
+    def _l4_status(self, memory_id: str) -> dict:
+        """L4 整理状态；取不到返回 {}（前端整块隐藏）。5s TTL 缓存：快照轮询不反复扫盘。"""
+        key = safe_segment(str(memory_id or ""))
+        if not key:
+            return {}
+        now = time.time()
+        with self._cache_lock:
+            cached = self._l4_status_cache.get(key)
+            if cached is not None and now - cached[0] < self._L4_STATUS_TTL:
+                return cached[1]
+        payload = {}
+        service = self._l4_service()
+        if service is not None and callable(getattr(service, "status", None)):
+            try:
+                payload = self._l4_normalize_status(
+                    service.status(key),
+                    int(getattr(self.config, "l4_idle_days", 3)),
+                )
+            except Exception:
+                payload = {}
+        with self._cache_lock:
+            if len(self._l4_status_cache) >= 64:
+                self._l4_status_cache.clear()
+            self._l4_status_cache[key] = (now, payload)
+        return payload
+
+    def memory_compact(self, memory_id: str, sender_id: str = "") -> dict:
+        """手动触发一次 L4 整理。失败一律 ok=False + HTTP 200（不 500）。"""
+        raw_id = str(memory_id or "").strip()
+        key = safe_segment(raw_id)
+        config = self._fresh_config()
+        target = config.conversations_dir / key
+        # safe_segment("") 会回落成 "unknown"，所以先判原始值；再挡 ../ 之类的越界键。
+        if not raw_id or key in (".", "..") or target.parent != config.conversations_dir:
+            return {"ok": False, "started": False, "reason": "缺少或非法的 memoryId", "mode": "", "error": "缺少或非法的 memoryId"}
+        if not target.is_dir():
+            return {"ok": False, "started": False, "reason": "记忆条目不存在", "mode": "", "error": "记忆条目不存在"}
+        service = self._l4_service()
+        trigger = getattr(service, "trigger", None) if service is not None else None
+        if not callable(trigger):
+            return {
+                "ok": False, "started": False, "mode": "",
+                "reason": "后端暂未提供 L4 触发接口", "error": "后端暂未提供 L4 触发接口",
+            }
+        sender = safe_segment(str(sender_id or "")) or key
+        try:
+            raw = trigger(key, sender)
+        except Exception as error:
+            message = str(error) or error.__class__.__name__
+            return {"ok": False, "started": False, "reason": message, "mode": "", "error": message}
+        if not isinstance(raw, dict):
+            return {"ok": False, "started": False, "reason": "后端返回异常", "mode": "", "error": "后端返回异常"}
+        started = bool(raw.get("started", raw.get("l4Started", False)))
+        if started:
+            with self._cache_lock:
+                self._l4_status_cache.pop(key, None)  # 让下一次 status 立刻反映 running
+        return {
+            "ok": True,
+            "started": started,
+            "reason": str(raw.get("reason") or raw.get("message") or raw.get("status") or ("已开始整理" if started else "")),
+            "mode": str(raw.get("mode") or ""),
+        }
+
     def memory_detail(self, memory_id: str) -> dict:
         config = self._fresh_config()
         target = config.conversations_dir / safe_segment(memory_id)
@@ -985,6 +1188,7 @@ class DashboardState:
             "source": str(active_path),
             "activeBytes": active_path.stat().st_size if active_path.is_file() else 0,
             "updatedAt": _short_date(_timestamp(active_path)),
+            "l4": self._l4_status(target.name),
         }
 
     def memory_timeline(self, memory_id: str) -> dict:
@@ -3088,10 +3292,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 payload = self._read_json_body()
                 username = str(payload.get("username") or "").strip()
                 password = str(payload.get("password") or "")
-                if not self.auth.verify(username, password):
+                try:
+                    token = self.auth.login(username, password)
+                except ValueError:
                     self._send_json({"ok": False, "error": "用户名或密码错误"}, 401)
                     return
-                token = self.auth.create_session()
                 self._send_json(
                     {"ok": True, "username": username},
                     extra_headers=[("Set-Cookie", f"g4w_auth={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={DashboardAuth._SESSION_TTL}")],
@@ -3113,7 +3318,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     str(payload.get("oldPassword") or ""),
                     str(payload.get("newPassword") or ""),
                 )
-                self._send_json(result)
+                token = self.auth.create_session()
+                self._send_json(result, extra_headers=[
+                    ("Set-Cookie", f"g4w_auth={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={DashboardAuth._SESSION_TTL}"),
+                ])
+                return
+            if path == "/api/auth/revoke-all":
+                if not self._require_auth():
+                    return
+                self.auth.revoke_all()
+                self._send_json({"ok": True}, extra_headers=[
+                    ("Set-Cookie", "g4w_auth=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"),
+                ])
                 return
             if path == "/api/embedding/config":
                 if not self._require_auth():
@@ -3186,6 +3402,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return
                 self._send_json(handler())
                 return
+            if path == "/api/memory/compact":
+                if not self._require_auth():
+                    return
+                payload = self._read_json_body()
+                self._send_json(self.dashboard.memory_compact(
+                    str(payload.get("memoryId") or ""),
+                    str(payload.get("senderId") or ""),
+                ))
+                return
             if path not in {"/api/settings", "/api/model", "/api/timeline/theme"}:
                 self._send_json({"ok": False, "error": "Not found"}, 404)
                 return
@@ -3212,15 +3437,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # 流式响应无 Content-Length：HTTP/1.1 下必须显式关闭连接，
         # 否则 keep-alive 挂起让客户端一直等响应结束
         self.close_connection = True
-        previous = ""
+        previous = None
+        last_heartbeat = time.monotonic()
         try:
             for _ in range(300):
-                snapshot = self.dashboard.snapshot()
-                serialized = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
-                if serialized != previous:
+                if not self.auth.check(self._auth_token()):
+                    return
+                snapshot = self.dashboard.stream_snapshot()
+                content = {key: value for key, value in snapshot.items() if key != "updatedAt"}
+                if content != previous:
+                    serialized = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
                     self.wfile.write(f"event: dashboard\ndata: {serialized}\n\n".encode("utf-8"))
                     self.wfile.flush()
-                    previous = serialized
+                    previous = copy.deepcopy(content)
+                    last_heartbeat = time.monotonic()
+                elif time.monotonic() - last_heartbeat >= 15:
+                    self.wfile.write(b": heartbeat\n\n")
+                    self.wfile.flush()
+                    last_heartbeat = time.monotonic()
                 time.sleep(1)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return

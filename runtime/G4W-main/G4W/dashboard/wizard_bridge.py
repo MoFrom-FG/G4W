@@ -30,7 +30,7 @@ SHIM = """<script>
         var text = (s && s.prepareLog) ? String(s.prepareLog) : '';
         var lines = text ? text.split(String.fromCharCode(10)) : [];
         var ok = !!(s && s.prepare && s.prepare.ok);
-        return { lines: lines, done: ok, ok: ok };
+        return { lines: lines, log: text, done: ok, finished: ok, ok: ok };
       });
     },
     providers: function () { return get('/api/setup/providers'); },

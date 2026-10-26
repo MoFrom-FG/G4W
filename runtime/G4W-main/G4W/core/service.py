@@ -122,7 +122,7 @@ class G4WService:
         self.l4 = L4MaintenanceService(
             config.state_dir, config.l4_min_new_user_turns,
             config.l4_min_new_transcript_files, config.l4_cooldown_seconds,
-            config.l4_sample_rate,
+            config.l4_sample_rate, idle_days=config.l4_idle_days,
         )
         self.l4.attach_workers(self.workers)
         self.l4.attach_events(self.events)

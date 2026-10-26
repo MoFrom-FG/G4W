@@ -1,7 +1,7 @@
 {
-  "version": "v3.2.3",
-  "previous_version": "v3.2.1",
-  "applied_at": "2026-10-26T14:56:12",
+  "version": "v3.2.4",
+  "previous_version": "v3.2.3",
+  "applied_at": "2026-10-26T19:01:53",
   "channel": "local:workspace",
   "packaged": false
 }

@@ -37,8 +37,12 @@ button { padding:9px 20px; border:0; border-radius:9px; font-size:13px; cursor:p
 .btn-primary { background:var(--accent); color:#fff; }
 .btn-primary:disabled { opacity:.5; cursor:default; }
 .btn-ghost { background:transparent; border:1px solid var(--line); color:var(--soft); }
-.row { display:flex; gap:10px; align-items:center; margin-top:16px; }
-.row .grow { flex:1; }
+.row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:16px; }
+.row .grow { flex:1 1 180px; min-width:0; }
+.btn-back { flex:0 0 38px; width:38px; height:38px; padding:0; font-size:20px; }
+button { max-width:100%; }
+button:disabled { opacity:.5; cursor:default; }
+.step { min-width:0; overflow-wrap:break-word; }
 .msg { font-size:12px; min-height:18px; margin-top:10px; }
 .msg.ok { color:var(--ok); } .msg.err { color:var(--err); } .msg.info { color:var(--muted); }
 .field-note { color:var(--muted); font-size:11px; margin-top:5px; line-height:1.5; }
@@ -95,6 +99,7 @@ select:disabled, input:read-only { opacity:.75; }
     <input id="key-input" type="password" placeholder="sk-..." autocomplete="off">
     <div class="field-note" id="key-hint">在 platform.deepseek.com 获取</div>
     <div class="row">
+      <button type="button" class="btn-ghost btn-back" id="key-back" data-back="prepare" title="返回准备环境" aria-label="返回准备环境">&#8592;</button>
       <div class="msg info grow" id="key-msg">填写后点「验证并继续」</div>
       <button class="btn-ghost hidden" id="key-continue-anyway">仍要继续（稍后在看板配）</button>
       <button class="btn-ghost" id="key-skip">先跳过，稍后在看板配置</button>
@@ -126,6 +131,7 @@ select:disabled, input:read-only { opacity:.75; }
     </div>
     <div class="field-note hidden" id="model-skip-hint">已跳过 API Key：模型稍后在看板「模型配置」里选择，此处不写入。</div>
     <div class="row">
+      <button type="button" class="btn-ghost btn-back" id="env-back" data-back="key" title="返回 API Key" aria-label="返回 API Key">&#8592;</button>
       <div class="msg info grow" id="env-msg">填写后保存</div>
       <button class="btn-primary" id="env-save">保存</button>
     </div>
@@ -137,6 +143,7 @@ select:disabled, input:read-only { opacity:.75; }
     <div class="desc">使用专门用于 G4W 的微信账号扫码。</div>
     <div class="qr-box" id="qr-box"><div class="qr-tip">正在获取二维码…</div></div>
     <div class="row">
+      <button type="button" class="btn-ghost btn-back" id="login-back" data-back="env" title="返回环境配置" aria-label="返回环境配置">&#8592;</button>
       <div class="msg info grow" id="login-msg">二维码有效约 8 分钟</div>
       <button class="btn-primary" id="login-refresh">刷新二维码</button>
     </div>
@@ -174,6 +181,25 @@ function apiCall(method, ...args) {
 let prepareTimer = null;
 let loginTimer = null;
 let prepareDone = false;   // 环境准备已完成（按钮此时点击 = 跳转下一步）
+let currentCard = 'prepare';
+let navigationVersion = 0;
+let navigationBusy = false;
+const completedSteps = new Set();
+
+function afterNavigation(callback, delay) {
+  const version = navigationVersion;
+  setTimeout(() => { if (version === navigationVersion) callback(); }, delay);
+}
+async function runStepAction(action) {
+  if (navigationBusy) return;
+  navigationBusy = true;
+  document.querySelectorAll('[data-back]').forEach((button) => { button.disabled = true; });
+  try { await action(); }
+  finally {
+    navigationBusy = false;
+    document.querySelectorAll('[data-back]').forEach((button) => { button.disabled = false; });
+  }
+}
 
 // 页面顶部错误条（自检/桥接失败可见化，便于定位）
 function showErr(text) {
@@ -192,14 +218,17 @@ function apiCallT(method, timeoutMs, ...args) {
 }
 
 function setStep(name, state) {
+  if (state === 'done') completedSteps.add(name);
   document.querySelectorAll('.step').forEach((s) => {
-    const on = s.dataset.step === name;
-    s.classList.toggle('active', on && state !== 'done');
-    s.classList.toggle('done', state === 'done');
-    if (state === 'done') s.classList.remove('active');
+    const active = s.dataset.step === currentCard;
+    s.classList.toggle('active', active);
+    s.classList.toggle('done', completedSteps.has(s.dataset.step) && !active);
   });
 }
 function showCard(name) {
+  currentCard = name;
+  navigationVersion++;
+  if (name !== 'login' && loginTimer) { clearInterval(loginTimer); loginTimer = null; }
   document.querySelectorAll('[data-card]').forEach((c) => c.classList.toggle('hidden', c.dataset.card !== name));
   setStep(name, 'active');
 }
@@ -229,9 +258,11 @@ async function pollPrepare() {
       prepareTimer = null;
       if (r.ok) {
         prepareDone = true;
+        setStep('prepare', 'done');
+        $('prepare-start').disabled = false;
         msg($('prepare-msg'), '环境准备完成 ✓', 'ok');
         $('prepare-start').textContent = '下一步 →';
-        setTimeout(() => showCard('key'), 600);   // 直接跳转，不再依赖 checkAll（避免被切回）
+        afterNavigation(() => showCard('key'), 600);
       } else {
         msg($('prepare-msg'), '准备失败，查看日志后重试', 'err');
         $('prepare-start').disabled = false;
@@ -363,8 +394,9 @@ async function keySave() {
     if (r && r.ok) {
       msg($('key-msg'), '已保存 ✓', 'ok');
       keySkipped = false;
+      setStep('key', 'done');
       fillModelOptions(cands);
-      setTimeout(() => enterEnv(), 400);
+      afterNavigation(() => enterEnv(), 400);
     } else { msg($('key-msg'), (r && r.error) || '保存失败', 'err'); }
   } catch (e) { msg($('key-msg'), String(e), 'err'); }
   btn.disabled = false;
@@ -443,8 +475,9 @@ async function envSave() {
     const r = await apiCall('save_env', values);
     if (r.ok) {
       msg($('env-msg'), '已保存 ✓', 'ok');
+      setStep('env', 'done');
       // 跳④扫码页并自动加载二维码（否则二维码不生成，页面停留在"正在获取二维码…"）
-      setTimeout(() => { showCard('login'); loginRefresh(); }, 500);
+      afterNavigation(() => { showCard('login'); loginRefresh(); }, 500);
     } else { msg($('env-msg'), r.error || '保存失败', 'err'); }
   } catch (e) { msg($('env-msg'), String(e), 'err'); }
   btn.disabled = false;
@@ -452,24 +485,28 @@ async function envSave() {
 
 // ④ 扫码登录
 async function loginRefresh() {
+  const version = navigationVersion;
   msg($('login-msg'), '正在获取二维码…', 'info');
   $('qr-box').innerHTML = '<div class="qr-tip">正在获取二维码…</div>';
   try {
     const r = await apiCall('login_start');
+    if (currentCard !== 'login' || version !== navigationVersion) return;
     if (!r.ok) { msg($('login-msg'), r.error || '获取失败', 'err'); return; }
     if (loginTimer) clearInterval(loginTimer);
     loginTimer = setInterval(pollLogin, 2000);
   } catch (e) { msg($('login-msg'), String(e), 'err'); }
 }
 async function pollLogin() {
+  const version = navigationVersion;
   try {
     const r = await apiCall('login_status');
+    if (currentCard !== 'login' || version !== navigationVersion) return;
     if (r.done) {
       clearInterval(loginTimer); loginTimer = null;
       msg($('login-msg'), '登录成功 ✓', 'ok');
       $('qr-box').innerHTML = '<div class="qr-tip">已登录</div>';
       setStep('login', 'done');
-      setTimeout(() => showDone(), 600);
+      afterNavigation(() => showDone(), 600);
       return;
     }
     if (r.svg) {
@@ -491,7 +528,7 @@ function showDone() {
   showCard('done');
   const btn = $('done-open');
   if (btn) btn.disabled = false;
-  setTimeout(() => {
+  afterNavigation(() => {
     try { Promise.resolve(apiCall('open_dashboard')).catch(() => {}); } catch (e) { /* 忽略 */ }
   }, 1200);
 }
@@ -507,7 +544,8 @@ async function keySkip() {
     if (r.ok) {
       msg($('key-msg'), '已跳过：之后在控制中心「环境配置 → 模型配置」里配置即可 ✓', 'ok');
       keySkipped = true;
-      setTimeout(() => enterEnv(), 600);
+      setStep('key', 'done');
+      afterNavigation(() => enterEnv(), 600);
     } else { msg($('key-msg'), r.error || '跳过失败', 'err'); }
   } catch (e) { msg($('key-msg'), String(e), 'err'); }
   btn.disabled = false;
@@ -515,15 +553,23 @@ async function keySkip() {
 
 // 事件绑定
 $('prepare-start').addEventListener('click', prepareStart);
-$('key-save').addEventListener('click', keySave);
-$('key-skip').addEventListener('click', keySkip);
+$('key-save').addEventListener('click', () => runStepAction(keySave));
+$('key-skip').addEventListener('click', () => runStepAction(keySkip));
 // 「仍要继续（稍后在看板配）」：probe 失败后的次要入口 —— 跳过 Key 并进③
-$('key-continue-anyway').addEventListener('click', keySkip);
+$('key-continue-anyway').addEventListener('click', () => runStepAction(keySkip));
 $('provider-select').addEventListener('change', onProviderChange);
 $('env-follow-conductor').addEventListener('change', syncFollowConductor);
 $('env-conductor-model').addEventListener('change', syncFollowConductor);
-$('env-save').addEventListener('click', envSave);
+$('env-save').addEventListener('click', () => runStepAction(envSave));
 $('login-refresh').addEventListener('click', loginRefresh);
+document.querySelectorAll('[data-back]').forEach((button) => {
+  button.addEventListener('click', () => {
+    if (navigationBusy) return;
+    hideErr();
+    if (button.dataset.back === 'env') enterEnv();
+    else showCard(button.dataset.back);
+  });
+});
 
 // 初始自检：等待 pywebview 桥接就绪（pywebviewready 事件在 _createApi 完成后触发）
 let initDone = false;
@@ -558,6 +604,8 @@ async function checkAll() {
   try {
     const s = await apiCallT('check', 10000);
     hideErr(); checkTries = 0;
+    prepareDone = !!s.prepare.ok;
+    if (prepareDone) $('prepare-start').textContent = '下一步 →';
     if (s.prepare.ok) setStep('prepare', 'done');
     keySkipped = !!(s.key && s.key.skipped);   // 已跳过 Key：第③步隐藏模型区、不写三个模型键
     if (s.key.ok) setStep('key', 'done');

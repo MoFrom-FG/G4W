@@ -92,12 +92,9 @@ class TodoStore:
         if len(text) > MAX_TEXT_LEN:
             raise ValueError(f"任务内容过长(最多 {MAX_TEXT_LEN} 字)")
         sender = str(sender_id or "").strip()
-        tasks = self._tasks(sender)
-        if len(tasks) >= MAX_TASKS_PER_SENDER:
-            raise ValueError(f"任务数量已达上限({MAX_TASKS_PER_SENDER}),请先完成或删除一些")
         due = parse_due_at(due_at) if due_at not in (None, "") else None
         task = {
-            "id": self._next_id(sender),
+            "id": "",
             "text": text,
             "status": STATUS_PENDING,
             "dueAt": due,
@@ -109,9 +106,14 @@ class TodoStore:
             "lastFiredAt": None,
             "source": str(source or "user"),
         }
-        tasks.append(task)
-        self._save_tasks(sender, tasks)
-        return dict(task)
+        with self.store.lock:
+            tasks = self._tasks(sender)
+            if len(tasks) >= MAX_TASKS_PER_SENDER:
+                raise ValueError(f"任务数量已达上限({MAX_TASKS_PER_SENDER}),请先完成或删除一些")
+            task["id"] = self._next_id(sender)
+            tasks.append(task)
+            self._save_tasks(sender, tasks)
+            return dict(task)
 
     def list(self, sender_id: str) -> list[dict]:
         return [dict(t) for t in self._tasks(sender_id)]
@@ -124,29 +126,32 @@ class TodoStore:
         raise KeyError(f"todo not found: {todo_id}")
 
     def done(self, sender_id: str, todo_id: str, confirm_text: str = "") -> dict:
-        tasks, index = self._find(sender_id, todo_id)
-        task = tasks[index]
-        if task.get("status") == STATUS_PENDING:
-            task["status"] = STATUS_DONE
-            task["completedAt"] = time.time()
-            task["confirmText"] = str(confirm_text or "").strip()
-            self._save_tasks(sender_id, tasks)
-        return dict(task)
+        with self.store.lock:
+            tasks, index = self._find(sender_id, todo_id)
+            task = tasks[index]
+            if task.get("status") == STATUS_PENDING:
+                task["status"] = STATUS_DONE
+                task["completedAt"] = time.time()
+                task["confirmText"] = str(confirm_text or "").strip()
+                self._save_tasks(sender_id, tasks)
+            return dict(task)
 
     def cancel(self, sender_id: str, todo_id: str) -> dict:
-        tasks, index = self._find(sender_id, todo_id)
-        task = tasks[index]
-        if task.get("status") == STATUS_PENDING:
-            task["status"] = STATUS_CANCELLED
-            task["completedAt"] = time.time()
-            self._save_tasks(sender_id, tasks)
-        return dict(task)
+        with self.store.lock:
+            tasks, index = self._find(sender_id, todo_id)
+            task = tasks[index]
+            if task.get("status") == STATUS_PENDING:
+                task["status"] = STATUS_CANCELLED
+                task["completedAt"] = time.time()
+                self._save_tasks(sender_id, tasks)
+            return dict(task)
 
     def delete(self, sender_id: str, todo_id: str) -> bool:
-        tasks, index = self._find(sender_id, todo_id)
-        del tasks[index]
-        self._save_tasks(sender_id, tasks)
-        return True
+        with self.store.lock:
+            tasks, index = self._find(sender_id, todo_id)
+            del tasks[index]
+            self._save_tasks(sender_id, tasks)
+            return True
 
     # ---------- 到点触发 ----------
 
@@ -156,6 +161,10 @@ class TodoStore:
         一次性任务到点后保持 pending(继续督办,由用户确认完成);
         循环任务到点后按 recurrenceSeconds 自动重排。
         """
+        with self.store.lock:
+            return self._emit_due_locked(event_store, sender_to_binding, limit)
+
+    def _emit_due_locked(self, event_store, sender_to_binding: dict, limit: int) -> int:
         now = time.time()
         state = self.store.read()
         emitted = 0

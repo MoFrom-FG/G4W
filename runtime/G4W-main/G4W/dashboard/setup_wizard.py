@@ -7,7 +7,9 @@ import subprocess
 import sys
 import threading
 import time
+import ipaddress
 from pathlib import Path
+from urllib.parse import urlparse
 
 from ..core.config import MAIN_DIR
 from ..core.platform_adapt import venv_python
@@ -270,11 +272,11 @@ def _render_inline_page() -> bytes:
         "<div class='step' id='st-env'><b>③ 环境配置</b><span id='txt-env'>检查中</span></div>"
         "<div class='step' id='st-login'><b>④ 扫码登录</b><span id='txt-login'>检查中</span></div>"
         "</div>"
-        "<div class='card'><h2>① 准备环境</h2>"
+        "<div class='card' id='setup-prepare-card'><h2>① 准备环境</h2>"
         "<p class='sub'>创建运行环境并安装依赖（已就绪时可跳过）。</p>"
         "<button id='btn-prepare'>一键准备环境</button><div class='msg' id='msg-prepare'></div>"
         "<pre id='log-prepare' style='display:none'></pre></div>"
-        "<div class='card'><h2>② 配置模型 API Key</h2>"
+        "<div class='card' id='setup-key-card'><a href='#setup-prepare-card' aria-label='返回准备环境'>&#8592; 返回上一步</a><h2>② 配置模型 API Key</h2>"
         "<p class='sub'>不强制 DeepSeek：任何 OpenAI 兼容的服务都能用（通义 / Kimi / 火山 / 中转站…）。"
         "也可以先跳过，装好后在控制中心「环境配置 → 模型配置」里再配置。</p>"
         "<style>.hidden{display:none!important}.field-note{color:#9aa3b2;font-size:12px;margin-top:5px;line-height:1.5}"
@@ -292,7 +294,7 @@ def _render_inline_page() -> bytes:
         "<button id='btn-key-continue' class='ghost hidden' style='margin-left:8px'>仍要继续（稍后在看板配）</button>"
         "<button id='btn-key-skip' class='ghost' style='margin-left:8px'>先跳过，稍后在看板配置</button>"
         "<div class='msg' id='msg-key'></div></div>"
-        "<div class='card'><h2>③ 环境配置</h2>"
+        "<div class='card' id='setup-env-card'><a href='#setup-key-card' aria-label='返回 API Key'>&#8592; 返回上一步</a><h2>③ 环境配置</h2>"
         "<label>你的名字</label><input id='env-name' placeholder='必填'>"
         "<label>日常称呼</label><input id='env-identity'>"
         "<label>性别</label><select id='env-gender'><option value='male'>male</option><option value='female'>female</option><option value='neutral'>neutral</option></select>"
@@ -304,7 +306,7 @@ def _render_inline_page() -> bytes:
         "<div class='field-note hidden' id='model-skip-hint'>已跳过 API Key：模型稍后在看板「模型配置」里选择，此处不写入。</div>"
         "<select id='env-model' style='display:none'></select>"
         "<button id='btn-env'>保存并继续</button><div class='msg' id='msg-env'></div></div>"
-        "<div class='card'><h2>④ 微信扫码登录</h2>"
+        "<div class='card' id='setup-login-card'><a href='#setup-env-card' aria-label='返回环境配置'>&#8592; 返回上一步</a><h2>④ 微信扫码登录</h2>"
         "<p class='sub'>使用专门用于 G4W 的微信账号扫码；与 Windows 版同一账号会互踢。</p>"
         "<button id='btn-login'>获取二维码</button>"
         "<div id='qr-box'></div><div class='msg' id='msg-login'></div></div>"
@@ -365,10 +367,38 @@ SCRIPT = (
 )
 
 
+def authorize_setup(handler) -> bool:
+    """Only an unclaimed local installation may configure itself anonymously."""
+    auth = getattr(handler, "auth", None)
+    initialized = auth.is_initialized() if auth is not None else (state_dir() / "dashboard-auth.json").is_file()
+    if initialized:
+        if auth is not None:
+            return handler._require_auth()
+        handler._send_json({"ok": False, "error": "请启动看板并登录后修改配置"}, 403)
+        return False
+    try:
+        peer = ipaddress.ip_address(handler.client_address[0])
+        host = urlparse("//" + str(handler.headers.get("Host") or ""))
+        local_host = host.hostname in ("127.0.0.1", "::1", "localhost")
+        origin = handler.headers.get("Origin")
+        origin_url = urlparse(origin) if origin else None
+        same_origin = not origin_url or (
+            origin_url.scheme in ("http", "https") and origin_url.netloc.lower() == host.netloc.lower()
+        )
+        if peer.is_loopback and local_host and same_origin:
+            return True
+    except (ValueError, TypeError):
+        pass
+    handler._send_json({"ok": False, "error": "首次配置仅允许本机访问，请使用 SSH 隧道或登录看板"}, 403)
+    return False
+
+
 def handle_post(handler, path: str) -> bool:
     """处理 /api/setup/* POST；返回 True 表示已处理。"""
     if not path.startswith("/api/setup/"):
         return False
+    if not authorize_setup(handler):
+        return True
     try:
         if path == "/api/setup/prepare":
             handler._send_json(start_prepare())
@@ -390,6 +420,8 @@ def handle_post(handler, path: str) -> bool:
                 conductor_model=payload.get("conductor_model", ""),
                 worker_model=payload.get("worker_model", ""),
             ))
+        elif path == "/api/setup/key/skip":
+            handler._send_json(skip_key())
         elif path == "/api/setup/env":
             payload = handler._read_json_body()
             handler._send_json(save_env(payload.get("values") or {}))
@@ -403,6 +435,12 @@ def handle_post(handler, path: str) -> bool:
 
 
 def handle_get(handler, path: str) -> bool:
+    if path in ("/setup", "/api/setup/status", "/api/setup/login/status", "/api/setup/providers"):
+        if not authorize_setup(handler):
+            return True
+    if path == "/api/setup/providers":
+        handler._send_json(providers())
+        return True
     if path == "/api/setup/status":
         handler._send_json(status_payload())
         return True

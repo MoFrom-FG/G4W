@@ -103,9 +103,13 @@ class Config:
     location_history_limit: int = 1000
     location_major_move_meters: int = 1000
     location_known_places: tuple = ()
-    l4_min_new_user_turns: int = 30
-    l4_min_new_transcript_files: int = 2
+    # L4 auto trigger: fast lane = >= 15 new user messages, slow lane = idle >= 3 days
+    # with >= 1 new message. The transcript-file gate defaults to 0 (off) because
+    # ">= 2 new transcript files" fired on any 2-day gap and contradicted the idle lane.
+    l4_min_new_user_turns: int = 15
+    l4_min_new_transcript_files: int = 0
     l4_cooldown_seconds: int = 14400
+    l4_idle_days: int = 3
     l4_sample_rate: float = 0.2
     web_search_enabled: bool = True
     dida_command: str = ""
@@ -192,9 +196,10 @@ class Config:
             location_history_limit=max(10, int(value("G4W_LOCATION_HISTORY_LIMIT", "1000") or 1000)),
             location_major_move_meters=max(50, int(value("G4W_LOCATION_MAJOR_MOVE_THRESHOLD_METERS", "1000") or 1000)),
             location_known_places=known_places,
-            l4_min_new_user_turns=max(5, int(value("G4W_L4_MIN_NEW_USER_MESSAGES", value("G4W_L4_MIN_NEW_USER_TURNS", "30")) or 30)),
-            l4_min_new_transcript_files=max(1, int(value("G4W_L4_MIN_NEW_TRANSCRIPT_FILES", "2") or 2)),
+            l4_min_new_user_turns=max(5, int(value("G4W_L4_MIN_NEW_USER_MESSAGES", value("G4W_L4_MIN_NEW_USER_TURNS", "15")) or 15)),
+            l4_min_new_transcript_files=max(0, int(value("G4W_L4_MIN_NEW_TRANSCRIPT_FILES", "0") or 0)),
             l4_cooldown_seconds=max(60, int(float(value("G4W_L4_COOLDOWN_HOURS", "4") or 4) * 3600)),
+            l4_idle_days=max(1, int(value("G4W_L4_IDLE_DAYS", "3") or 3)),
             l4_sample_rate=max(0.0, min(1.0, float(value("G4W_L4_SAMPLE_RATE", "0.2") or 0.2))),
             dida_command=value("G4W_DIDA_COMMAND", ""),
             supervision_default_delay_minutes=max(1, int(value("G4W_SUPERVISION_DEFAULT_DELAY_MINUTES", "15") or 15)),
